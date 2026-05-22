@@ -20,6 +20,8 @@
     ]
   },
   "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
@@ -37,5 +39,6 @@
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
-  }
+  },
+  "type": "commonjs"
 }

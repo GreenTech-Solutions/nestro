@@ -3,3 +3,11 @@ dist
 node_modules
 .vscode-test/
 *.vsix
+.agents
+.claude
+.caliber
+CLAUDE.md
+
+# Caliber local state
+.caliber/
+AGENTS.md
