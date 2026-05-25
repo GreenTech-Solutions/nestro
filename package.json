@@ -10,7 +10,7 @@
     "Other"
   ],
   "activationEvents": [],
-  "main": "./out/extension.js",
+  "main": "./out/extension.cjs",
   "contributes": {
     "commands": [
       {
@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "pnpm run build",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "pnpm run compile && pnpm run lint",

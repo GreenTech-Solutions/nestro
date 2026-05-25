@@ -2,11 +2,15 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: ['src/extension.ts'],
-  outDir: 'dist',
+  outDir: 'out',
 
   format: 'cjs',
 
   dts: false,
+
+  platform: 'node',
+
+  target: 'node20',
 
   sourcemap: true,
 
@@ -14,7 +18,9 @@ export default defineConfig({
 
   minify: false,
 
-  external: [
-    'vscode',
-  ],
+  deps: {
+    neverBundle: [
+      'vscode',
+    ]
+  }
 });
