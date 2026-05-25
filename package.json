@@ -25,7 +25,7 @@
     "vscode:prepublish": "pnpm run build",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint",
+    "pretest": "tsc -p tsconfig.test.json && pnpm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
   },
