@@ -4,16 +4,39 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "tsdown: watch",
 			"type": "npm",
-			"script": "watch",
-			"problemMatcher": "$tsc-watch",
+			"script": "dev",
 			"isBackground": true,
+			"problemMatcher": [
+				{
+					"owner": "tsdown",
+					"pattern": {
+						"regexp": "^$"
+					},
+					"background": {
+						"activeOnStart": true,
+						"beginsPattern": "Build start",
+						"endsPattern": "Build complete|Rebuilt in"
+					}
+				}
+			],
 			"presentation": {
 				"reveal": "never"
 			},
 			"group": {
 				"kind": "build",
 				"isDefault": true
+			}
+		},
+		{
+			"label": "tsdown: build",
+			"type": "npm",
+			"script": "build",
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
 			}
 		}
 	]
