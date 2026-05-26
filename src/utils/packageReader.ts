@@ -7,6 +7,15 @@ export interface PackageEntry {
   dev: boolean;
 }
 
+export function getWorkspacePackageFilePath(): string | undefined {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder === undefined) {
+    return undefined;
+  }
+
+  return vscode.Uri.joinPath(folder.uri, 'package.json').fsPath;
+}
+
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {

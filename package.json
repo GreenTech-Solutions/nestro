@@ -43,6 +43,17 @@
           "type": "boolean",
           "default": true,
           "description": "Include pre-release versions when checking for package updates."
+        },
+        "nestro.updateTarget": {
+          "type": "string",
+          "enum": [
+            "latest",
+            "greatest",
+            "minor",
+            "patch"
+          ],
+          "default": "latest",
+          "description": "Version target strategy for update checks."
         }
       }
     },
@@ -139,5 +150,8 @@
       "@vscode/vsce-sign",
       "keytar"
     ]
+  },
+  "dependencies": {
+    "npm-check-updates": "^22.2.1"
   }
 }

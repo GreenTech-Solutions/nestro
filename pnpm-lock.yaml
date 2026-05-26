@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      npm-check-updates:
+        specifier: ^22.2.1
+        version: 22.2.1
     devDependencies:
       '@semantic-release/changelog':
         specifier: ^6.0.3
@@ -2397,6 +2401,11 @@ packages:
   normalize-url@9.0.1:
     resolution: {integrity: sha512-ARftfC5HdUNu9jJeL8pHj8debUIHA2b91FizCoMzY4lG6dDX13jdvTK0TBe24IBDRf2HvJSzzwEPvmbkQWHRSg==}
     engines: {node: '>=20'}
+
+  npm-check-updates@22.2.1:
+    resolution: {integrity: sha512-mGdIJfhtg+q0BzhbOpbOL73zhMZlgBQMG4wnBwPMMD5k96028UCuV0753YeSYk9odoh7HWK6/cY69bWxT7o+yg==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0, npm: '>=10.0.0'}
+    hasBin: true
 
   npm-normalize-package-bin@6.0.0:
     resolution: {integrity: sha512-tdt4aFn9QamlhdN3HV2D2ccpBwO5/fyjjbXUxYA6uBjyekMZcZvDq0aSj9t5Jo+tih6AYFnt/cuIRn9013e0Uw==}
@@ -6011,6 +6020,8 @@ snapshots:
   normalize-path@3.0.0: {}
 
   normalize-url@9.0.1: {}
+
+  npm-check-updates@22.2.1: {}
 
   npm-normalize-package-bin@6.0.0: {}
 

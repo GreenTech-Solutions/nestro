@@ -1,5 +1,13 @@
 import * as vscode from 'vscode';
-import { fetchLatestVersion, getUpdateType, logger, readWorkspaceDependencies, showError } from '../utils';
+import {
+  fetchAllLatestVersions,
+  getUpdateType,
+  getWorkspacePackageFilePath,
+  logger,
+  NcuUpdateTarget,
+  readWorkspaceDependencies,
+  showError,
+} from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
@@ -93,23 +101,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const includePreReleases = vscode.workspace
         .getConfiguration('nestro')
         .get<boolean>('includePreReleases', true);
+      const target = vscode.workspace
+        .getConfiguration('nestro')
+        .get<NcuUpdateTarget>('updateTarget', 'latest');
       const source = this.allEntries.length > 0
         ? this.allEntries.map(e => ({ name: e.item.packageName, current: e.item.currentVersion, dev: e.dev }))
         : await readWorkspaceDependencies();
       logger.info(`Checking updates for ${source.length} package(s).`);
-      this.allEntries = await Promise.all(
-        source.map(async (entry) => {
-          try {
-            const latest = await fetchLatestVersion(entry.name, includePreReleases);
-            const updateType = getUpdateType(entry.current, latest);
-            return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
-          }
-          catch (err) {
-            logger.error(`Failed to fetch latest version for ${entry.name}.`, err);
-            return { item: new PackageItem(entry.name, entry.current, undefined, 'none'), dev: entry.dev };
-          }
-        }),
-      );
+      const packageFilePath = getWorkspacePackageFilePath();
+      const upgrades = packageFilePath === undefined
+        ? new Map<string, string>()
+        : await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
+      this.allEntries = source.map((entry) => {
+        const latest = upgrades.get(entry.name);
+        const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
+        return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
+      });
       logger.info(`Checked updates for ${source.length} package(s).`);
     }
     catch (err) {
