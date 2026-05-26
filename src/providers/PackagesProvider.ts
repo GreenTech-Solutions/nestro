@@ -72,10 +72,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             const includePreReleases = vscode.workspace
                 .getConfiguration('nestro')
                 .get<boolean>('includePreReleases', true);
-            const entries = await readWorkspaceDependencies();
-            logger.info(`Checking updates for ${entries.length} package(s).`);
+            const source = this.allEntries.length > 0
+                ? this.allEntries.map(e => ({ name: e.item.packageName, current: e.item.currentVersion, dev: e.dev }))
+                : await readWorkspaceDependencies();
+            logger.info(`Checking updates for ${source.length} package(s).`);
             this.allEntries = await Promise.all(
-                entries.map(async (entry) => {
+                source.map(async (entry) => {
                     try {
                         const latest = await fetchLatestVersion(entry.name, includePreReleases);
                         const updateType = getUpdateType(entry.current, latest);
@@ -86,7 +88,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     }
                 }),
             );
-            logger.info(`Checked updates for ${entries.length} package(s).`);
+            logger.info(`Checked updates for ${source.length} package(s).`);
         } catch (err) {
             showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
         } finally {
