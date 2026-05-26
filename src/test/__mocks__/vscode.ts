@@ -7,6 +7,7 @@ export const commands = {
 
 export const window = {
     showInformationMessage: vi.fn<() => void>(),
+    showErrorMessage: vi.fn<() => void>(),
     showQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
     createTerminal: vi.fn(() => ({ sendText: vi.fn(), show: vi.fn() })),
