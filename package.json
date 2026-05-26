@@ -31,6 +31,16 @@
         }
       ]
     },
+    "configuration": {
+      "title": "Nestro",
+      "properties": {
+        "nestro.checkUpdatesOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically check for package updates when the extension activates."
+        }
+      }
+    },
     "commands": [
       {
         "command": "nestro.helloWorld",
@@ -42,15 +52,35 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "nestro.checkUpdates",
+        "title": "Check for Updates",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "nestro.installUpdate",
         "title": "Update Package",
         "icon": "$(arrow-up)"
+      },
+      {
+        "command": "nestro.openSettings",
+        "title": "Settings",
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "nestro.refresh",
+          "when": "view == nestro.packagesView",
+          "group": "navigation"
+        },
+        {
+          "command": "nestro.checkUpdates",
+          "when": "view == nestro.packagesView",
+          "group": "navigation"
+        },
+        {
+          "command": "nestro.openSettings",
           "when": "view == nestro.packagesView",
           "group": "navigation"
         }

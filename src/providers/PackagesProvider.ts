@@ -21,10 +21,23 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return this.items;
     }
 
-    async refresh(): Promise<void> {
+    async loadPackages(): Promise<void> {
         this.loading = true;
         this._onDidChangeTreeData.fire();
+        try {
+            const entries = await readWorkspaceDependencies();
+            this.items = entries.map((e) => new PackageItem(e.name, e.current, undefined, false));
+        } catch {
+            this.items = [];
+        } finally {
+            this.loading = false;
+            this._onDidChangeTreeData.fire();
+        }
+    }
 
+    async checkUpdates(): Promise<void> {
+        this.loading = true;
+        this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
             this.items = await Promise.all(

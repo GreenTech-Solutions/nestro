@@ -7,15 +7,27 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const provider = new PackagesProvider();
 
+    const checkUpdatesOnStartup = vscode.workspace
+        .getConfiguration('nestro')
+        .get<boolean>('checkUpdatesOnStartup', false);
+
     context.subscriptions.push(
         vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),
         vscode.window.registerTreeDataProvider('nestro.packagesView', provider),
-        vscode.commands.registerCommand('nestro.refresh', () => { void provider.refresh(); }),
+        vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
+        vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
         vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => installUpdateCommand(item)),
+        vscode.commands.registerCommand('nestro.openSettings', () => {
+            void vscode.commands.executeCommand('workbench.action.openSettings', 'nestro');
+        }),
         provider,
     );
 
-    void provider.refresh();
+    void provider.loadPackages().then(() => {
+        if (checkUpdatesOnStartup) {
+            void provider.checkUpdates();
+        }
+    });
 }
 
 export function deactivate(): void {}
