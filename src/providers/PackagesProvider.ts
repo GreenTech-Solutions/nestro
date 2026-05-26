@@ -2,23 +2,27 @@ import * as vscode from 'vscode';
 import { readWorkspaceDependencies, fetchLatestVersion, isVersionOutdated } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
+import { GroupItem } from './GroupItem';
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
     private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    private items: vscode.TreeItem[] = [];
+    private groups: GroupItem[] = [];
     private loading = false;
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
 
-    getChildren(): vscode.TreeItem[] {
+    getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
         if (this.loading) {
-            return [new LoadingItem()];
+            return element ? [] : [new LoadingItem()];
         }
-        return this.items;
+        if (element instanceof GroupItem) {
+            return element.children;
+        }
+        return this.groups;
     }
 
     async loadPackages(): Promise<void> {
@@ -26,9 +30,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
-            this.items = entries.map((e) => new PackageItem(e.name, e.current, undefined, false));
+            this.groups = buildGroups(
+                entries.map((e) => ({ item: new PackageItem(e.name, e.current, undefined, false), dev: e.dev })),
+            );
         } catch {
-            this.items = [];
+            this.groups = [];
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();
@@ -40,19 +46,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
-            this.items = await Promise.all(
+            const results = await Promise.all(
                 entries.map(async (entry) => {
                     try {
                         const latest = await fetchLatestVersion(entry.name);
                         const outdated = isVersionOutdated(entry.current, latest);
-                        return new PackageItem(entry.name, entry.current, latest, outdated);
+                        return { item: new PackageItem(entry.name, entry.current, latest, outdated), dev: entry.dev };
                     } catch {
-                        return new PackageItem(entry.name, entry.current, undefined, false);
+                        return { item: new PackageItem(entry.name, entry.current, undefined, false), dev: entry.dev };
                     }
                 }),
             );
+            this.groups = buildGroups(results);
         } catch {
-            this.items = [];
+            this.groups = [];
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();
@@ -62,4 +69,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     dispose(): void {
         this._onDidChangeTreeData.dispose();
     }
+}
+
+function buildGroups(entries: { item: PackageItem; dev: boolean }[]): GroupItem[] {
+    const deps = entries.filter((e) => !e.dev).map((e) => e.item);
+    const devDeps = entries.filter((e) => e.dev).map((e) => e.item);
+    const groups: GroupItem[] = [];
+    if (deps.length > 0) {
+        groups.push(new GroupItem('Dependencies', deps));
+    }
+    if (devDeps.length > 0) {
+        groups.push(new GroupItem('Dev Dependencies', devDeps));
+    }
+    return groups;
 }

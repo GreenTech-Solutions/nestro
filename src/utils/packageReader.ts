@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 export interface PackageEntry {
     name: string;
     current: string;
+    dev: boolean;
 }
 
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
@@ -17,10 +18,8 @@ export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
         devDependencies?: Record<string, string>;
     };
 
-    const deps: Record<string, string> = {
-        ...json.dependencies,
-        ...json.devDependencies,
-    };
-
-    return Object.entries(deps).map(([name, current]) => ({ name, current }));
+    return [
+        ...Object.entries(json.dependencies ?? {}).map(([name, current]) => ({ name, current, dev: false })),
+        ...Object.entries(json.devDependencies ?? {}).map(([name, current]) => ({ name, current, dev: true })),
+    ];
 }
