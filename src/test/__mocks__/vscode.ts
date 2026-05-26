@@ -1,5 +1,10 @@
 import { vi } from 'vitest';
 
+export const outputChannel = {
+    appendLine: vi.fn(),
+    dispose: vi.fn(),
+};
+
 export const commands = {
     registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
     executeCommand: vi.fn(),
@@ -11,6 +16,7 @@ export const window = {
     showQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
     createTerminal: vi.fn(() => ({ sendText: vi.fn(), show: vi.fn() })),
+    createOutputChannel: vi.fn(() => outputChannel),
 };
 
 export const workspace = {

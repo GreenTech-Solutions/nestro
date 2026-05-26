@@ -11,4 +11,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Detect the workspace package manager and use it for package update commands.
 - Show package filters as a single compact row and hide them when no packages are loaded.
 - Use colored upward arrows for package update indicators.
+- Add a Nestro Output channel for extension diagnostics.
 - Initial release

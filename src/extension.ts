@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { PackagesProvider, PackageItem } from './providers';
 import type { FilterType } from './providers';
 import { helloWorldCommand, installUpdateCommand } from './commands';
+import { logger } from './utils';
 
 export function activate(context: vscode.ExtensionContext): void {
-    console.log('Congratulations, your extension "nestro" is now active!');
+    logger.info('Extension activated.');
 
     const provider = new PackagesProvider();
 
@@ -23,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('nestro.openSettings', () => {
             void vscode.commands.executeCommand('workbench.action.openSettings', 'nestro');
         }),
+        logger,
         provider,
     );
 

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readWorkspaceDependencies, fetchLatestVersion, getUpdateType, showError } from '../utils';
+import { readWorkspaceDependencies, fetchLatestVersion, getUpdateType, logger, showError } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
@@ -46,16 +46,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     async loadPackages(): Promise<void> {
+        logger.info('Loading workspace packages.');
         this.loading = true;
         this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
+            logger.info(`Loaded ${entries.length} workspace package(s).`);
             this.allEntries = entries.map((e) => ({
                 item: new PackageItem(e.name, e.current, undefined, 'none'),
                 dev: e.dev,
             }));
         } catch (err) {
-            showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`);
+            showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();
@@ -63,6 +65,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     async checkUpdates(): Promise<void> {
+        logger.info('Checking package updates.');
         this.loading = true;
         this._onDidChangeTreeData.fire();
         try {
@@ -70,19 +73,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 .getConfiguration('nestro')
                 .get<boolean>('includePreReleases', true);
             const entries = await readWorkspaceDependencies();
+            logger.info(`Checking updates for ${entries.length} package(s).`);
             this.allEntries = await Promise.all(
                 entries.map(async (entry) => {
                     try {
                         const latest = await fetchLatestVersion(entry.name, includePreReleases);
                         const updateType = getUpdateType(entry.current, latest);
                         return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
-                    } catch {
+                    } catch (err) {
+                        logger.error(`Failed to fetch latest version for ${entry.name}.`, err);
                         return { item: new PackageItem(entry.name, entry.current, undefined, 'none'), dev: entry.dev };
                     }
                 }),
             );
+            logger.info(`Checked updates for ${entries.length} package(s).`);
         } catch (err) {
-            showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`);
+            showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();

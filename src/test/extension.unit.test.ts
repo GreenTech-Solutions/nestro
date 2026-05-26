@@ -60,7 +60,17 @@ describe('activate()', () => {
     it('pushes all disposables to context.subscriptions', () => {
         const ctx = makeContext();
         activate(ctx);
-        expect(ctx.subscriptions).toHaveLength(9);
+        expect(ctx.subscriptions).toHaveLength(10);
+    });
+
+    it('creates Nestro output channel', async () => {
+        vi.resetModules();
+        const freshVscode = await import('vscode');
+        const extension = await import('../extension');
+
+        extension.activate(makeContext());
+
+        expect(freshVscode.window.createOutputChannel).toHaveBeenCalledWith('Nestro');
     });
 
     it('helloWorld handler calls showInformationMessage', () => {

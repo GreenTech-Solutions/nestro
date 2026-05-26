@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { logger } from './logger';
 
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
@@ -9,13 +10,18 @@ interface PackageJson {
 const packageManagerNames = ['npm', 'pnpm', 'yarn', 'bun'] as const;
 
 export async function detectPackageManager(): Promise<PackageManager> {
-    const fromManifest = await detectPackageManagerFromManifest();
-    if (fromManifest !== undefined) {
-        return fromManifest;
-    }
+    try {
+        const fromManifest = await detectPackageManagerFromManifest();
+        if (fromManifest !== undefined) {
+            return fromManifest;
+        }
 
-    const fromLockfile = await detectPackageManagerFromLockfile();
-    return fromLockfile ?? 'npm';
+        const fromLockfile = await detectPackageManagerFromLockfile();
+        return fromLockfile ?? 'npm';
+    } catch (err) {
+        logger.error('Failed to detect package manager.', err);
+        throw err;
+    }
 }
 
 export function buildInstallCommand(
