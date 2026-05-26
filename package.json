@@ -12,12 +12,57 @@
   "activationEvents": [],
   "main": "./out/extension.cjs",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nestro",
+          "title": "Nestro",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "nestro": [
+        {
+          "id": "nestro.packagesView",
+          "name": "Packages",
+          "when": "workbenchState != empty",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "nestro.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "nestro.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nestro.installUpdate",
+        "title": "Update Package",
+        "icon": "$(arrow-up)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "nestro.refresh",
+          "when": "view == nestro.packagesView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nestro.installUpdate",
+          "when": "view == nestro.packagesView && viewItem == outdated",
+          "group": "inline"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsdown",
@@ -51,6 +96,9 @@
   "type": "commonjs",
   "packageManager": "pnpm@11.0.8",
   "pnpm": {
-    "onlyBuiltDependencies": ["@vscode/vsce-sign", "keytar"]
+    "onlyBuiltDependencies": [
+      "@vscode/vsce-sign",
+      "keytar"
+    ]
   }
 }
