@@ -1,15 +1,17 @@
 import * as vscode from 'vscode';
-import { readWorkspaceDependencies, fetchLatestVersion, isVersionOutdated, showError } from '../utils';
+import { readWorkspaceDependencies, fetchLatestVersion, getUpdateType, showError } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
+import { createFilterQuickPickItems, FilterBarItem, FilterCounts, FilterType } from './FilterBarItem';
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
     private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    private groups: GroupItem[] = [];
+    private allEntries: { item: PackageItem; dev: boolean }[] = [];
     private loading = false;
+    private filterType: FilterType = 'all';
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
@@ -22,7 +24,25 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         if (element instanceof GroupItem) {
             return element.children;
         }
-        return this.groups;
+        return [...buildFilterBar(this.allEntries, this.filterType), ...buildGroups(this.allEntries, this.filterType)];
+    }
+
+    setFilter(type: FilterType): void {
+        this.filterType = type;
+        this._onDidChangeTreeData.fire();
+    }
+
+    async showFilterPicker(): Promise<void> {
+        if (this.allEntries.length === 0) {
+            return;
+        }
+        const selected = await vscode.window.showQuickPick(
+            createFilterQuickPickItems(getFilterCounts(this.allEntries), this.filterType),
+            { placeHolder: 'Select package filter' },
+        );
+        if (selected) {
+            this.setFilter(selected.filterType);
+        }
     }
 
     async loadPackages(): Promise<void> {
@@ -30,9 +50,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
-            this.groups = buildGroups(
-                entries.map((e) => ({ item: new PackageItem(e.name, e.current, undefined, false), dev: e.dev })),
-            );
+            this.allEntries = entries.map((e) => ({
+                item: new PackageItem(e.name, e.current, undefined, 'none'),
+                dev: e.dev,
+            }));
         } catch (err) {
             showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -46,18 +67,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.fire();
         try {
             const entries = await readWorkspaceDependencies();
-            const results = await Promise.all(
+            this.allEntries = await Promise.all(
                 entries.map(async (entry) => {
                     try {
                         const latest = await fetchLatestVersion(entry.name);
-                        const outdated = isVersionOutdated(entry.current, latest);
-                        return { item: new PackageItem(entry.name, entry.current, latest, outdated), dev: entry.dev };
+                        const updateType = getUpdateType(entry.current, latest);
+                        return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
                     } catch {
-                        return { item: new PackageItem(entry.name, entry.current, undefined, false), dev: entry.dev };
+                        return { item: new PackageItem(entry.name, entry.current, undefined, 'none'), dev: entry.dev };
                     }
                 }),
             );
-            this.groups = buildGroups(results);
         } catch (err) {
             showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -71,9 +91,34 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 }
 
-function buildGroups(entries: { item: PackageItem; dev: boolean }[]): GroupItem[] {
-    const deps = entries.filter((e) => !e.dev).map((e) => e.item);
-    const devDeps = entries.filter((e) => e.dev).map((e) => e.item);
+function buildFilterBar(
+    entries: { item: PackageItem; dev: boolean }[],
+    activeFilter: FilterType,
+): FilterBarItem[] {
+    if (entries.length === 0) {
+        return [];
+    }
+    return [new FilterBarItem(getFilterCounts(entries), activeFilter)];
+}
+
+function getFilterCounts(entries: { item: PackageItem; dev: boolean }[]): FilterCounts {
+    return {
+        all:      entries.length,
+        patch:    entries.filter((e) => e.item.updateType === 'patch').length,
+        minor:    entries.filter((e) => e.item.updateType === 'minor').length,
+        breaking: entries.filter((e) => e.item.updateType === 'breaking').length,
+    };
+}
+
+function buildGroups(
+    entries: { item: PackageItem; dev: boolean }[],
+    filterType: FilterType,
+): GroupItem[] {
+    const filtered = filterType === 'all'
+        ? entries
+        : entries.filter((e) => e.item.updateType === filterType);
+    const deps = filtered.filter((e) => !e.dev).map((e) => e.item);
+    const devDeps = filtered.filter((e) => e.dev).map((e) => e.item);
     const groups: GroupItem[] = [];
     if (deps.length > 0) {
         groups.push(new GroupItem('Dependencies', deps));

@@ -1,19 +1,24 @@
 import * as vscode from 'vscode';
+import { UpdateType } from '../utils';
 
 export class PackageItem extends vscode.TreeItem {
     constructor(
         public readonly packageName: string,
         public readonly currentVersion: string,
         public readonly latest: string | undefined,
-        outdated: boolean,
+        public readonly updateType: UpdateType,
     ) {
         super(packageName, vscode.TreeItemCollapsibleState.None);
-        const hasUpdate = latest !== undefined && latest !== currentVersion;
+        const hasUpdate = updateType !== 'none';
         this.description = hasUpdate ? `${currentVersion} → ${latest}` : currentVersion;
         this.tooltip = `${packageName}@${currentVersion}${hasUpdate ? ` (latest: ${latest})` : ''}`;
-        this.contextValue = outdated ? 'outdated' : 'package';
-        this.iconPath = outdated
-            ? new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.yellow'))
-            : new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green'));
+        this.contextValue = hasUpdate ? 'outdated' : 'package';
+        const icons: Record<UpdateType, vscode.ThemeIcon> = {
+            breaking: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.red')),
+            minor:    new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.yellow')),
+            patch:    new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.green')),
+            none:     new vscode.ThemeIcon('check',    new vscode.ThemeColor('charts.green')),
+        };
+        this.iconPath = icons[updateType];
     }
 }

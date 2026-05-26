@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { PackagesProvider, PackageItem } from './providers';
+import type { FilterType } from './providers';
 import { helloWorldCommand, installUpdateCommand } from './commands';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -17,6 +18,8 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
         vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
         vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => installUpdateCommand(item)),
+        vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
+        vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
         vscode.commands.registerCommand('nestro.openSettings', () => {
             void vscode.commands.executeCommand('workbench.action.openSettings', 'nestro');
         }),

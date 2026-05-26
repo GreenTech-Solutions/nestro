@@ -6,4 +6,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Show package filters as a single compact row and hide them when no packages are loaded.
+- Use colored upward arrows for package update indicators.
 - Initial release

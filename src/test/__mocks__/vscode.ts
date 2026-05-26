@@ -2,15 +2,20 @@ import { vi } from 'vitest';
 
 export const commands = {
     registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+    executeCommand: vi.fn(),
 };
 
 export const window = {
     showInformationMessage: vi.fn<() => void>(),
+    showQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
     createTerminal: vi.fn(() => ({ sendText: vi.fn(), show: vi.fn() })),
 };
 
 export const workspace = {
+    getConfiguration: vi.fn(() => ({
+        get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
+    })),
     findFiles: vi.fn().mockResolvedValue([]),
     fs: {
         readFile: vi.fn().mockResolvedValue(Buffer.from('{}')),

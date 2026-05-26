@@ -4,7 +4,10 @@ import { activate, deactivate } from '../extension';
 
 vi.mock('../providers', () => ({
     PackagesProvider: vi.fn(function (this: Record<string, unknown>) {
-        this.refresh = vi.fn().mockResolvedValue(undefined);
+        this.loadPackages = vi.fn().mockResolvedValue(undefined);
+        this.checkUpdates = vi.fn().mockResolvedValue(undefined);
+        this.setFilter = vi.fn();
+        this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
         this.dispose = vi.fn();
         this.onDidChangeTreeData = vi.fn();
         this.getTreeItem = vi.fn();
@@ -57,8 +60,7 @@ describe('activate()', () => {
     it('pushes all disposables to context.subscriptions', () => {
         const ctx = makeContext();
         activate(ctx);
-        // helloWorld + registerTreeDataProvider + refresh + installUpdate + provider
-        expect(ctx.subscriptions).toHaveLength(5);
+        expect(ctx.subscriptions).toHaveLength(9);
     });
 
     it('helloWorld handler calls showInformationMessage', () => {
