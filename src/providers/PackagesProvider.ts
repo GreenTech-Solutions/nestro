@@ -67,10 +67,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         try {
             const entries = await readWorkspaceDependencies();
             logger.info(`Loaded ${entries.length} workspace package(s).`);
-            this.allEntries = entries.map((e) => ({
-                item: new PackageItem(e.name, e.current, undefined, 'none'),
-                dev: e.dev,
-            }));
+            const existingMap = new Map(this.allEntries.map((e) => [e.item.packageName, e]));
+            this.allEntries = entries.map((e) => {
+                const existing = existingMap.get(e.name);
+                if (existing && existing.item.currentVersion === e.current) {
+                    return { item: existing.item, dev: e.dev };
+                }
+                return { item: new PackageItem(e.name, e.current, undefined, 'none'), dev: e.dev };
+            });
         } catch (err) {
             showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
         } finally {
