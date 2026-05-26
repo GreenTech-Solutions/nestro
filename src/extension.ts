@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { PackageItem, PackagesProvider } from './providers';
 import type { FilterType } from './providers';
-import { helloWorldCommand, installUpdateCommand } from './commands';
+import { helloWorldCommand, installUpdateCommand, runInstallCommand, updateAllVisibleCommand } from './commands';
 import { logger } from './utils';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -19,6 +19,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
+    vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
     vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
     vscode.commands.registerCommand('nestro.openSettings', () => {

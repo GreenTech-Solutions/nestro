@@ -21,4 +21,14 @@ suite('Extension Test Suite', () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('nestro.installUpdate'), 'Update command should be registered');
   });
+
+  test('nestro.runInstall command is registered', async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('nestro.runInstall'), 'Run install command should be registered');
+  });
+
+  test('nestro.updateAllVisible command is registered', async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('nestro.updateAllVisible'), 'Update all command should be registered');
+  });
 });

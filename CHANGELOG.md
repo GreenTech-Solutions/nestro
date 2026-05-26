@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Add deferred package updates with `nestro.deferInstallAfterUpdate`, `Run Install`, and `Update All` sidebar actions.
 - Batch package update checks through npm-check-updates and add the `nestro.updateTarget` setting.
 - Fix update detection so older registry versions are not offered as downgrades.
 - Add pre-release version parsing for update checks, controlled by the enabled-by-default `nestro.includePreReleases` setting.

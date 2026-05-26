@@ -7,6 +7,16 @@ export interface PackageEntry {
   dev: boolean;
 }
 
+export interface PackageVersionUpdate {
+  name: string;
+  version: string;
+}
+
+interface WorkspacePackageJson {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
+
 export function getWorkspacePackageFilePath(): string | undefined {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (folder === undefined) {
@@ -14,6 +24,38 @@ export function getWorkspacePackageFilePath(): string | undefined {
   }
 
   return vscode.Uri.joinPath(folder.uri, 'package.json').fsPath;
+}
+
+export async function updateWorkspaceDependencyVersions(updates: readonly PackageVersionUpdate[]): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder === undefined) {
+    throw new Error('No workspace folder found.');
+  }
+
+  const uri = vscode.Uri.joinPath(folder.uri, 'package.json');
+  const raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  const json = JSON.parse(raw) as WorkspacePackageJson;
+  const missing: string[] = [];
+
+  for (const update of updates) {
+    if (json.dependencies?.[update.name] !== undefined) {
+      json.dependencies[update.name] = update.version;
+      continue;
+    }
+    if (json.devDependencies?.[update.name] !== undefined) {
+      json.devDependencies[update.name] = update.version;
+      continue;
+    }
+    missing.push(update.name);
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
+  }
+
+  const indent = detectJsonIndent(raw);
+  const newline = raw.endsWith('\n') ? '\n' : '';
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
 }
 
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
@@ -46,4 +88,12 @@ export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
     logger.error(`Failed to read workspace package.json at ${uri.toString()}.`, err);
     throw err;
   }
+}
+
+function detectJsonIndent(raw: string): number {
+  const match = raw.match(/^[ \t]+"[^"]+":/m);
+  if (match === null) {
+    return 2;
+  }
+  return match[0].match(/^[ \t]+/)?.[0].length ?? 2;
 }

@@ -54,6 +54,11 @@
           ],
           "default": "latest",
           "description": "Version target strategy for update checks."
+        },
+        "nestro.deferInstallAfterUpdate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Update package.json first and run dependency installation separately."
         }
       }
     },
@@ -78,6 +83,16 @@
         "icon": "$(arrow-up)"
       },
       {
+        "command": "nestro.updateAllVisible",
+        "title": "Update All",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "nestro.runInstall",
+        "title": "Run Install",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "nestro.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
@@ -92,6 +107,16 @@
         },
         {
           "command": "nestro.checkUpdates",
+          "when": "view == nestro.packagesView",
+          "group": "navigation"
+        },
+        {
+          "command": "nestro.updateAllVisible",
+          "when": "view == nestro.packagesView && nestro.canUpdateVisiblePackages",
+          "group": "navigation"
+        },
+        {
+          "command": "nestro.runInstall",
           "when": "view == nestro.packagesView",
           "group": "navigation"
         },

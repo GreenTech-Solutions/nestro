@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { buildInstallCommand, detectPackageManager } from '../utils';
+import { buildInstallCommand, buildPackageUpdateCommand, buildRunInstallCommand, detectPackageManager } from '../utils';
 
 describe('package manager detection', () => {
   beforeEach(() => {
@@ -36,5 +36,19 @@ describe('install command builder', () => {
 
   it('builds pnpm add commands', () => {
     expect(buildInstallCommand('pnpm', 'typescript', '5.9.3')).toBe('pnpm add typescript@5.9.3');
+  });
+
+  it('builds batch update commands', () => {
+    expect(buildPackageUpdateCommand('pnpm', [
+      { packageName: 'react', version: '19.0.0' },
+      { packageName: 'typescript', version: '5.9.3' },
+    ])).toBe('pnpm add react@19.0.0 typescript@5.9.3');
+  });
+
+  it('builds package manager install commands', () => {
+    expect(buildRunInstallCommand('npm')).toBe('npm install');
+    expect(buildRunInstallCommand('pnpm')).toBe('pnpm install');
+    expect(buildRunInstallCommand('yarn')).toBe('yarn install');
+    expect(buildRunInstallCommand('bun')).toBe('bun install');
   });
 });

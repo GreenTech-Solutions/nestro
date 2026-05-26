@@ -27,10 +27,19 @@ export const workspace = {
   getConfiguration: vi.fn(() => ({
     get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
   })),
+  workspaceFolders: [{ uri: { fsPath: '/workspace' } }],
   findFiles: vi.fn().mockResolvedValue([]),
   fs: {
     readFile: vi.fn().mockResolvedValue(Buffer.from('{}')),
+    writeFile: vi.fn().mockResolvedValue(undefined),
   },
+};
+
+export const Uri = {
+  joinPath: vi.fn((base: { fsPath: string }, path: string) => ({
+    fsPath: `${base.fsPath}/${path}`,
+    toString: () => `${base.fsPath}/${path}`,
+  })),
 };
 
 export class EventEmitter<T = void> {

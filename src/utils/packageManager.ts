@@ -30,15 +30,26 @@ export function buildInstallCommand(
   packageName: string,
   version: string,
 ): string {
-  const target = `${packageName}@${version}`;
+  return buildPackageUpdateCommand(packageManager, [{ packageName, version }]);
+}
+
+export function buildPackageUpdateCommand(
+  packageManager: PackageManager,
+  updates: readonly { packageName: string; version: string }[],
+): string {
+  const targets = updates.map(update => `${update.packageName}@${update.version}`).join(' ');
   switch (packageManager) {
     case 'pnpm':
     case 'yarn':
     case 'bun':
-      return `${packageManager} add ${target}`;
+      return `${packageManager} add ${targets}`;
     case 'npm':
-      return `npm install ${target}`;
+      return `npm install ${targets}`;
   }
+}
+
+export function buildRunInstallCommand(packageManager: PackageManager): string {
+  return `${packageManager} install`;
 }
 
 async function detectPackageManagerFromManifest(): Promise<PackageManager | undefined> {

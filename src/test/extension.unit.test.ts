@@ -8,6 +8,7 @@ vi.mock('../providers', () => ({
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.setFilter = vi.fn();
     this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
+    this.getVisibleOutdatedPackages = vi.fn(() => []);
     this.dispose = vi.fn();
     this.onDidChangeTreeData = vi.fn();
     this.getTreeItem = vi.fn();
@@ -49,6 +50,22 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.runInstall command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.runInstall',
+      expect.any(Function),
+    );
+  });
+
+  it('registers nestro.updateAllVisible command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.updateAllVisible',
+      expect.any(Function),
+    );
+  });
+
   it('registers tree data provider for nestro.packagesView', () => {
     activate(makeContext());
     expect(vscode.window.registerTreeDataProvider).toHaveBeenCalledWith(
@@ -60,7 +77,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(10);
+    expect(ctx.subscriptions).toHaveLength(12);
   });
 
   it('creates Nestro output channel', async () => {

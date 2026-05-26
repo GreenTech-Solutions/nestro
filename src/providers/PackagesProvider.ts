@@ -38,7 +38,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   setFilter(type: FilterType): void {
     this.filterType = type;
-    this._onDidChangeTreeData.fire();
+    this.emitTreeChanged();
+  }
+
+  getVisibleOutdatedPackages(): PackageItem[] {
+    if (this.loading) {
+      return [];
+    }
+    return getFilteredEntries(this.allEntries, this.filterType)
+      .map(entry => entry.item)
+      .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
   }
 
   markPackageUpdated(packageName: string, newVersion: string): void {
@@ -52,7 +61,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       item: new PackageItem(packageName, newVersion, undefined, 'none'),
       dev,
     };
-    this._onDidChangeTreeData.fire();
+    this.emitTreeChanged();
   }
 
   markPackageUpdating(packageName: string, installing: boolean): void {
@@ -66,7 +75,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       item: new PackageItem(item.packageName, item.currentVersion, item.latest, item.updateType, installing),
       dev,
     };
-    this._onDidChangeTreeData.fire();
+    this.emitTreeChanged();
   }
 
   async showFilterPicker(): Promise<void> {
@@ -85,7 +94,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   async loadPackages(): Promise<void> {
     logger.info('Loading workspace packages.');
     this.loading = true;
-    this._onDidChangeTreeData.fire();
+    this.emitTreeChanged();
     try {
       const entries = await readWorkspaceDependencies();
       logger.info(`Loaded ${entries.length} workspace package(s).`);
@@ -103,14 +112,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     finally {
       this.loading = false;
-      this._onDidChangeTreeData.fire();
+      this.emitTreeChanged();
     }
   }
 
   async checkUpdates(): Promise<void> {
     logger.info('Checking package updates.');
     this.loading = true;
-    this._onDidChangeTreeData.fire();
+    this.emitTreeChanged();
     try {
       const includePreReleases = vscode.workspace
         .getConfiguration('nestro')
@@ -138,12 +147,21 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     finally {
       this.loading = false;
-      this._onDidChangeTreeData.fire();
+      this.emitTreeChanged();
     }
   }
 
   dispose(): void {
     this._onDidChangeTreeData.dispose();
+  }
+
+  private emitTreeChanged(): void {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'nestro.canUpdateVisiblePackages',
+      this.getVisibleOutdatedPackages().length > 0,
+    );
+    this._onDidChangeTreeData.fire();
   }
 }
 
@@ -171,11 +189,7 @@ function buildGroups(
   entries: { item: PackageItem; dev: boolean }[],
   filterType: FilterType,
 ): vscode.TreeItem[] {
-  const filtered = filterType === 'all'
-    ? entries
-    : filterType === 'hasUpdates'
-      ? entries.filter(e => e.item.updateType !== 'none')
-      : entries.filter(e => e.item.updateType === filterType);
+  const filtered = getFilteredEntries(entries, filterType);
   if (entries.length === 0) {
     return [new MessageItem('No packages found in workspace.')];
   }
@@ -193,4 +207,15 @@ function buildGroups(
     groups.push(new GroupItem('Dev Dependencies', devDeps));
   }
   return groups;
+}
+
+function getFilteredEntries(
+  entries: { item: PackageItem; dev: boolean }[],
+  filterType: FilterType,
+): { item: PackageItem; dev: boolean }[] {
+  return filterType === 'all'
+    ? entries
+    : filterType === 'hasUpdates'
+      ? entries.filter(e => e.item.updateType !== 'none')
+      : entries.filter(e => e.item.updateType === filterType);
 }
