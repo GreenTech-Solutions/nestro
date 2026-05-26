@@ -4,13 +4,14 @@ import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
 import { createFilterQuickPickItems, FilterBarItem, FilterCounts, FilterType } from './FilterBarItem';
+import { MessageItem } from './MessageItem';
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
     private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private allEntries: { item: PackageItem; dev: boolean }[] = [];
-    private loading = false;
+    private loading = true;
     private filterType: FilterType = 'all';
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -29,6 +30,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     setFilter(type: FilterType): void {
         this.filterType = type;
+        this._onDidChangeTreeData.fire();
+    }
+
+    markPackageUpdated(packageName: string, newVersion: string): void {
+        const index = this.allEntries.findIndex((e) => e.item.packageName === packageName);
+        if (index === -1) {
+            return;
+        }
+
+        const { dev } = this.allEntries[index];
+        this.allEntries[index] = {
+            item: new PackageItem(packageName, newVersion, undefined, 'none'),
+            dev,
+        };
         this._onDidChangeTreeData.fire();
     }
 
@@ -125,12 +140,19 @@ function getFilterCounts(entries: { item: PackageItem; dev: boolean }[]): Filter
 function buildGroups(
     entries: { item: PackageItem; dev: boolean }[],
     filterType: FilterType,
-): GroupItem[] {
+): vscode.TreeItem[] {
     const filtered = filterType === 'all'
         ? entries
         : filterType === 'hasUpdates'
             ? entries.filter((e) => e.item.updateType !== 'none')
             : entries.filter((e) => e.item.updateType === filterType);
+    if (entries.length === 0) {
+        return [new MessageItem('No packages found in workspace.')];
+    }
+    if (filtered.length === 0) {
+        return [new MessageItem('No packages match the current filter.')];
+    }
+
     const deps = filtered.filter((e) => !e.dev).map((e) => e.item);
     const devDeps = filtered.filter((e) => e.dev).map((e) => e.item);
     const groups: GroupItem[] = [];

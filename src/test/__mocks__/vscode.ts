@@ -15,8 +15,12 @@ export const window = {
     showErrorMessage: vi.fn<() => void>(),
     showQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    createTerminal: vi.fn(() => ({ sendText: vi.fn(), show: vi.fn() })),
     createOutputChannel: vi.fn(() => outputChannel),
+};
+
+export const tasks = {
+    executeTask: vi.fn().mockResolvedValue({ id: 'task-execution' }),
+    onDidEndTaskProcess: vi.fn(() => ({ dispose: vi.fn() })),
 };
 
 export const workspace = {
@@ -45,6 +49,34 @@ export class ThemeIcon {
 export class ThemeColor {
     constructor(public readonly id: string) {}
 }
+
+export class ShellExecution {
+    constructor(public readonly commandLine: string) {}
+}
+
+export class Task {
+    public presentationOptions?: unknown;
+
+    constructor(
+        public readonly definition: unknown,
+        public readonly scope: unknown,
+        public readonly name: string,
+        public readonly source: string,
+        public readonly execution: ShellExecution,
+    ) {}
+}
+
+export const TaskScope = {
+    Workspace: 1,
+} as const;
+
+export const TaskRevealKind = {
+    Always: 1,
+} as const;
+
+export const TaskPanelKind = {
+    New: 2,
+} as const;
 
 export class TreeItem {
     public description?: string;

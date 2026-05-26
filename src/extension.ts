@@ -18,7 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.registerTreeDataProvider('nestro.packagesView', provider),
         vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
         vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
-        vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item); }),
+        vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
         vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
         vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
         vscode.commands.registerCommand('nestro.openSettings', () => {
