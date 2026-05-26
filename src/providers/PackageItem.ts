@@ -8,8 +8,9 @@ export class PackageItem extends vscode.TreeItem {
         outdated: boolean,
     ) {
         super(packageName, vscode.TreeItemCollapsibleState.None);
-        this.description = latest ? `${currentVersion} → ${latest}` : currentVersion;
-        this.tooltip = `${packageName}@${currentVersion}${latest ? ` (latest: ${latest})` : ''}`;
+        const hasUpdate = latest !== undefined && latest !== currentVersion;
+        this.description = hasUpdate ? `${currentVersion} → ${latest}` : currentVersion;
+        this.tooltip = `${packageName}@${currentVersion}${hasUpdate ? ` (latest: ${latest})` : ''}`;
         this.contextValue = outdated ? 'outdated' : 'package';
         this.iconPath = outdated
             ? new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.yellow'))
