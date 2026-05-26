@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { PackagesProvider, PackageItem } from './PackagesProvider';
-import { runInstall } from './packageUtils';
+import { PackagesProvider, PackageItem } from './providers';
+import { helloWorldCommand, installUpdateCommand } from './commands';
 
 export function activate(context: vscode.ExtensionContext): void {
     console.log('Congratulations, your extension "nestro" is now active!');
@@ -8,16 +8,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const provider = new PackagesProvider();
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('nestro.helloWorld', () => {
-            vscode.window.showInformationMessage('Hello World from Nestro again!');
-        }),
+        vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),
         vscode.window.registerTreeDataProvider('nestro.packagesView', provider),
         vscode.commands.registerCommand('nestro.refresh', () => { void provider.refresh(); }),
-        vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => {
-            if (item.latest !== undefined) {
-                runInstall(item.packageName, item.latest);
-            }
-        }),
+        vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => installUpdateCommand(item)),
         provider,
     );
 

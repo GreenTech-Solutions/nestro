@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as vscode from 'vscode';
 import { activate, deactivate } from '../extension';
 
-vi.mock('../PackagesProvider', () => ({
+vi.mock('../providers', () => ({
     PackagesProvider: vi.fn(function (this: Record<string, unknown>) {
         this.refresh = vi.fn().mockResolvedValue(undefined);
         this.dispose = vi.fn();
