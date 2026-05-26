@@ -114,10 +114,11 @@ function buildFilterBar(
 
 function getFilterCounts(entries: { item: PackageItem; dev: boolean }[]): FilterCounts {
     return {
-        all:      entries.length,
-        patch:    entries.filter((e) => e.item.updateType === 'patch').length,
-        minor:    entries.filter((e) => e.item.updateType === 'minor').length,
-        breaking: entries.filter((e) => e.item.updateType === 'breaking').length,
+        all:        entries.length,
+        hasUpdates: entries.filter((e) => e.item.updateType !== 'none').length,
+        patch:      entries.filter((e) => e.item.updateType === 'patch').length,
+        minor:      entries.filter((e) => e.item.updateType === 'minor').length,
+        breaking:   entries.filter((e) => e.item.updateType === 'breaking').length,
     };
 }
 
@@ -127,7 +128,9 @@ function buildGroups(
 ): GroupItem[] {
     const filtered = filterType === 'all'
         ? entries
-        : entries.filter((e) => e.item.updateType === filterType);
+        : filterType === 'hasUpdates'
+            ? entries.filter((e) => e.item.updateType !== 'none')
+            : entries.filter((e) => e.item.updateType === filterType);
     const deps = filtered.filter((e) => !e.dev).map((e) => e.item);
     const devDeps = filtered.filter((e) => e.dev).map((e) => e.item);
     const groups: GroupItem[] = [];
