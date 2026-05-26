@@ -55,6 +55,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this._onDidChangeTreeData.fire();
   }
 
+  markPackageUpdating(packageName: string, installing: boolean): void {
+    const index = this.allEntries.findIndex(e => e.item.packageName === packageName);
+    if (index === -1) {
+      return;
+    }
+
+    const { item, dev } = this.allEntries[index];
+    this.allEntries[index] = {
+      item: new PackageItem(item.packageName, item.currentVersion, item.latest, item.updateType, installing),
+      dev,
+    };
+    this._onDidChangeTreeData.fire();
+  }
+
   async showFilterPicker(): Promise<void> {
     if (this.allEntries.length === 0) {
       return;

@@ -3,7 +3,8 @@ import { PackageItem, PackagesProvider } from '../providers';
 import { buildInstallCommand, detectPackageManager, logger, showError } from '../utils';
 
 export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
-  if (item.latest !== undefined) {
+  if (item.latest !== undefined && !item.installing) {
+    provider.markPackageUpdating(item.packageName, true);
     try {
       logger.info(`Preparing update for ${item.packageName} to ${item.latest}.`);
       const packageManager = await detectPackageManager();
@@ -32,10 +33,13 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
         listener?.dispose();
         if (e.exitCode === 0 && item.latest !== undefined) {
           provider.markPackageUpdated(item.packageName, item.latest);
+          return;
         }
+        provider.markPackageUpdating(item.packageName, false);
       });
     }
     catch (err) {
+      provider.markPackageUpdating(item.packageName, false);
       showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   }

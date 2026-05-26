@@ -14,5 +14,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Show loading and empty-filter messages in the packages sidebar instead of blank states.
 - Show package filters as a single compact row and hide them when no packages are loaded.
 - Use colored upward arrows for package update indicators.
+- Show a spinner on the package row while its update command is running.
 - Add a Nestro Output channel for extension diagnostics.
 - Initial release

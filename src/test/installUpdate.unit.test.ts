@@ -13,7 +13,7 @@ describe('installUpdateCommand()', () => {
   });
 
   it('uses the detected package manager in the update task command', async () => {
-    const provider = { markPackageUpdated: vi.fn() } as unknown as PackagesProvider;
+    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
     vi.mocked(vscode.workspace.findFiles)
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
@@ -31,7 +31,7 @@ describe('installUpdateCommand()', () => {
   });
 
   it('marks the package updated after the task exits successfully', async () => {
-    const provider = { markPackageUpdated: vi.fn() } as unknown as PackagesProvider;
+    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
     const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
     vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
 
@@ -41,5 +41,20 @@ describe('installUpdateCommand()', () => {
     listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
 
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3');
+  });
+
+  it('shows package update progress while the task runs', async () => {
+    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor'), provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith('typescript', true);
+
+    const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
+    listener({ execution, exitCode: 1 } as vscode.TaskProcessEndEvent);
+
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false);
   });
 });
