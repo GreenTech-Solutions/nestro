@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readWorkspaceDependencies, fetchLatestVersion, isVersionOutdated } from '../utils';
+import { readWorkspaceDependencies, fetchLatestVersion, isVersionOutdated, showError } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
@@ -33,8 +33,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             this.groups = buildGroups(
                 entries.map((e) => ({ item: new PackageItem(e.name, e.current, undefined, false), dev: e.dev })),
             );
-        } catch {
-            this.groups = [];
+        } catch (err) {
+            showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`);
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();
@@ -58,8 +58,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 }),
             );
             this.groups = buildGroups(results);
-        } catch {
-            this.groups = [];
+        } catch (err) {
+            showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`);
         } finally {
             this.loading = false;
             this._onDidChangeTreeData.fire();
