@@ -66,11 +66,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this.loading = true;
         this._onDidChangeTreeData.fire();
         try {
+            const includePreReleases = vscode.workspace
+                .getConfiguration('nestro')
+                .get<boolean>('includePreReleases', true);
             const entries = await readWorkspaceDependencies();
             this.allEntries = await Promise.all(
                 entries.map(async (entry) => {
                     try {
-                        const latest = await fetchLatestVersion(entry.name);
+                        const latest = await fetchLatestVersion(entry.name, includePreReleases);
                         const updateType = getUpdateType(entry.current, latest);
                         return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
                     } catch {

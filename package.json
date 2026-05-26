@@ -38,6 +38,11 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically check for package updates when the extension activates."
+        },
+        "nestro.includePreReleases": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include pre-release versions when checking for package updates."
         }
       }
     },
