@@ -1,15 +1,16 @@
-out
-dist
-node_modules
-.vscode-test/
-*.vsix
-.agents
-.claude
-.caliber
-CLAUDE.md
+# Dependencies
+node_modules/
 
-# Caliber local state
-.caliber/
-AGENTS.md
-CALIBER_LEARNINGS.md
+# Build output
+out/
+dist/
+*.vsix
+
+# Testing
+.vscode-test/
+
+# Linting caches
 .eslintcache
+
+# AI
+.caliber/
