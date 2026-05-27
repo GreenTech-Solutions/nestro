@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { activate, deactivate } from '../extension';
+import { PackagesProvider } from '../providers';
 
 vi.mock('../providers', () => ({
+  isFilterType: (value: unknown): boolean => (
+    typeof value === 'string'
+    && ['all', 'hasUpdates', 'patch', 'minor', 'breaking'].includes(value)
+  ),
   PackagesProvider: vi.fn(function (this: Record<string, unknown>) {
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
@@ -21,9 +26,18 @@ function makeContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
 }
 
+function mockNestroConfiguration(values: Record<string, unknown>): void {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: vi.fn((key: string, defaultValue: unknown) => (
+      Object.hasOwn(values, key) ? values[key] : defaultValue
+    )),
+  } as unknown as vscode.WorkspaceConfiguration);
+}
+
 describe('activate()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNestroConfiguration({});
   });
 
   it('registers nestro.helloWorld command', () => {
@@ -97,6 +111,28 @@ describe('activate()', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       'Hello World from Nestro again!',
     );
+  });
+
+  it('passes configured default filter to the packages provider', () => {
+    mockNestroConfiguration({ defaultFilter: 'hasUpdates' });
+
+    activate(makeContext());
+
+    expect(PackagesProvider).toHaveBeenCalledWith('hasUpdates');
+  });
+
+  it('uses all as the default filter when the setting is missing', () => {
+    activate(makeContext());
+
+    expect(PackagesProvider).toHaveBeenCalledWith('all');
+  });
+
+  it('falls back to all when the default filter setting is invalid', () => {
+    mockNestroConfiguration({ defaultFilter: 'invalid-filter' });
+
+    activate(makeContext());
+
+    expect(PackagesProvider).toHaveBeenCalledWith('all');
   });
 });
 

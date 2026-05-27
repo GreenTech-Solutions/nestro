@@ -55,6 +55,18 @@
           "default": "latest",
           "description": "Version target strategy for update checks."
         },
+        "nestro.defaultFilter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "hasUpdates",
+            "patch",
+            "minor",
+            "breaking"
+          ],
+          "default": "all",
+          "description": "Default package sidebar filter."
+        },
         "nestro.deferInstallAfterUpdate": {
           "type": "boolean",
           "default": false,
@@ -142,6 +154,7 @@
     "pretest": "tsc -p tsconfig.test.json && pnpm run lint",
     "typecheck": "tsc --noEmit",
     "lint:eslint": "eslint --fix --cache src",
+    "lint:stylelint": "stylelint src --fix",
     "lint": "run-s lint:*",
     "test": "vscode-test",
     "test:unit": "vitest run",

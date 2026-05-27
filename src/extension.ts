@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PackageItem, PackagesProvider } from './providers';
+import { isFilterType, PackageItem, PackagesProvider } from './providers';
 import type { FilterType } from './providers';
 import { helloWorldCommand, installUpdateCommand, runInstallCommand, updateAllVisibleCommand } from './commands';
 import { logger } from './utils';
@@ -7,11 +7,11 @@ import { logger } from './utils';
 export function activate(context: vscode.ExtensionContext): void {
   logger.info('Extension activated.');
 
-  const provider = new PackagesProvider();
-
-  const checkUpdatesOnStartup = vscode.workspace
-    .getConfiguration('nestro')
-    .get<boolean>('checkUpdatesOnStartup', false);
+  const config = vscode.workspace.getConfiguration('nestro');
+  const configuredDefaultFilter = config.get<unknown>('defaultFilter', 'all');
+  const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
+  const provider = new PackagesProvider(defaultFilter);
+  const checkUpdatesOnStartup = config.get<boolean>('checkUpdatesOnStartup', false);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),

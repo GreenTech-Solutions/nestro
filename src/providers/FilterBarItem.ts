@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 
-export type FilterType = 'all' | 'hasUpdates' | 'patch' | 'minor' | 'breaking';
+export const FILTER_TYPES = ['all', 'hasUpdates', 'patch', 'minor', 'breaking'] as const;
+
+export type FilterType = typeof FILTER_TYPES[number];
 
 const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
   all: { label: 'All' },
@@ -11,6 +13,10 @@ const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
 };
 
 export type FilterCounts = Record<FilterType, number>;
+
+export function isFilterType(value: unknown): value is FilterType {
+  return typeof value === 'string' && (FILTER_TYPES as readonly string[]).includes(value);
+}
 
 export class FilterBarItem extends vscode.TreeItem {
   constructor(
@@ -34,8 +40,7 @@ export function createFilterQuickPickItems(
   counts: FilterCounts,
   activeFilter: FilterType,
 ): (vscode.QuickPickItem & { filterType: FilterType })[] {
-  const filters: FilterType[] = ['all', 'hasUpdates', 'patch', 'minor', 'breaking'];
-  return filters.map((filterType) => {
+  return FILTER_TYPES.map((filterType) => {
     const cfg = FILTER_CONFIG[filterType];
     const icon = activeFilter === filterType ? 'circle-filled' : 'circle-large-outline';
     return {
@@ -50,8 +55,7 @@ export function createFilterQuickPickItems(
 }
 
 function formatFilterLine(counts: FilterCounts): string {
-  const filters: FilterType[] = ['all', 'hasUpdates', 'patch', 'minor', 'breaking'];
-  return filters
+  return FILTER_TYPES
     .map(filterType => `${FILTER_CONFIG[filterType].label} (${counts[filterType]})`)
     .join(' | ');
 }

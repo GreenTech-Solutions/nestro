@@ -20,7 +20,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private allEntries: { item: PackageItem; dev: boolean }[] = [];
   private loading = true;
-  private filterType: FilterType = 'all';
+  private filterType: FilterType;
+
+  constructor(initialFilter: FilterType = 'all') {
+    this.filterType = initialFilter;
+  }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
