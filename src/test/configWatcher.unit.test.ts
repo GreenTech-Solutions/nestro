@@ -25,7 +25,7 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('applies changed defaultFilter immediately', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn() };
+    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
     mockNestroConfiguration({ defaultFilter: 'patch' });
 
     registerConfigurationWatcher(makeContext(), provider);
@@ -37,29 +37,31 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('resets update data when updateTarget changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn() };
+    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
     listener(makeConfigEvent(['nestro.updateTarget']));
 
     expect(provider.resetUpdateData).toHaveBeenCalledTimes(1);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.setFilter).not.toHaveBeenCalled();
   });
 
   it('resets update data when includePreReleases changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn() };
+    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
     listener(makeConfigEvent(['nestro.includePreReleases']));
 
     expect(provider.resetUpdateData).toHaveBeenCalledTimes(1);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.setFilter).not.toHaveBeenCalled();
   });
 
   it('does not react to deferInstallAfterUpdate changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn() };
+    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
@@ -67,6 +69,7 @@ describe('registerConfigurationWatcher()', () => {
 
     expect(provider.setFilter).not.toHaveBeenCalled();
     expect(provider.resetUpdateData).not.toHaveBeenCalled();
+    expect(provider.invalidateUpdateCache).not.toHaveBeenCalled();
   });
 });
 

@@ -19,6 +19,7 @@ vi.mock('../providers', () => ({
     this.attachTreeView = vi.fn();
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
+    this.invalidateUpdateCache = vi.fn();
     this.setFilter = vi.fn();
     this.resetUpdateData = vi.fn();
     this.showFilterPicker = vi.fn().mockResolvedValue(undefined);

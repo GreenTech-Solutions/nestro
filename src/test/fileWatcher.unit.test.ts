@@ -22,6 +22,7 @@ describe('registerPackageJsonWatcher()', () => {
 
     vi.advanceTimersByTime(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
 
   it('debounces several rapid file events into one refresh', () => {
@@ -36,6 +37,7 @@ describe('registerPackageJsonWatcher()', () => {
     vi.advanceTimersByTime(500);
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
 
   it('does not refresh while provider writes are suppressed', () => {
@@ -46,6 +48,7 @@ describe('registerPackageJsonWatcher()', () => {
     vi.advanceTimersByTime(500);
 
     expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(provider.invalidateUpdateCache).not.toHaveBeenCalled();
   });
 
   it('refreshes immediately when package.json is deleted', () => {
@@ -55,14 +58,17 @@ describe('registerPackageJsonWatcher()', () => {
     getWatcherHandler('onDidDelete')();
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
 });
 
 function makeProvider(suppressingWrites: boolean): {
+  invalidateUpdateCache: ReturnType<typeof vi.fn<() => void>>;
   loadPackages: ReturnType<typeof vi.fn<() => Promise<void>>>;
   suppressingWrites: boolean;
 } {
   return {
+    invalidateUpdateCache: vi.fn(),
     loadPackages: vi.fn().mockResolvedValue(undefined),
     suppressingWrites,
   };

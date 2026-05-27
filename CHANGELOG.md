@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Cache package update checks for five minutes and invalidate the cache when package data changes.
 - Add confirmation before updating all visible packages, configurable with `nestro.confirmBulkUpdate`.
 - Add package context actions to open npmjs.com pages and copy package names.
 - Refresh packages automatically when workspace `package.json` changes.

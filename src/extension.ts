@@ -57,7 +57,7 @@ export function deactivate(): void {}
 
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,
-  provider: Pick<PackagesProvider, 'loadPackages' | 'suppressingWrites'>,
+  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'>,
 ): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (folder === undefined) {
@@ -75,6 +75,7 @@ export function registerPackageJsonWatcher(
     }
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
+      provider.invalidateUpdateCache();
       void provider.loadPackages();
     }, 500);
   };
@@ -85,6 +86,7 @@ export function registerPackageJsonWatcher(
     watcher.onDidCreate(scheduleRefresh),
     watcher.onDidDelete(() => {
       clearTimeout(debounceTimer);
+      provider.invalidateUpdateCache();
       void provider.loadPackages();
     }),
   );
@@ -92,7 +94,7 @@ export function registerPackageJsonWatcher(
 
 export function registerConfigurationWatcher(
   context: vscode.ExtensionContext,
-  provider: Pick<PackagesProvider, 'resetUpdateData' | 'setFilter'>,
+  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'resetUpdateData' | 'setFilter'>,
 ): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -105,6 +107,7 @@ export function registerConfigurationWatcher(
         e.affectsConfiguration('nestro.updateTarget')
         || e.affectsConfiguration('nestro.includePreReleases')
       ) {
+        provider.invalidateUpdateCache();
         provider.resetUpdateData();
       }
     }),

@@ -15,6 +15,8 @@ import { FilterManager, FilterType } from './FilterManager';
 import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
+
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -23,6 +25,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private loading = true;
   private isWriting = false;
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
+  private updateCache: {
+    data: Map<string, string>;
+    timestamp: number;
+    target: NcuUpdateTarget;
+    includePreReleases: boolean;
+  } | undefined;
 
   constructor(private readonly filterManager: FilterManager) {
     this.filterChangeDisposable = this.filterManager.onDidChange(() => this.emitTreeChanged());
@@ -58,7 +66,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
     this.isWriting = true;
     try {
-      return await fn();
+      const result = await fn();
+      this.invalidateUpdateCache();
+      return result;
     }
     finally {
       setTimeout(() => {
@@ -91,11 +101,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   resetUpdateData(): void {
+    this.invalidateUpdateCache();
     this.allEntries = this.allEntries.map(({ item, dev }) => ({
       item: new PackageItem(item.packageName, item.currentVersion, undefined, 'none'),
       dev,
     }));
     this.emitTreeChanged();
+  }
+
+  invalidateUpdateCache(): void {
+    this.updateCache = undefined;
+    logger.info('Update cache invalidated.');
   }
 
   markPackageUpdating(packageName: string, installing: boolean): void {
@@ -146,8 +162,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   async checkUpdates(): Promise<void> {
     logger.info('Checking package updates.');
-    this.loading = true;
-    this.emitTreeChanged();
     try {
       const includePreReleases = vscode.workspace
         .getConfiguration('nestro')
@@ -159,10 +173,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         ? this.allEntries.map(e => ({ name: e.item.packageName, current: e.item.currentVersion, dev: e.dev }))
         : await readWorkspaceDependencies();
       logger.info(`Checking updates for ${source.length} package(s).`);
-      const packageFilePath = getWorkspacePackageFilePath();
-      const upgrades = packageFilePath === undefined
-        ? new Map<string, string>()
-        : await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
+      const upgrades = this.isCacheValid(target, includePreReleases)
+        ? this.updateCache?.data ?? new Map<string, string>()
+        : await this.fetchAndCacheUpdates(target, includePreReleases);
       this.allEntries = source.map((entry) => {
         const latest = upgrades.get(entry.name);
         const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
@@ -213,5 +226,37 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       ? { tooltip: `${outdatedCount} package updates available`, value: outdatedCount }
       : undefined;
     this.treeView.message = undefined;
+  }
+
+  private isCacheValid(target: NcuUpdateTarget, includePreReleases: boolean): boolean {
+    if (this.updateCache === undefined) {
+      return false;
+    }
+    if (this.updateCache.target !== target) {
+      return false;
+    }
+    if (this.updateCache.includePreReleases !== includePreReleases) {
+      return false;
+    }
+    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
+  }
+
+  private async fetchAndCacheUpdates(
+    target: NcuUpdateTarget,
+    includePreReleases: boolean,
+  ): Promise<Map<string, string>> {
+    this.loading = true;
+    this.emitTreeChanged();
+    const packageFilePath = getWorkspacePackageFilePath();
+    const upgrades = packageFilePath === undefined
+      ? new Map<string, string>()
+      : await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
+    this.updateCache = {
+      data: upgrades,
+      timestamp: Date.now(),
+      target,
+      includePreReleases,
+    };
+    return upgrades;
   }
 }

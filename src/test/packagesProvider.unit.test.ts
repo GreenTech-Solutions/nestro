@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
 import { FilterManager, GroupItem, PackagesProvider } from '../providers';
 import {
   fetchAllLatestVersions,
@@ -55,4 +56,70 @@ describe('PackagesProvider', () => {
     expect(provider.getChildren()[0].label).toBe('Filter: All');
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
+
+  it('reuses fresh update check results', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches updates again after cache invalidation', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    provider.invalidateUpdateCache();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('expires update check cache after five minutes', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.checkUpdates();
+      vi.setSystemTime(new Date('2026-05-27T00:05:01.000Z'));
+      await provider.checkUpdates();
+
+      expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reuse update cache when update target changes', async () => {
+    mockNestroConfiguration({ updateTarget: 'latest' });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    mockNestroConfiguration({ updateTarget: 'minor' });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse update cache when pre-release setting changes', async () => {
+    mockNestroConfiguration({ includePreReleases: true });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    mockNestroConfiguration({ includePreReleases: false });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
 });
+
+function mockNestroConfiguration(values: Record<string, unknown>): void {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: vi.fn((key: string, defaultValue: unknown) => (
+      Object.hasOwn(values, key) ? values[key] : defaultValue
+    )),
+  } as unknown as vscode.WorkspaceConfiguration);
+}
