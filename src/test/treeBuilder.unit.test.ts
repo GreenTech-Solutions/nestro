@@ -48,6 +48,22 @@ describe('buildTree', () => {
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
 
+  it('sorts hasUpdates packages by severity', () => {
+    const tree = buildTree([
+      makeEntry('patch-package', '1.0.0', '1.0.1', 'patch', false),
+      makeEntry('breaking-package', '1.0.0', '2.0.0', 'breaking', false),
+      makeEntry('minor-package', '1.0.0', '1.1.0', 'minor', false),
+    ], 'hasUpdates');
+
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].children.map(child => child.label)).toEqual([
+      'breaking-package',
+      'minor-package',
+      'patch-package',
+    ]);
+  });
+
   it('keeps the flat tree shape for a single package file', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),

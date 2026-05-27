@@ -5,6 +5,14 @@ import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
+import type { UpdateType } from '../utils';
+
+const UPDATE_ORDER: Record<UpdateType, number> = {
+  breaking: 0,
+  minor: 1,
+  patch: 2,
+  none: 3,
+};
 
 export interface PackageTreeEntry {
   item: PackageItem;
@@ -76,6 +84,10 @@ function buildGroups(
   const filtered = getFilteredEntries(entries, filterType);
   if (filtered.length === 0) {
     return [new MessageItem('No packages match the current filter.')];
+  }
+
+  if (filterType === 'hasUpdates') {
+    filtered.sort((left, right) => UPDATE_ORDER[left.item.updateType] - UPDATE_ORDER[right.item.updateType]);
   }
 
   const deps = filtered.filter(e => !e.dev).map(e => e.item);
