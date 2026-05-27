@@ -90,6 +90,22 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.openOnNpm command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.openOnNpm',
+      expect.any(Function),
+    );
+  });
+
+  it('registers nestro.copyPackageName command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.copyPackageName',
+      expect.any(Function),
+    );
+  });
+
   it('creates tree view for nestro.packagesView', () => {
     activate(makeContext());
     expect(vscode.window.createTreeView).toHaveBeenCalledWith(
@@ -104,7 +120,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(18);
+    expect(ctx.subscriptions).toHaveLength(20);
   });
 
   it('creates Nestro output channel', async () => {

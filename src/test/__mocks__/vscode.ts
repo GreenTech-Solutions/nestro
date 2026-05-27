@@ -10,6 +10,13 @@ export const commands = {
   executeCommand: vi.fn(),
 };
 
+export const env = {
+  openExternal: vi.fn().mockResolvedValue(true),
+  clipboard: {
+    writeText: vi.fn().mockResolvedValue(undefined),
+  },
+};
+
 export const window = {
   showInformationMessage: vi.fn<() => void>(),
   showErrorMessage: vi.fn<() => void>(),
@@ -54,6 +61,9 @@ export const Uri = {
   joinPath: vi.fn((base: { fsPath: string }, path: string) => ({
     fsPath: `${base.fsPath}/${path}`,
     toString: () => `${base.fsPath}/${path}`,
+  })),
+  parse: vi.fn((value: string) => ({
+    toString: () => value,
   })),
 };
 

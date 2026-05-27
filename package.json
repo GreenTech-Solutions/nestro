@@ -112,6 +112,16 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "nestro.openOnNpm",
+        "title": "Open on npmjs.com",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "nestro.copyPackageName",
+        "title": "Copy Package Name",
+        "icon": "$(copy)"
+      },
+      {
         "command": "nestro.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
@@ -150,6 +160,16 @@
           "command": "nestro.installUpdate",
           "when": "view == nestro.packagesView && viewItem == outdated",
           "group": "inline"
+        },
+        {
+          "command": "nestro.openOnNpm",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nestro.copyPackageName",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+          "group": "navigation@2"
         }
       ]
     }
@@ -161,8 +181,7 @@
     "pretest": "tsc -p tsconfig.test.json && pnpm run lint",
     "typecheck": "tsc --noEmit",
     "lint:eslint": "eslint --fix --cache src",
-    "lint:stylelint": "stylelint src --fix",
-    "lint": "run-s lint:*",
+    "lint": "pnpm run lint:eslint",
     "test": "vscode-test",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest"

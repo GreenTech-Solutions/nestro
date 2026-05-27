@@ -27,6 +27,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
+    vscode.commands.registerCommand('nestro.openOnNpm', (item: PackageItem) => {
+      void vscode.env.openExternal(vscode.Uri.parse(`https://www.npmjs.com/package/${item.packageName}`));
+    }),
+    vscode.commands.registerCommand('nestro.copyPackageName', (item: PackageItem) => {
+      void vscode.env.clipboard.writeText(item.packageName);
+    }),
     vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
     vscode.commands.registerCommand('nestro.openSettings', () => {
