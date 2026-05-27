@@ -19,8 +19,17 @@ interface NpmAuditJson {
 
 export async function runNpmAudit(cwd: string): Promise<AuditResult> {
   logger.info(`Running npm audit in ${cwd}.`);
+  return await runAuditCommand('npm', ['audit', '--json'], cwd);
+}
+
+export async function runPackageAudit(packageManager: string, cwd: string): Promise<AuditResult> {
+  logger.info(`Running ${packageManager} audit in ${cwd}.`);
+  return await runAuditCommand(packageManager, ['audit', '--json'], cwd);
+}
+
+async function runAuditCommand(command: string, args: readonly string[], cwd: string): Promise<AuditResult> {
   try {
-    const result = await execFileAsync('npm', ['audit', '--json'], { cwd }) as { stdout: string } | string;
+    const result = await execFileAsync(command, [...args], { cwd }) as { stdout: string } | string;
     return parseAuditJson(typeof result === 'string' ? result : result.stdout);
   }
   catch (err) {
@@ -28,7 +37,7 @@ export async function runNpmAudit(cwd: string): Promise<AuditResult> {
     if (stdout !== undefined) {
       return parseAuditJson(stdout);
     }
-    logger.error('npm audit failed.', err);
+    logger.error(`${command} audit failed.`, err);
     throw err;
   }
 }

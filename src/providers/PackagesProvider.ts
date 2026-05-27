@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
+import { ClientManager } from '../clients';
 import {
   fetchAllLatestVersions,
   getUpdateType,
   logger,
   NcuUpdateTarget,
   readAllWorkspaceDependencies,
-  runNpmAudit,
   showError,
 } from '../utils';
 import type { AuditSeverity, UpdateType } from '../utils';
@@ -28,6 +28,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private isWriting = false;
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
+  private readonly clientManager = new ClientManager();
   private updateCache: {
     data: Map<string, string>;
     timestamp: number;
@@ -247,14 +248,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     try {
-      const result = await runNpmAudit(folder.uri.fsPath);
-      this.auditResults = result.vulnerabilities;
-      logger.info(`Audit: ${result.total} vulnerable package(s).`);
+      const client = await this.clientManager.getClient(folder.uri.fsPath);
+      this.auditResults = await client.runAudit();
+      logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
       this.rebuildPackageItems();
       this.emitTreeChanged();
     }
     catch (err) {
-      showError(`npm audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   }
 

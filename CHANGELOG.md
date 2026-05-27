@@ -7,6 +7,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 - Add monorepo package discovery with folder grouping and per-package-file update commands.
+- Add package manager client classes for npm, pnpm, yarn, and bun command generation and audits.
 - Add `npm audit` support with vulnerability severity indicators in the package tree.
 - Cache package update checks for five minutes and invalidate the cache when package data changes.
 - Add confirmation before updating all visible packages, configurable with `nestro.confirmBulkUpdate`.

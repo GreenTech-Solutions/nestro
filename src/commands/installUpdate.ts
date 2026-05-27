@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { ClientManager } from '../clients';
 import { PackageItem, PackagesProvider } from '../providers';
 import {
-  buildPackageUpdateCommand,
-  buildRunInstallCommand,
-  detectPackageManager,
   getWorkspacePackageFilePath,
   logger,
   showError,
   updateDependencyVersionsInFile,
 } from '../utils';
+
+const clientManager = new ClientManager();
 
 export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
   if (item.latest !== undefined && !item.installing) {
@@ -27,11 +27,10 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
       }
 
       const cwd = path.dirname(packageFilePath);
-      const packageManager = await detectPackageManager(cwd);
-      logger.info(`Detected ${packageManager} package manager for ${item.packageName}.`);
+      const client = await clientManager.getClient(cwd);
       await runPackageUpdateTask(
         [{ item, version: latest }],
-        buildPackageUpdateCommand(packageManager, [{ packageName: item.packageName, version: latest }]),
+        client.buildUpdateCommand([{ name: item.packageName, version: latest }]),
         `Update ${item.packageName}`,
         provider,
         cwd,
@@ -46,8 +45,8 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
 
 export async function runInstallCommand(): Promise<void> {
   try {
-    const packageManager = await detectPackageManager();
-    const command = buildRunInstallCommand(packageManager);
+    const client = await clientManager.getClient(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '');
+    const command = client.buildInstallCommand();
     logger.info(`Running install command: ${command}`);
     await executeShellTask(command, 'Install Dependencies');
   }
@@ -104,10 +103,9 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
 
     for (const group of groupUpdatesByPackageFile(updates)) {
       const cwd = path.dirname(group.packageFilePath);
-      const packageManager = await detectPackageManager(cwd);
-      const command = buildPackageUpdateCommand(
-        packageManager,
-        group.updates.map(update => ({ packageName: update.item.packageName, version: update.version })),
+      const client = await clientManager.getClient(cwd);
+      const command = client.buildUpdateCommand(
+        group.updates.map(update => ({ name: update.item.packageName, version: update.version })),
       );
       await runPackageUpdateTask(group.updates, command, 'Update All Packages', provider, cwd);
     }

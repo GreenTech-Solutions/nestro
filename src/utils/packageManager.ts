@@ -1,29 +1,11 @@
-import * as vscode from 'vscode';
-import * as path from 'path';
-import { logger } from './logger';
+import { ClientManager, PackageManager } from '../clients';
 
-export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+const clientManager = new ClientManager();
 
-interface PackageJson {
-  packageManager?: string;
-}
-
-const packageManagerNames = ['npm', 'pnpm', 'yarn', 'bun'] as const;
+export type { PackageManager };
 
 export async function detectPackageManager(cwd?: string): Promise<PackageManager> {
-  try {
-    const fromManifest = await detectPackageManagerFromManifest(cwd);
-    if (fromManifest !== undefined) {
-      return fromManifest;
-    }
-
-    const fromLockfile = await detectPackageManagerFromLockfile(cwd);
-    return fromLockfile ?? 'npm';
-  }
-  catch (err) {
-    logger.error('Failed to detect package manager.', err);
-    throw err;
-  }
+  return await clientManager.detectPackageManager(cwd);
 }
 
 export function buildInstallCommand(
@@ -38,73 +20,11 @@ export function buildPackageUpdateCommand(
   packageManager: PackageManager,
   updates: readonly { packageName: string; version: string }[],
 ): string {
-  const targets = updates.map(update => `${update.packageName}@${update.version}`).join(' ');
-  switch (packageManager) {
-    case 'pnpm':
-    case 'yarn':
-    case 'bun':
-      return `${packageManager} add ${targets}`;
-    case 'npm':
-      return `npm install ${targets}`;
-  }
+  return clientManager
+    .createClient(packageManager, '')
+    .buildUpdateCommand(updates.map(update => ({ name: update.packageName, version: update.version })));
 }
 
 export function buildRunInstallCommand(packageManager: PackageManager): string {
-  return `${packageManager} install`;
-}
-
-async function detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
-  if (cwd !== undefined) {
-    try {
-      const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
-      const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJson;
-      const packageManager = manifest.packageManager?.split('@')[0];
-      return parsePackageManager(packageManager);
-    }
-    catch {
-      return undefined;
-    }
-  }
-
-  const files = await vscode.workspace.findFiles('**/package.json', '**/node_modules/**', 1);
-  if (files.length === 0) {
-    return undefined;
-  }
-
-  const raw = await vscode.workspace.fs.readFile(files[0]);
-  const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJson;
-  const packageManager = manifest.packageManager?.split('@')[0];
-  return parsePackageManager(packageManager);
-}
-
-async function detectPackageManagerFromLockfile(cwd: string | undefined): Promise<PackageManager | undefined> {
-  const lockfiles = [
-    { fileName: 'pnpm-lock.yaml', pattern: '**/pnpm-lock.yaml', packageManager: 'pnpm' },
-    { fileName: 'yarn.lock', pattern: '**/yarn.lock', packageManager: 'yarn' },
-    { fileName: 'bun.lock', pattern: '**/bun.lock', packageManager: 'bun' },
-    { fileName: 'bun.lockb', pattern: '**/bun.lockb', packageManager: 'bun' },
-    { fileName: 'package-lock.json', pattern: '**/package-lock.json', packageManager: 'npm' },
-    { fileName: 'npm-shrinkwrap.json', pattern: '**/npm-shrinkwrap.json', packageManager: 'npm' },
-  ] as const;
-
-  for (const lockfile of lockfiles) {
-    if (cwd !== undefined) {
-      try {
-        await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, lockfile.fileName)));
-        return lockfile.packageManager;
-      }
-      catch {
-        continue;
-      }
-    }
-    const files = await vscode.workspace.findFiles(lockfile.pattern, '**/node_modules/**', 1);
-    if (files.length > 0) {
-      return lockfile.packageManager;
-    }
-  }
-  return undefined;
-}
-
-function parsePackageManager(value: string | undefined): PackageManager | undefined {
-  return packageManagerNames.find(name => name === value);
+  return clientManager.createClient(packageManager, '').buildInstallCommand();
 }
