@@ -6,6 +6,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Refresh packages automatically when workspace `package.json` changes.
+- Apply `nestro.defaultFilter`, `nestro.updateTarget`, and `nestro.includePreReleases` changes without restarting the extension.
+- Preserve dependency version prefixes such as `^`, `~`, and `>=` during deferred package updates.
 - Use native TreeView controls, welcome state, and package update badges in the sidebar.
 - Add the `nestro.defaultFilter` setting for the initial package sidebar filter.
 - Add deferred package updates with `nestro.deferInstallAfterUpdate`, `Run Install`, and `Update All` sidebar actions.

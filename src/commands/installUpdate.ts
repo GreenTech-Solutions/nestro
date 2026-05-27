@@ -11,20 +11,23 @@ import {
 
 export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
   if (item.latest !== undefined && !item.installing) {
+    const latest = item.latest;
     try {
-      logger.info(`Preparing update for ${item.packageName} to ${item.latest}.`);
+      logger.info(`Preparing update for ${item.packageName} to ${latest}.`);
       if (isDeferredInstallEnabled()) {
         provider.markPackageUpdating(item.packageName, true);
-        await updateWorkspaceDependencyVersions([{ name: item.packageName, version: item.latest }]);
-        provider.markPackageUpdated(item.packageName, item.latest);
+        await provider.withWriteSuppressed(() => updateWorkspaceDependencyVersions([
+          { name: item.packageName, version: latest },
+        ]));
+        provider.markPackageUpdated(item.packageName, latest);
         return;
       }
 
       const packageManager = await detectPackageManager();
       logger.info(`Detected ${packageManager} package manager for ${item.packageName}.`);
       await runPackageUpdateTask(
-        [{ item, version: item.latest }],
-        buildPackageUpdateCommand(packageManager, [{ packageName: item.packageName, version: item.latest }]),
+        [{ item, version: latest }],
+        buildPackageUpdateCommand(packageManager, [{ packageName: item.packageName, version: latest }]),
         `Update ${item.packageName}`,
         provider,
       );
@@ -61,8 +64,10 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
   try {
     if (isDeferredInstallEnabled()) {
       updates.forEach(update => provider.markPackageUpdating(update.item.packageName, true));
-      await updateWorkspaceDependencyVersions(
-        updates.map(update => ({ name: update.item.packageName, version: update.version })),
+      await provider.withWriteSuppressed(() =>
+        updateWorkspaceDependencyVersions(
+          updates.map(update => ({ name: update.item.packageName, version: update.version })),
+        ),
       );
       updates.forEach(update => provider.markPackageUpdated(update.item.packageName, update.version));
       return;

@@ -28,6 +28,13 @@ export const workspace = {
   getConfiguration: vi.fn(() => ({
     get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
   })),
+  onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
+  createFileSystemWatcher: vi.fn(() => ({
+    dispose: vi.fn(),
+    onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidCreate: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidDelete: vi.fn(() => ({ dispose: vi.fn() })),
+  })),
   workspaceFolders: [{ uri: { fsPath: '/workspace' } }],
   findFiles: vi.fn().mockResolvedValue([]),
   fs: {
@@ -35,6 +42,13 @@ export const workspace = {
     writeFile: vi.fn().mockResolvedValue(undefined),
   },
 };
+
+export class RelativePattern {
+  constructor(
+    public readonly base: unknown,
+    public readonly pattern: string,
+  ) {}
+}
 
 export const Uri = {
   joinPath: vi.fn((base: { fsPath: string }, path: string) => ({

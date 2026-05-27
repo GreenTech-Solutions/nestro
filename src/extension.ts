@@ -37,6 +37,9 @@ export function activate(context: vscode.ExtensionContext): void {
     provider,
   );
 
+  registerPackageJsonWatcher(context, provider);
+  registerConfigurationWatcher(context, provider);
+
   void provider.loadPackages().then(() => {
     if (checkUpdatesOnStartup) {
       void provider.checkUpdates();
@@ -45,3 +48,59 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+export function registerPackageJsonWatcher(
+  context: vscode.ExtensionContext,
+  provider: Pick<PackagesProvider, 'loadPackages' | 'suppressingWrites'>,
+): void {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder === undefined) {
+    return;
+  }
+
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(folder, 'package.json'),
+  );
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const scheduleRefresh = (): void => {
+    if (provider.suppressingWrites) {
+      return;
+    }
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      void provider.loadPackages();
+    }, 500);
+  };
+
+  context.subscriptions.push(
+    watcher,
+    watcher.onDidChange(scheduleRefresh),
+    watcher.onDidCreate(scheduleRefresh),
+    watcher.onDidDelete(() => {
+      clearTimeout(debounceTimer);
+      void provider.loadPackages();
+    }),
+  );
+}
+
+export function registerConfigurationWatcher(
+  context: vscode.ExtensionContext,
+  provider: Pick<PackagesProvider, 'resetUpdateData' | 'setFilter'>,
+): void {
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('nestro.defaultFilter')) {
+        const raw = vscode.workspace.getConfiguration('nestro').get<unknown>('defaultFilter', 'all');
+        const next: FilterType = isFilterType(raw) ? raw : 'all';
+        provider.setFilter(next);
+      }
+      if (
+        e.affectsConfiguration('nestro.updateTarget')
+        || e.affectsConfiguration('nestro.includePreReleases')
+      ) {
+        provider.resetUpdateData();
+      }
+    }),
+  );
+}

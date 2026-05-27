@@ -6,7 +6,7 @@ import { PackagesProvider } from '../providers';
 
 describe('installUpdateCommand()', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
@@ -15,7 +15,11 @@ describe('installUpdateCommand()', () => {
   });
 
   it('uses the detected package manager in the update task command', async () => {
-    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
+    const provider = {
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
     vi.mocked(vscode.workspace.findFiles)
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
@@ -33,7 +37,11 @@ describe('installUpdateCommand()', () => {
   });
 
   it('marks the package updated after the task exits successfully', async () => {
-    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
+    const provider = {
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
     const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
     vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
 
@@ -46,7 +54,11 @@ describe('installUpdateCommand()', () => {
   });
 
   it('shows package update progress while the task runs', async () => {
-    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
+    const provider = {
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
     const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
     vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
 
@@ -70,21 +82,26 @@ describe('installUpdateCommand()', () => {
       '}',
       '',
     ].join('\n')));
-    const provider = { markPackageUpdated: vi.fn(), markPackageUpdating: vi.fn() } as unknown as PackagesProvider;
+    const provider = {
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor'), provider);
 
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
     expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(1);
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
-    expect(JSON.parse(written)).toEqual({ dependencies: { typescript: '5.9.3' } });
+    expect(JSON.parse(written)).toEqual({ dependencies: { typescript: '^5.9.3' } });
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3');
   });
 });
 
 describe('runInstallCommand()', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ path: '/workspace/package.json' }] as vscode.Uri[]);
     vi.mocked(vscode.tasks.executeTask).mockResolvedValue({ id: 'task-execution' } as unknown as vscode.TaskExecution);
   });
@@ -109,7 +126,7 @@ describe('runInstallCommand()', () => {
 
 describe('updateAllVisibleCommand()', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ path: '/workspace/package.json' }] as vscode.Uri[]);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{"packageManager":"pnpm@11.0.8"}'));
@@ -146,8 +163,8 @@ describe('updateAllVisibleCommand()', () => {
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
-      dependencies: { react: '19.0.0' },
-      devDependencies: { typescript: '5.9.3' },
+      dependencies: { react: '^19.0.0' },
+      devDependencies: { typescript: '^5.9.3' },
     });
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('react', '19.0.0');
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3');
@@ -174,5 +191,6 @@ function makeProvider(packages: PackageItem[]): PackagesProvider {
     getVisibleOutdatedPackages: vi.fn(() => packages),
     markPackageUpdated: vi.fn(),
     markPackageUpdating: vi.fn(),
+    withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
   } as unknown as PackagesProvider;
 }

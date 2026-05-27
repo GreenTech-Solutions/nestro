@@ -26,6 +26,15 @@ export function getWorkspacePackageFilePath(): string | undefined {
   return vscode.Uri.joinPath(folder.uri, 'package.json').fsPath;
 }
 
+export function extractVersionPrefix(versionString: string): string {
+  if (versionString.startsWith('workspace:')) {
+    return '';
+  }
+
+  const match = /^([~^]|>=|>|<=|<)/.exec(versionString);
+  return match?.[1] ?? '';
+}
+
 export async function updateWorkspaceDependencyVersions(updates: readonly PackageVersionUpdate[]): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (folder === undefined) {
@@ -39,11 +48,13 @@ export async function updateWorkspaceDependencyVersions(updates: readonly Packag
 
   for (const update of updates) {
     if (json.dependencies?.[update.name] !== undefined) {
-      json.dependencies[update.name] = update.version;
+      const prefix = extractVersionPrefix(json.dependencies[update.name]);
+      json.dependencies[update.name] = `${prefix}${update.version}`;
       continue;
     }
     if (json.devDependencies?.[update.name] !== undefined) {
-      json.devDependencies[update.name] = update.version;
+      const prefix = extractVersionPrefix(json.devDependencies[update.name]);
+      json.devDependencies[update.name] = `${prefix}${update.version}`;
       continue;
     }
     missing.push(update.name);

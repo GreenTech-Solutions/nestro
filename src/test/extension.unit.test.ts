@@ -20,8 +20,10 @@ vi.mock('../providers', () => ({
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.setFilter = vi.fn();
+    this.resetUpdateData = vi.fn();
     this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
     this.getVisibleOutdatedPackages = vi.fn(() => []);
+    this.suppressingWrites = false;
     this.dispose = vi.fn();
     this.onDidChangeTreeData = vi.fn();
     this.getTreeItem = vi.fn();
@@ -102,7 +104,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(13);
+    expect(ctx.subscriptions).toHaveLength(18);
   });
 
   it('creates Nestro output channel', async () => {

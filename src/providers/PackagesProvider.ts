@@ -21,6 +21,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly filterChangeDisposable: vscode.Disposable;
   private allEntries: PackageTreeEntry[] = [];
   private loading = true;
+  private isWriting = false;
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
 
   constructor(private readonly filterManager: FilterManager) {
@@ -50,6 +51,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.filterManager.set(type);
   }
 
+  get suppressingWrites(): boolean {
+    return this.isWriting;
+  }
+
+  async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
+    this.isWriting = true;
+    try {
+      return await fn();
+    }
+    finally {
+      setTimeout(() => {
+        this.isWriting = false;
+      }, 600);
+    }
+  }
+
   getVisibleOutdatedPackages(): PackageItem[] {
     if (this.loading) {
       return [];
@@ -70,6 +87,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       item: new PackageItem(packageName, newVersion, undefined, 'none'),
       dev,
     };
+    this.emitTreeChanged();
+  }
+
+  resetUpdateData(): void {
+    this.allEntries = this.allEntries.map(({ item, dev }) => ({
+      item: new PackageItem(item.packageName, item.currentVersion, undefined, 'none'),
+      dev,
+    }));
     this.emitTreeChanged();
   }
 
