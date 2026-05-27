@@ -18,12 +18,14 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   provider.attachTreeView(treeView);
   const checkUpdatesOnStartup = config.get<boolean>('checkUpdatesOnStartup', false);
+  const runAuditOnStartup = config.get<boolean>('runAuditOnStartup', false);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),
     treeView,
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
+    vscode.commands.registerCommand('nestro.runAudit', () => { void provider.runAudit(); }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
@@ -49,6 +51,9 @@ export function activate(context: vscode.ExtensionContext): void {
   void provider.loadPackages().then(() => {
     if (checkUpdatesOnStartup) {
       void provider.checkUpdates();
+    }
+    if (runAuditOnStartup) {
+      void provider.runAudit();
     }
   });
 }

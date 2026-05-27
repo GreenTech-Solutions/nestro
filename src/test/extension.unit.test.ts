@@ -19,6 +19,7 @@ vi.mock('../providers', () => ({
     this.attachTreeView = vi.fn();
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
+    this.runAudit = vi.fn().mockResolvedValue(undefined);
     this.invalidateUpdateCache = vi.fn();
     this.setFilter = vi.fn();
     this.resetUpdateData = vi.fn();
@@ -75,6 +76,14 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.runAudit command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.runAudit',
+      expect.any(Function),
+    );
+  });
+
   it('registers nestro.runInstall command', () => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -121,7 +130,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(20);
+    expect(ctx.subscriptions).toHaveLength(21);
   });
 
   it('creates Nestro output channel', async () => {

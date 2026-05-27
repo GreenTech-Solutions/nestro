@@ -83,6 +83,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show confirmation dialog before updating all visible packages."
+        },
+        "nestro.runAuditOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run npm audit automatically when the extension activates."
         }
       }
     },
@@ -100,6 +105,11 @@
         "command": "nestro.checkUpdates",
         "title": "Check for Updates",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "nestro.runAudit",
+        "title": "Run Security Audit",
+        "icon": "$(shield)"
       },
       {
         "command": "nestro.installUpdate",
@@ -143,6 +153,11 @@
           "command": "nestro.checkUpdates",
           "when": "view == nestro.packagesView",
           "group": "navigation"
+        },
+        {
+          "command": "nestro.runAudit",
+          "when": "view == nestro.packagesView",
+          "group": "navigation@5"
         },
         {
           "command": "nestro.updateAllVisible",

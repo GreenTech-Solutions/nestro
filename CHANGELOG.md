@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Add `npm audit` support with vulnerability severity indicators in the package tree.
 - Cache package update checks for five minutes and invalidate the cache when package data changes.
 - Add confirmation before updating all visible packages, configurable with `nestro.confirmBulkUpdate`.
 - Add package context actions to open npmjs.com pages and copy package names.

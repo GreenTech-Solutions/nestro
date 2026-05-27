@@ -6,8 +6,10 @@ import {
   logger,
   NcuUpdateTarget,
   readWorkspaceDependencies,
+  runNpmAudit,
   showError,
 } from '../utils';
+import type { AuditSeverity, UpdateType } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { GroupItem } from './GroupItem';
@@ -25,6 +27,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private loading = true;
   private isWriting = false;
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
+  private auditResults: Map<string, AuditSeverity> = new Map();
   private updateCache: {
     data: Map<string, string>;
     timestamp: number;
@@ -94,7 +97,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const { dev } = this.allEntries[index];
     this.allEntries[index] = {
-      item: new PackageItem(packageName, newVersion, undefined, 'none'),
+      item: this.createPackageItem(packageName, newVersion, undefined, 'none'),
       dev,
     };
     this.emitTreeChanged();
@@ -103,7 +106,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   resetUpdateData(): void {
     this.invalidateUpdateCache();
     this.allEntries = this.allEntries.map(({ item, dev }) => ({
-      item: new PackageItem(item.packageName, item.currentVersion, undefined, 'none'),
+      item: this.createPackageItem(item.packageName, item.currentVersion, undefined, 'none'),
       dev,
     }));
     this.emitTreeChanged();
@@ -122,7 +125,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const { item, dev } = this.allEntries[index];
     this.allEntries[index] = {
-      item: new PackageItem(item.packageName, item.currentVersion, item.latest, item.updateType, installing),
+      item: this.createPackageItem(item.packageName, item.currentVersion, item.latest, item.updateType, installing),
       dev,
     };
     this.emitTreeChanged();
@@ -146,9 +149,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.allEntries = entries.map((e) => {
         const existing = existingMap.get(e.name);
         if (existing && existing.item.currentVersion === e.current) {
-          return { item: existing.item, dev: e.dev };
+          return {
+            item: this.createPackageItem(
+              existing.item.packageName,
+              existing.item.currentVersion,
+              existing.item.latest,
+              existing.item.updateType,
+              existing.item.installing,
+            ),
+            dev: e.dev,
+          };
         }
-        return { item: new PackageItem(e.name, e.current, undefined, 'none'), dev: e.dev };
+        return { item: this.createPackageItem(e.name, e.current, undefined, 'none'), dev: e.dev };
       });
     }
     catch (err) {
@@ -179,7 +191,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.allEntries = source.map((entry) => {
         const latest = upgrades.get(entry.name);
         const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
-        return { item: new PackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
+        return { item: this.createPackageItem(entry.name, entry.current, latest, updateType), dev: entry.dev };
       });
       logger.info(`Checked updates for ${source.length} package(s).`);
     }
@@ -197,6 +209,24 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this._onDidChangeTreeData.dispose();
   }
 
+  async runAudit(): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (folder === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runNpmAudit(folder.uri.fsPath);
+      this.auditResults = result.vulnerabilities;
+      logger.info(`Audit: ${result.total} vulnerable package(s).`);
+      this.rebuildPackageItems();
+      this.emitTreeChanged();
+    }
+    catch (err) {
+      showError(`npm audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+  }
+
   private emitTreeChanged(): void {
     this.updateTreeViewState();
     void vscode.commands.executeCommand(
@@ -210,6 +240,36 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       !this.loading && this.allEntries.length === 0,
     );
     this._onDidChangeTreeData.fire();
+  }
+
+  private createPackageItem(
+    packageName: string,
+    currentVersion: string,
+    latest: string | undefined,
+    updateType: UpdateType,
+    installing = false,
+  ): PackageItem {
+    return new PackageItem(
+      packageName,
+      currentVersion,
+      latest,
+      updateType,
+      installing,
+      this.auditResults.get(packageName),
+    );
+  }
+
+  private rebuildPackageItems(): void {
+    this.allEntries = this.allEntries.map(({ item, dev }) => ({
+      item: this.createPackageItem(
+        item.packageName,
+        item.currentVersion,
+        item.latest,
+        item.updateType,
+        item.installing,
+      ),
+      dev,
+    }));
   }
 
   private updateTreeViewState(): void {

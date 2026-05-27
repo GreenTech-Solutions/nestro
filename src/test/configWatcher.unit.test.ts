@@ -16,6 +16,7 @@ vi.mock('../utils', () => ({
     dispose: vi.fn(),
   },
   readWorkspaceDependencies: vi.fn(),
+  runNpmAudit: vi.fn(),
   showError: vi.fn(),
 }));
 
