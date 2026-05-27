@@ -78,6 +78,11 @@
           "type": "boolean",
           "default": false,
           "description": "Update package.json first and run dependency installation separately."
+        },
+        "nestro.confirmBulkUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation dialog before updating all visible packages."
         }
       }
     },

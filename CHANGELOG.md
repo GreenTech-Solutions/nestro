@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Add confirmation before updating all visible packages, configurable with `nestro.confirmBulkUpdate`.
 - Add package context actions to open npmjs.com pages and copy package names.
 - Refresh packages automatically when workspace `package.json` changes.
 - Apply `nestro.defaultFilter`, `nestro.updateTarget`, and `nestro.includePreReleases` changes without restarting the extension.

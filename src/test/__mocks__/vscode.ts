@@ -20,6 +20,7 @@ export const env = {
 export const window = {
   showInformationMessage: vi.fn<() => void>(),
   showErrorMessage: vi.fn<() => void>(),
+  showWarningMessage: vi.fn(),
   showQuickPick: vi.fn(),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
   createTreeView: vi.fn(() => ({ dispose: vi.fn(), badge: undefined, message: undefined })),

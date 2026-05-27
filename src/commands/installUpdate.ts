@@ -57,6 +57,17 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
     return;
   }
 
+  if (isBulkUpdateConfirmationEnabled()) {
+    const answer = await vscode.window.showWarningMessage(
+      `Update ${packages.length} package${packages.length === 1 ? '' : 's'}? This cannot be undone.`,
+      { modal: true },
+      'Update All',
+    );
+    if (answer !== 'Update All') {
+      return;
+    }
+  }
+
   const updates = packages
     .filter((item): item is PackageItem & { latest: string } => item.latest !== undefined)
     .map(item => ({ item, version: item.latest }));
@@ -90,6 +101,12 @@ function isDeferredInstallEnabled(): boolean {
   return vscode.workspace
     .getConfiguration('nestro')
     .get<boolean>('deferInstallAfterUpdate', false);
+}
+
+function isBulkUpdateConfirmationEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration('nestro')
+    .get<boolean>('confirmBulkUpdate', true);
 }
 
 async function runPackageUpdateTask(

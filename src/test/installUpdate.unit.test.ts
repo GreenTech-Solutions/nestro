@@ -135,6 +135,7 @@ describe('updateAllVisibleCommand()', () => {
   });
 
   it('runs one batch task for visible outdated packages in immediate mode', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
     const provider = makeProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking'),
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor'),
@@ -148,7 +149,7 @@ describe('updateAllVisibleCommand()', () => {
   });
 
   it('updates package.json for all visible outdated packages in deferred mode', async () => {
-    mockDeferredInstall(true);
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^18.0.0' },
       devDependencies: { typescript: '^5.0.0' },
@@ -175,14 +176,69 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('updates after confirmation when bulk confirmation is enabled', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: true });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update All' as never);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking'),
+      new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      'Update 2 packages? This cannot be undone.',
+      { modal: true },
+      'Update All',
+    );
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when bulk confirmation is cancelled', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: true });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      'Update 1 package? This cannot be undone.',
+      { modal: true },
+      'Update All',
+    );
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('skips confirmation when bulk confirmation is disabled', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
   });
 });
 
 function mockDeferredInstall(enabled: boolean): void {
+  mockNestroConfiguration({ deferInstallAfterUpdate: enabled });
+}
+
+function mockNestroConfiguration(values: Record<string, unknown>): void {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: vi.fn((key: string, defaultValue: unknown) => key === 'deferInstallAfterUpdate' ? enabled : defaultValue),
+    get: vi.fn((key: string, defaultValue: unknown) => (
+      Object.hasOwn(values, key) ? values[key] : defaultValue
+    )),
   } as unknown as vscode.WorkspaceConfiguration);
 }
 
