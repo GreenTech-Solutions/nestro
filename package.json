@@ -122,6 +122,11 @@
         "icon": "$(arrow-up)"
       },
       {
+        "command": "nestro.pickVersion",
+        "title": "Pick Version...",
+        "icon": "$(list-unordered)"
+      },
+      {
         "command": "nestro.updateAllVisible",
         "title": "Update All",
         "icon": "$(cloud-upload)"
@@ -185,6 +190,11 @@
           "command": "nestro.installUpdate",
           "when": "view == nestro.packagesView && viewItem == outdated",
           "group": "inline"
+        },
+        {
+          "command": "nestro.pickVersion",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "1_update@2"
         },
         {
           "command": "nestro.openOnNpm",

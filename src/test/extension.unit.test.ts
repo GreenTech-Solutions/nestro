@@ -130,7 +130,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(21);
+    expect(ctx.subscriptions).toHaveLength(22);
   });
 
   it('creates Nestro output channel', async () => {

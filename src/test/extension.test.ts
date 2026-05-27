@@ -30,6 +30,11 @@ suite('Extension Test Suite', () => {
     assert.ok(commands.includes('nestro.installUpdate'), 'Update command should be registered');
   });
 
+  test('nestro.pickVersion command is registered', async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('nestro.pickVersion'), 'Pick version command should be registered');
+  });
+
   test('nestro.runInstall command is registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('nestro.runInstall'), 'Run install command should be registered');
