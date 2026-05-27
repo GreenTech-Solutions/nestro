@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { FilterManager, GroupItem, PackageDetailItem, PackageItem, PackagesProvider } from '../providers';
+import {
+  FilterBarItem,
+  FilterManager,
+  GroupItem,
+  PackageDetailItem,
+  PackageItem,
+  PackagesProvider,
+  StatusItem,
+} from '../providers';
 import {
   fetchAllLatestVersions,
   readAllWorkspaceDependencies,
@@ -51,8 +59,10 @@ describe('PackagesProvider', () => {
 
     await provider.checkUpdates();
 
-    const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
-    expect(provider.getChildren()[0].label).toBe('Filter: Has Updates');
+    const tree = provider.getChildren();
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(tree[0]).toBeInstanceOf(StatusItem);
+    expect(tree[1].label).toBe('Filter: Has Updates');
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
@@ -63,8 +73,10 @@ describe('PackagesProvider', () => {
     await provider.checkUpdates();
     provider.setFilter('all');
 
-    const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
-    expect(provider.getChildren()[0].label).toBe('Filter: All');
+    const tree = provider.getChildren();
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(tree[0]).toBeInstanceOf(StatusItem);
+    expect(tree[1].label).toBe('Filter: All');
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
@@ -165,6 +177,31 @@ describe('PackagesProvider', () => {
       expect.objectContaining({ label: 'File: apps/frontend/package.json' }),
     ]);
   });
+
+  it('shows status rows above the filter bar', () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([]);
+    setProviderState(provider, {
+      loading: false,
+      checkState: 'done',
+      lastCheckTime: new Date('2026-05-27T08:45:00.000Z'),
+      auditState: 'done',
+      lastAuditCount: 2,
+      allEntries: [{
+        item: new PackageItem('react', '18.0.0', undefined, 'none'),
+        dev: false,
+        packageFilePath: '/workspace/package.json',
+      }],
+    });
+
+    const tree = provider.getChildren();
+
+    expect(tree[0]).toBeInstanceOf(StatusItem);
+    expect(tree[0].label).toBe('Last update check');
+    expect(tree[1]).toBeInstanceOf(StatusItem);
+    expect(tree[1].label).toBe('Audit complete');
+    expect(tree[2]).toBeInstanceOf(FilterBarItem);
+  });
 });
 
 function mockNestroConfiguration(values: Record<string, unknown>): void {
@@ -173,4 +210,19 @@ function mockNestroConfiguration(values: Record<string, unknown>): void {
       Object.hasOwn(values, key) ? values[key] : defaultValue
     )),
   } as unknown as vscode.WorkspaceConfiguration);
+}
+
+function setProviderState(
+  provider: PackagesProvider,
+  state: {
+    allEntries?: unknown[];
+    auditState?: string;
+    auditResults?: Map<string, unknown>;
+    checkState?: string;
+    lastAuditCount?: number;
+    lastCheckTime?: Date;
+    loading?: boolean;
+  },
+): void {
+  Object.assign(provider as unknown as Record<string, unknown>, state);
 }

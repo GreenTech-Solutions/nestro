@@ -13,6 +13,7 @@ import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
 import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
+import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
 import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
@@ -29,6 +30,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private isWriting = false;
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
+  private checkState: 'idle' | 'running' | 'done' = 'idle';
+  private lastCheckTime: Date | undefined;
+  private auditState: 'idle' | 'running' | 'done' = 'idle';
+  private lastAuditCount: number | undefined;
   private readonly clientManager = new ClientManager();
   private updateCache: {
     data: Map<string, string>;
@@ -53,10 +58,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
     if (this.loading) {
-      return element ? [] : [new LoadingItem()];
+      return element ? [] : [...this.buildStatusItems(), new LoadingItem()];
     }
     if (element instanceof GroupItem) {
       return element.children;
+    }
+    if (element instanceof StatusItem) {
+      return [];
     }
     if (element instanceof WorkspaceFolderItem) {
       return element.children;
@@ -64,7 +72,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (element instanceof PackageItem) {
       return this.getPackageDetails(element);
     }
-    return buildTree(this.allEntries, this.filterManager.current, this.workspaceRoot);
+    return [...this.buildStatusItems(), ...buildTree(this.allEntries, this.filterManager.current, this.workspaceRoot)];
   }
 
   setFilter(type: FilterType): void {
@@ -212,6 +220,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   async checkUpdates(): Promise<void> {
     logger.info('Checking package updates.');
+    this.checkState = 'running';
+    this.emitTreeChanged();
     try {
       const includePreReleases = vscode.workspace
         .getConfiguration('nestro')
@@ -253,8 +263,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         };
       });
       logger.info(`Checked updates for ${source.length} package(s).`);
+      this.checkState = 'done';
+      this.lastCheckTime = new Date();
     }
     catch (err) {
+      this.checkState = 'idle';
       showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
     }
     finally {
@@ -274,14 +287,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
+    this.auditState = 'running';
+    this.emitTreeChanged();
     try {
       const client = await this.clientManager.getClient(folder.uri.fsPath);
       this.auditResults = await client.runAudit();
+      this.auditState = 'done';
+      this.lastAuditCount = this.auditResults.size;
       logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
       this.rebuildPackageItems();
       this.emitTreeChanged();
     }
     catch (err) {
+      this.auditState = 'idle';
       showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   }
@@ -435,6 +453,36 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }
     }
     return details;
+  }
+
+  private buildStatusItems(): StatusItem[] {
+    const items: StatusItem[] = [];
+
+    if (this.checkState === 'running') {
+      items.push(new StatusItem('Checking updates…', '', 'loading~spin'));
+    }
+    else if (this.checkState === 'done' && this.lastCheckTime !== undefined) {
+      items.push(new StatusItem(
+        'Last update check',
+        this.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        'clock',
+      ));
+    }
+
+    if (this.auditState === 'running') {
+      items.push(new StatusItem('Running audit…', '', 'loading~spin'));
+    }
+    else if (this.auditState === 'done') {
+      const count = this.lastAuditCount ?? 0;
+      items.push(new StatusItem(
+        'Audit complete',
+        count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`,
+        count === 0 ? 'shield-check' : 'warning',
+        count === 0 ? 'charts.green' : 'charts.red',
+      ));
+    }
+
+    return items;
   }
 
   private toRelativePackageFilePath(packageFilePath: string): string | undefined {
