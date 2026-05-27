@@ -94,10 +94,12 @@ function buildGroups(
   const devDeps = filtered.filter(e => e.dev).map(e => e.item);
   const groups: GroupItem[] = [];
   if (deps.length > 0) {
-    groups.push(new GroupItem('Dependencies', deps));
+    const outdatedDeps = filtered.filter(e => !e.dev && e.item.updateType !== 'none').length;
+    groups.push(new GroupItem('Dependencies', deps, deps.length, outdatedDeps, false));
   }
   if (devDeps.length > 0) {
-    groups.push(new GroupItem('Dev Dependencies', devDeps));
+    const outdatedDevDeps = filtered.filter(e => e.dev && e.item.updateType !== 'none').length;
+    groups.push(new GroupItem('Dev Dependencies', devDeps, devDeps.length, outdatedDevDeps, true));
   }
   return groups;
 }

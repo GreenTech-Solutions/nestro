@@ -9,6 +9,7 @@ import {
   toRelativeLabel,
   WorkspaceFolderItem,
 } from '../providers';
+import * as vscode from 'vscode';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
@@ -24,6 +25,12 @@ describe('buildTree', () => {
     expect(tree[0]).toBeInstanceOf(FilterBarItem);
     const groups = tree.slice(1).filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups.map(group => group.label)).toEqual(['Dependencies', 'Dev Dependencies']);
+    expect(groups[0].description).toBe('1 packages · 1 outdated');
+    expect(groups[1].description).toBe('1 packages');
+    expect(groups[0].iconPath).toBeInstanceOf(vscode.ThemeIcon);
+    expect(groups[1].iconPath).toBeInstanceOf(vscode.ThemeIcon);
+    expect((groups[0].iconPath as vscode.ThemeIcon).id).toBe('package');
+    expect((groups[1].iconPath as vscode.ThemeIcon).id).toBe('tools');
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
