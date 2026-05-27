@@ -47,10 +47,17 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
 - `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
 - `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`; no VS Code state
-- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts` — tree item classes
+- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
+
+### Clients (`src/clients/`)
+- `Client.ts` — abstract base for package manager clients
+- `ClientManager.ts` — instantiates the correct client based on detected package manager
+- `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts` — concrete client implementations
+- `index.ts` — barrel exports for clients
 
 ### Commands (`src/commands/`)
 - `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; bulk update confirms before proceeding
+- `pickVersion.ts` — `pickVersionCommand`; shows QuickPick for selecting a specific package version
 - `helloWorld.ts` — minimal stub command
 
 ### Utils (`src/utils/`)

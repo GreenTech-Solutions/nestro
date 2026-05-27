@@ -21,7 +21,8 @@ pnpm run test:unit    # vitest run — runs *.unit.test.ts without VS Code
 - `src/test/extension.test.ts` — Mocha tests: `suite()` / `test()` + `assert.strictEqual`
 - `src/test/*.unit.test.ts` — Vitest unit tests (no Electron)
 - `.vscode-test.mjs` — integration test config; `vitest.config.ts` — unit test config
-- `src/providers/` — `PackagesProvider.ts`, `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `index.ts`
+- `src/providers/` — `PackagesProvider.ts`, `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `WorkspaceFolderItem.ts`, `index.ts`
+- `src/clients/` — `Client.ts`, `ClientManager.ts`, `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts`, `index.ts`
 - `src/utils/logger.ts` — Logger singleton; `src/utils/versionUtils.ts` — version utilities
 - `src/utils/auditClient.ts` — runs `npm audit` to detect package vulnerabilities; populates audit badge indicators on `PackageItem`
 - `src/utils/index.ts` — barrel exports for utils
@@ -46,7 +47,13 @@ pnpm run test:unit    # vitest run — runs *.unit.test.ts without VS Code
 
 ### Providers (`src/providers/`)
 - `PackagesProvider.ts` — `TreeDataProvider` implementation
-- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts` — tree item classes
+- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
+- `index.ts` — barrel exports
+
+### Clients (`src/clients/`)
+- `Client.ts` — abstract base for package manager clients
+- `ClientManager.ts` — instantiates the correct client based on detected package manager
+- `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts` — concrete client implementations
 - `index.ts` — barrel exports
 
 ### Testing
