@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildTree, FilterBarItem, GroupItem, MessageItem, PackageItem, PackageTreeEntry } from '../providers';
+import {
+  buildTree,
+  FilterBarItem,
+  GroupItem,
+  MessageItem,
+  PackageItem,
+  PackageTreeEntry,
+  toRelativeLabel,
+  WorkspaceFolderItem,
+} from '../providers';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
@@ -38,6 +47,36 @@ describe('buildTree', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
+
+  it('keeps the flat tree shape for a single package file', () => {
+    const tree = buildTree([
+      makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),
+    ], 'all', '/workspace');
+
+    expect(tree[0]).toBeInstanceOf(FilterBarItem);
+    expect(tree.some(item => item instanceof WorkspaceFolderItem)).toBe(false);
+  });
+
+  it('groups packages by workspace folder for multiple package files', () => {
+    const tree = buildTree([
+      makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/apps/frontend/package.json'),
+      makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
+    ], 'all', '/workspace');
+
+    const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    expect(folders.map(folder => folder.label)).toEqual(['apps/frontend', 'packages/ui']);
+    expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
+  });
+});
+
+describe('toRelativeLabel', () => {
+  it('returns a relative folder label for nested package files', () => {
+    expect(toRelativeLabel('/workspace/apps/frontend/package.json', '/workspace')).toBe('apps/frontend');
+  });
+
+  it('labels the workspace root package file', () => {
+    expect(toRelativeLabel('/workspace/package.json', '/workspace')).toBe('(root)');
+  });
 });
 
 function makeEntry(
@@ -46,9 +85,11 @@ function makeEntry(
   latest: string | undefined,
   updateType: PackageTreeEntry['item']['updateType'],
   dev: boolean,
+  packageFilePath = '/workspace/package.json',
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType),
+    item: new PackageItem(name, current, latest, updateType, false, undefined, packageFilePath),
     dev,
+    packageFilePath,
   };
 }

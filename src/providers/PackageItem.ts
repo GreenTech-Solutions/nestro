@@ -9,6 +9,7 @@ export class PackageItem extends vscode.TreeItem {
     public readonly updateType: UpdateType,
     public readonly installing = false,
     public readonly vulnerabilitySeverity: AuditSeverity | undefined = undefined,
+    public readonly packageFilePath = '',
   ) {
     super(packageName, vscode.TreeItemCollapsibleState.None);
     const hasUpdate = updateType !== 'none';

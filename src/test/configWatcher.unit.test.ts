@@ -2,19 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { registerConfigurationWatcher } from '../extension';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { fetchAllLatestVersions, getWorkspacePackageFilePath, readWorkspaceDependencies } from '../utils';
+import { fetchAllLatestVersions, readAllWorkspaceDependencies } from '../utils';
 
 vi.mock('../utils', () => ({
   fetchAllLatestVersions: vi.fn(),
   getUpdateType: vi.fn((current: string, latest: string) => (
     current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
   )),
-  getWorkspacePackageFilePath: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
     dispose: vi.fn(),
   },
+  readAllWorkspaceDependencies: vi.fn(),
   readWorkspaceDependencies: vi.fn(),
   runNpmAudit: vi.fn(),
   showError: vi.fn(),
@@ -26,7 +26,7 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('applies changed defaultFilter immediately', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
+    const provider = makeProvider();
     mockNestroConfiguration({ defaultFilter: 'patch' });
 
     registerConfigurationWatcher(makeContext(), provider);
@@ -38,7 +38,7 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('resets update data when updateTarget changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
+    const provider = makeProvider();
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
@@ -50,7 +50,7 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('resets update data when includePreReleases changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
+    const provider = makeProvider();
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
@@ -62,7 +62,7 @@ describe('registerConfigurationWatcher()', () => {
   });
 
   it('does not react to deferInstallAfterUpdate changes', () => {
-    const provider = { setFilter: vi.fn(), resetUpdateData: vi.fn(), invalidateUpdateCache: vi.fn() };
+    const provider = makeProvider();
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
@@ -77,11 +77,10 @@ describe('registerConfigurationWatcher()', () => {
 describe('PackagesProvider.resetUpdateData()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getWorkspacePackageFilePath).mockReturnValue('/workspace/package.json');
-    vi.mocked(readWorkspaceDependencies).mockResolvedValue([
-      { name: 'react', current: '18.0.0', dev: false },
-      { name: 'eslint', current: '8.0.0', dev: true },
-      { name: 'typescript', current: '5.0.0', dev: true },
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      { name: 'react', current: '18.0.0', dev: false, packageFilePath: '/workspace/package.json' },
+      { name: 'eslint', current: '8.0.0', dev: true, packageFilePath: '/workspace/package.json' },
+      { name: 'typescript', current: '5.0.0', dev: true, packageFilePath: '/workspace/package.json' },
     ]);
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
@@ -107,6 +106,15 @@ describe('PackagesProvider.resetUpdateData()', () => {
 
 function makeContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
+}
+
+function makeProvider(): Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'resetUpdateData' | 'setFilter'> {
+  return {
+    setFilter: vi.fn(),
+    resetUpdateData: vi.fn(),
+    invalidateUpdateCache: vi.fn(),
+    loadPackages: vi.fn(),
+  };
 }
 
 function makeConfigEvent(changedKeys: string[]): vscode.ConfigurationChangeEvent {

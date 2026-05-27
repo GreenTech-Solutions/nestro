@@ -63,6 +63,11 @@ export const Uri = {
     fsPath: `${base.fsPath}/${path}`,
     toString: () => `${base.fsPath}/${path}`,
   })),
+  file: vi.fn((value: string) => ({
+    fsPath: value,
+    path: value,
+    toString: () => value,
+  })),
   parse: vi.fn((value: string) => ({
     toString: () => value,
   })),
@@ -97,7 +102,10 @@ export class ThemeColor {
 }
 
 export class ShellExecution {
-  constructor(public readonly commandLine: string) {}
+  constructor(
+    public readonly commandLine: string,
+    public readonly options?: unknown,
+  ) {}
 }
 
 export class Task {

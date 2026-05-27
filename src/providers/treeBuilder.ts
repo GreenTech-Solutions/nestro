@@ -4,24 +4,48 @@ import { FilterCounts, FilterType } from './FilterManager';
 import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
+import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 
 export interface PackageTreeEntry {
   item: PackageItem;
   dev: boolean;
+  packageFilePath: string;
 }
 
 export function buildTree(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  workspaceRoot?: string,
 ): vscode.TreeItem[] {
   if (entries.length === 0) {
     return [];
   }
 
+  const packageFiles = new Set(entries.map(entry => entry.packageFilePath));
+  if (packageFiles.size <= 1 || workspaceRoot === undefined) {
+    return buildFlatTree(entries, filterType);
+  }
+
   return [
     new FilterBarItem(getFilterCounts(entries), filterType),
-    ...buildGroups(entries, filterType),
+    ...buildWorkspaceGroups(entries, filterType, workspaceRoot),
   ];
+}
+
+export function toRelativeLabel(packageFilePath: string, workspaceRoot: string): string {
+  const packageFile = packageFilePath.replace(/\\/g, '/');
+  const root = workspaceRoot.replace(/\\/g, '/').replace(/\/$/, '');
+  const packageJsonSuffix = '/package.json';
+  const folderPath = packageFile.endsWith(packageJsonSuffix)
+    ? packageFile.slice(0, -packageJsonSuffix.length)
+    : packageFile;
+  if (folderPath === root) {
+    return '(root)';
+  }
+  if (folderPath.startsWith(`${root}/`)) {
+    return folderPath.slice(root.length + 1);
+  }
+  return folderPath.split('/').at(-1) ?? folderPath;
 }
 
 export function getFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
@@ -64,4 +88,40 @@ function buildGroups(
     groups.push(new GroupItem('Dev Dependencies', devDeps));
   }
   return groups;
+}
+
+function buildFlatTree(
+  entries: readonly PackageTreeEntry[],
+  filterType: FilterType,
+): vscode.TreeItem[] {
+  return [
+    new FilterBarItem(getFilterCounts(entries), filterType),
+    ...buildGroups(entries, filterType),
+  ];
+}
+
+function buildWorkspaceGroups(
+  entries: readonly PackageTreeEntry[],
+  filterType: FilterType,
+  workspaceRoot: string,
+): vscode.TreeItem[] {
+  const byFile = new Map<string, PackageTreeEntry[]>();
+  for (const entry of entries) {
+    byFile.set(entry.packageFilePath, [...(byFile.get(entry.packageFilePath) ?? []), entry]);
+  }
+
+  const folders: WorkspaceFolderItem[] = [];
+  for (const [packageFilePath, fileEntries] of byFile) {
+    const groups: GroupItem[] = buildGroups(fileEntries, filterType)
+      .filter((item): item is GroupItem => item instanceof GroupItem);
+    if (groups.length > 0) {
+      folders.push(new WorkspaceFolderItem(
+        toRelativeLabel(packageFilePath, workspaceRoot),
+        packageFilePath,
+        groups,
+      ));
+    }
+  }
+
+  return folders.length > 0 ? folders : [new MessageItem('No packages match the current filter.')];
 }

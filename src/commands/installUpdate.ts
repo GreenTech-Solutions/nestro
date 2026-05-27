@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { PackageItem, PackagesProvider } from '../providers';
 import {
   buildPackageUpdateCommand,
   buildRunInstallCommand,
   detectPackageManager,
+  getWorkspacePackageFilePath,
   logger,
   showError,
-  updateWorkspaceDependencyVersions,
+  updateDependencyVersionsInFile,
 } from '../utils';
 
 export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
@@ -14,26 +16,29 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
     const latest = item.latest;
     try {
       logger.info(`Preparing update for ${item.packageName} to ${latest}.`);
+      const packageFilePath = getPackageFilePath(item);
       if (isDeferredInstallEnabled()) {
-        provider.markPackageUpdating(item.packageName, true);
-        await provider.withWriteSuppressed(() => updateWorkspaceDependencyVersions([
+        markUpdating(provider, item.packageName, true, item.packageFilePath || undefined);
+        await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(packageFilePath, [
           { name: item.packageName, version: latest },
         ]));
-        provider.markPackageUpdated(item.packageName, latest);
+        markUpdated(provider, item.packageName, latest, item.packageFilePath || undefined);
         return;
       }
 
-      const packageManager = await detectPackageManager();
+      const cwd = path.dirname(packageFilePath);
+      const packageManager = await detectPackageManager(cwd);
       logger.info(`Detected ${packageManager} package manager for ${item.packageName}.`);
       await runPackageUpdateTask(
         [{ item, version: latest }],
         buildPackageUpdateCommand(packageManager, [{ packageName: item.packageName, version: latest }]),
         `Update ${item.packageName}`,
         provider,
+        cwd,
       );
     }
     catch (err) {
-      provider.markPackageUpdating(item.packageName, false);
+      markUpdating(provider, item.packageName, false, item.packageFilePath || undefined);
       showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   }
@@ -74,25 +79,41 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
 
   try {
     if (isDeferredInstallEnabled()) {
-      updates.forEach(update => provider.markPackageUpdating(update.item.packageName, true));
-      await provider.withWriteSuppressed(() =>
-        updateWorkspaceDependencyVersions(
-          updates.map(update => ({ name: update.item.packageName, version: update.version })),
-        ),
-      );
-      updates.forEach(update => provider.markPackageUpdated(update.item.packageName, update.version));
+      updates.forEach(update => markUpdating(
+        provider,
+        update.item.packageName,
+        true,
+        update.item.packageFilePath || undefined,
+      ));
+      await provider.withWriteSuppressed(async () => {
+        for (const group of groupUpdatesByPackageFile(updates)) {
+          await updateDependencyVersionsInFile(
+            group.packageFilePath,
+            group.updates.map(update => ({ name: update.item.packageName, version: update.version })),
+          );
+        }
+      });
+      updates.forEach(update => markUpdated(
+        provider,
+        update.item.packageName,
+        update.version,
+        update.item.packageFilePath || undefined,
+      ));
       return;
     }
 
-    const packageManager = await detectPackageManager();
-    const command = buildPackageUpdateCommand(
-      packageManager,
-      updates.map(update => ({ packageName: update.item.packageName, version: update.version })),
-    );
-    await runPackageUpdateTask(updates, command, 'Update All Packages', provider);
+    for (const group of groupUpdatesByPackageFile(updates)) {
+      const cwd = path.dirname(group.packageFilePath);
+      const packageManager = await detectPackageManager(cwd);
+      const command = buildPackageUpdateCommand(
+        packageManager,
+        group.updates.map(update => ({ packageName: update.item.packageName, version: update.version })),
+      );
+      await runPackageUpdateTask(group.updates, command, 'Update All Packages', provider, cwd);
+    }
   }
   catch (err) {
-    updates.forEach(update => provider.markPackageUpdating(update.item.packageName, false));
+    updates.forEach(update => markUpdating(provider, update.item.packageName, false, update.item.packageFilePath || undefined));
     showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
   }
 }
@@ -114,10 +135,11 @@ async function runPackageUpdateTask(
   command: string,
   taskName: string,
   provider: PackagesProvider,
+  cwd?: string,
 ): Promise<void> {
-  updates.forEach(update => provider.markPackageUpdating(update.item.packageName, true));
+  updates.forEach(update => markUpdating(provider, update.item.packageName, true, update.item.packageFilePath || undefined));
   logger.info(`Running update command: ${command}`);
-  const execution = await executeShellTask(command, taskName);
+  const execution = await executeShellTask(command, taskName, cwd);
   let listener: vscode.Disposable | undefined;
   listener = vscode.tasks.onDidEndTaskProcess((e) => {
     if (e.execution !== execution) {
@@ -126,20 +148,25 @@ async function runPackageUpdateTask(
 
     listener?.dispose();
     if (e.exitCode === 0) {
-      updates.forEach(update => provider.markPackageUpdated(update.item.packageName, update.version));
+      updates.forEach(update => markUpdated(
+        provider,
+        update.item.packageName,
+        update.version,
+        update.item.packageFilePath || undefined,
+      ));
       return;
     }
-    updates.forEach(update => provider.markPackageUpdating(update.item.packageName, false));
+    updates.forEach(update => markUpdating(provider, update.item.packageName, false, update.item.packageFilePath || undefined));
   });
 }
 
-async function executeShellTask(command: string, taskName: string): Promise<vscode.TaskExecution> {
+async function executeShellTask(command: string, taskName: string, cwd?: string): Promise<vscode.TaskExecution> {
   const task = new vscode.Task(
     { type: 'shell' },
     vscode.TaskScope.Workspace,
     taskName,
     'Nestro',
-    new vscode.ShellExecution(command),
+    new vscode.ShellExecution(command, cwd === undefined ? undefined : { cwd }),
   );
   task.presentationOptions = {
     reveal: vscode.TaskRevealKind.Always,
@@ -147,4 +174,52 @@ async function executeShellTask(command: string, taskName: string): Promise<vsco
   };
 
   return await vscode.tasks.executeTask(task);
+}
+
+function getPackageFilePath(item: PackageItem): string {
+  const packageFilePath = item.packageFilePath || getWorkspacePackageFilePath();
+  if (packageFilePath === undefined) {
+    throw new Error('No workspace package.json found.');
+  }
+  return packageFilePath;
+}
+
+function markUpdated(
+  provider: PackagesProvider,
+  packageName: string,
+  version: string,
+  packageFilePath: string | undefined,
+): void {
+  if (packageFilePath === undefined) {
+    provider.markPackageUpdated(packageName, version);
+    return;
+  }
+  provider.markPackageUpdated(packageName, version, packageFilePath);
+}
+
+function markUpdating(
+  provider: PackagesProvider,
+  packageName: string,
+  installing: boolean,
+  packageFilePath: string | undefined,
+): void {
+  if (packageFilePath === undefined) {
+    provider.markPackageUpdating(packageName, installing);
+    return;
+  }
+  provider.markPackageUpdating(packageName, installing, packageFilePath);
+}
+
+function groupUpdatesByPackageFile(
+  updates: readonly { item: PackageItem; version: string }[],
+): { packageFilePath: string; updates: { item: PackageItem; version: string }[] }[] {
+  const byFile = new Map<string, { item: PackageItem; version: string }[]>();
+  for (const update of updates) {
+    const packageFilePath = getPackageFilePath(update.item);
+    byFile.set(packageFilePath, [...(byFile.get(packageFilePath) ?? []), update]);
+  }
+  return [...byFile.entries()].map(([packageFilePath, groupUpdates]) => ({
+    packageFilePath,
+    updates: groupUpdates,
+  }));
 }

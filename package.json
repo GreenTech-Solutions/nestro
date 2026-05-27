@@ -88,6 +88,11 @@
           "type": "boolean",
           "default": false,
           "description": "Run npm audit automatically when the extension activates."
+        },
+        "nestro.monorepoGlob": {
+          "type": "string",
+          "default": "**/package.json",
+          "description": "Glob used to discover package.json files in the workspace."
         }
       }
     },

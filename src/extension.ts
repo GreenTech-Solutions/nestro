@@ -70,7 +70,10 @@ export function registerPackageJsonWatcher(
   }
 
   const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(folder, 'package.json'),
+    new vscode.RelativePattern(
+      folder,
+      vscode.workspace.getConfiguration('nestro').get<string>('monorepoGlob', '**/package.json'),
+    ),
   );
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -99,7 +102,7 @@ export function registerPackageJsonWatcher(
 
 export function registerConfigurationWatcher(
   context: vscode.ExtensionContext,
-  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'resetUpdateData' | 'setFilter'>,
+  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'resetUpdateData' | 'setFilter'>,
 ): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -114,6 +117,10 @@ export function registerConfigurationWatcher(
       ) {
         provider.invalidateUpdateCache();
         provider.resetUpdateData();
+      }
+      if (e.affectsConfiguration('nestro.monorepoGlob')) {
+        provider.invalidateUpdateCache();
+        void provider.loadPackages();
       }
     }),
   );

@@ -3,8 +3,7 @@ import * as vscode from 'vscode';
 import { FilterManager, GroupItem, PackagesProvider } from '../providers';
 import {
   fetchAllLatestVersions,
-  getWorkspacePackageFilePath,
-  readWorkspaceDependencies,
+  readAllWorkspaceDependencies,
 } from '../utils';
 
 vi.mock('../utils', () => ({
@@ -12,12 +11,12 @@ vi.mock('../utils', () => ({
   getUpdateType: vi.fn((current: string, latest: string) => (
     current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
   )),
-  getWorkspacePackageFilePath: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
     dispose: vi.fn(),
   },
+  readAllWorkspaceDependencies: vi.fn(),
   readWorkspaceDependencies: vi.fn(),
   runNpmAudit: vi.fn(),
   showError: vi.fn(),
@@ -26,10 +25,9 @@ vi.mock('../utils', () => ({
 describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getWorkspacePackageFilePath).mockReturnValue('/workspace/package.json');
-    vi.mocked(readWorkspaceDependencies).mockResolvedValue([
-      { name: 'react', current: '18.0.0', dev: false },
-      { name: 'eslint', current: '8.0.0', dev: true },
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      { name: 'react', current: '18.0.0', dev: false, packageFilePath: '/workspace/package.json' },
+      { name: 'eslint', current: '8.0.0', dev: true, packageFilePath: '/workspace/package.json' },
     ]);
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
