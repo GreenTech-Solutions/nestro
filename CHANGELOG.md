@@ -6,6 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Use native TreeView controls, welcome state, and package update badges in the sidebar.
 - Add the `nestro.defaultFilter` setting for the initial package sidebar filter.
 - Add deferred package updates with `nestro.deferInstallAfterUpdate`, `Run Install`, and `Update All` sidebar actions.
 - Batch package update checks through npm-check-updates and add the `nestro.updateTarget` setting.

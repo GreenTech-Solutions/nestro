@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { isFilterType, PackageItem, PackagesProvider } from './providers';
+import { FilterManager, isFilterType, PackageItem, PackagesProvider } from './providers';
 import type { FilterType } from './providers';
 import { helloWorldCommand, installUpdateCommand, runInstallCommand, updateAllVisibleCommand } from './commands';
 import { logger } from './utils';
@@ -10,12 +10,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('nestro');
   const configuredDefaultFilter = config.get<unknown>('defaultFilter', 'all');
   const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
-  const provider = new PackagesProvider(defaultFilter);
+  const filterManager = new FilterManager(defaultFilter);
+  const provider = new PackagesProvider(filterManager);
+  const treeView = vscode.window.createTreeView('nestro.packagesView', {
+    treeDataProvider: provider,
+    showCollapseAll: true,
+  });
+  provider.attachTreeView(treeView);
   const checkUpdatesOnStartup = config.get<boolean>('checkUpdatesOnStartup', false);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),
-    vscode.window.registerTreeDataProvider('nestro.packagesView', provider),
+    treeView,
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
@@ -27,6 +33,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.commands.executeCommand('workbench.action.openSettings', 'nestro');
     }),
     logger,
+    filterManager,
     provider,
   );
 

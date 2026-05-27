@@ -2,9 +2,17 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 
 suite('Extension Test Suite', () => {
-  test('Extension activates successfully', () => {
+  let extension: vscode.Extension<unknown>;
+
+  suiteSetup(async () => {
     const ext = vscode.extensions.getExtension('undefined_publisher.nestro');
     assert.ok(ext, 'Extension should be registered');
+    extension = ext;
+    await extension.activate();
+  });
+
+  test('Extension activates successfully', () => {
+    assert.strictEqual(extension.isActive, true);
   });
 
   test('nestro.helloWorld command is registered', async () => {

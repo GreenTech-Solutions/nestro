@@ -15,6 +15,7 @@ export const window = {
   showErrorMessage: vi.fn<() => void>(),
   showQuickPick: vi.fn(),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
+  createTreeView: vi.fn(() => ({ dispose: vi.fn(), badge: undefined, message: undefined })),
   createOutputChannel: vi.fn(() => outputChannel),
 };
 
@@ -43,8 +44,19 @@ export const Uri = {
 };
 
 export class EventEmitter<T = void> {
-  event = vi.fn() as unknown as Event & ((listener: (e: T) => unknown) => { dispose: () => void });
-  fire = vi.fn();
+  private readonly listeners: ((e: T) => unknown)[] = [];
+
+  event = vi.fn((listener: (e: T) => unknown) => {
+    this.listeners.push(listener);
+    return { dispose: vi.fn() };
+  }) as unknown as Event & ((listener: (e: T) => unknown) => { dispose: () => void });
+
+  fire = vi.fn((event: T) => {
+    for (const listener of this.listeners) {
+      listener(event);
+    }
+  });
+
   dispose = vi.fn();
 }
 
@@ -92,6 +104,7 @@ export class TreeItem {
   public tooltip?: string;
   public contextValue?: string;
   public iconPath?: unknown;
+  public command?: unknown;
 
   constructor(
     public label: string,

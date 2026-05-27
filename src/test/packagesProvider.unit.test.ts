@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GroupItem, PackagesProvider } from '../providers';
+import { FilterManager, GroupItem, PackagesProvider } from '../providers';
 import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePath,
@@ -35,7 +35,7 @@ describe('PackagesProvider', () => {
   });
 
   it('starts with the configured initial filter', async () => {
-    const provider = new PackagesProvider('hasUpdates');
+    const provider = new PackagesProvider(new FilterManager('hasUpdates'));
 
     await provider.checkUpdates();
 
@@ -46,7 +46,7 @@ describe('PackagesProvider', () => {
   });
 
   it('allows setFilter to override the initial filter', async () => {
-    const provider = new PackagesProvider('hasUpdates');
+    const provider = new PackagesProvider(new FilterManager('hasUpdates'));
 
     await provider.checkUpdates();
     provider.setFilter('all');

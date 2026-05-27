@@ -4,11 +4,19 @@ import { activate, deactivate } from '../extension';
 import { PackagesProvider } from '../providers';
 
 vi.mock('../providers', () => ({
+  FilterManager: vi.fn(function (this: Record<string, unknown>, initialFilter: string) {
+    this.current = initialFilter;
+    this.set = vi.fn();
+    this.showPicker = vi.fn().mockResolvedValue(undefined);
+    this.dispose = vi.fn();
+    this.onDidChange = vi.fn();
+  }),
   isFilterType: (value: unknown): boolean => (
     typeof value === 'string'
     && ['all', 'hasUpdates', 'patch', 'minor', 'breaking'].includes(value)
   ),
   PackagesProvider: vi.fn(function (this: Record<string, unknown>) {
+    this.attachTreeView = vi.fn();
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.setFilter = vi.fn();
@@ -80,18 +88,21 @@ describe('activate()', () => {
     );
   });
 
-  it('registers tree data provider for nestro.packagesView', () => {
+  it('creates tree view for nestro.packagesView', () => {
     activate(makeContext());
-    expect(vscode.window.registerTreeDataProvider).toHaveBeenCalledWith(
+    expect(vscode.window.createTreeView).toHaveBeenCalledWith(
       'nestro.packagesView',
-      expect.any(Object),
+      expect.objectContaining({
+        showCollapseAll: true,
+        treeDataProvider: expect.any(Object),
+      }),
     );
   });
 
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(12);
+    expect(ctx.subscriptions).toHaveLength(13);
   });
 
   it('creates Nestro output channel', async () => {
@@ -118,13 +129,13 @@ describe('activate()', () => {
 
     activate(makeContext());
 
-    expect(PackagesProvider).toHaveBeenCalledWith('hasUpdates');
+    expect(PackagesProvider).toHaveBeenCalledWith(expect.objectContaining({ current: 'hasUpdates' }));
   });
 
   it('uses all as the default filter when the setting is missing', () => {
     activate(makeContext());
 
-    expect(PackagesProvider).toHaveBeenCalledWith('all');
+    expect(PackagesProvider).toHaveBeenCalledWith(expect.objectContaining({ current: 'all' }));
   });
 
   it('falls back to all when the default filter setting is invalid', () => {
@@ -132,7 +143,7 @@ describe('activate()', () => {
 
     activate(makeContext());
 
-    expect(PackagesProvider).toHaveBeenCalledWith('all');
+    expect(PackagesProvider).toHaveBeenCalledWith(expect.objectContaining({ current: 'all' }));
   });
 });
 

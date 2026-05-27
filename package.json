@@ -31,6 +31,13 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "nestro.packagesView",
+        "contents": "No Node.js project found in the workspace.\n[Open Folder](command:vscode.openFolder)",
+        "when": "nestro.noWorkspace"
+      }
+    ],
     "configuration": {
       "title": "Nestro",
       "properties": {
