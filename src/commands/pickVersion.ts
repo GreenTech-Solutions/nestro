@@ -64,6 +64,8 @@ async function handleVersionSelection(
     false,
     item.vulnerabilitySeverity,
     item.packageFilePath,
+    item.dev,
+    item.versionPrefix,
   );
   await installUpdateCommand(syntheticItem, provider);
 }

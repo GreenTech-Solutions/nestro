@@ -5,6 +5,7 @@ export interface PackageEntry {
   name: string;
   current: string;
   dev: boolean;
+  versionPrefix: string;
 }
 
 export interface PackageFileEntry extends PackageEntry {
@@ -80,9 +81,54 @@ export async function updateDependencyVersionsInFile(
   await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
 }
 
+export async function switchDependencyType(
+  packageFilePath: string,
+  packageName: string,
+  currentlyDev: boolean,
+): Promise<void> {
+  const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const sourceKey = currentlyDev ? 'devDependencies' : 'dependencies';
+  const targetKey = currentlyDev ? 'dependencies' : 'devDependencies';
+  const source = json[sourceKey] ?? {};
+  const version = source[packageName];
+  if (version === undefined) {
+    throw new Error(`Package ${packageName} not found in ${sourceKey}.`);
+  }
+
+  delete source[packageName];
+  if (Object.keys(source).length === 0) {
+    delete json[sourceKey];
+  }
+  else {
+    json[sourceKey] = source;
+  }
+
+  json[targetKey] = {
+    ...(json[targetKey] ?? {}),
+    [packageName]: version,
+  };
+
+  const indent = detectJsonIndent(raw);
+  const newline = raw.endsWith('\n') ? '\n' : '';
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+}
+
+export async function setVersionPin(
+  packageFilePath: string,
+  packageName: string,
+  pin: boolean,
+): Promise<void> {
+  const { json, raw, uri, location } = await readPackageJsonEntry(packageFilePath, packageName);
+  json[location.section] = {
+    ...(json[location.section] ?? {}),
+    [packageName]: setPinnedVersion(location.version, pin),
+  };
+  await writePackageJson(uri, raw, json);
+}
+
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
   const entries = await readAllWorkspaceDependencies();
-  return entries.map(({ name, current, dev }) => ({ name, current, dev }));
+  return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
 }
 
 export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntry[]> {
@@ -113,12 +159,14 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
           name,
           current,
           dev: false,
+          versionPrefix: extractVersionPrefix(current),
           packageFilePath,
         })),
         ...Object.entries(json.devDependencies ?? {}).map(([name, current]) => ({
           name,
           current,
           dev: true,
+          versionPrefix: extractVersionPrefix(current),
           packageFilePath,
         })),
       );
@@ -136,4 +184,49 @@ function detectJsonIndent(raw: string): number {
     return 2;
   }
   return match[0].match(/^[ \t]+/)?.[0].length ?? 2;
+}
+
+async function readPackageJson(packageFilePath: string): Promise<{
+  json: WorkspacePackageJson;
+  raw: string;
+  uri: vscode.Uri;
+}> {
+  const uri = vscode.Uri.file(packageFilePath);
+  const raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  return { json: JSON.parse(raw) as WorkspacePackageJson, raw, uri };
+}
+
+async function readPackageJsonEntry(
+  packageFilePath: string,
+  packageName: string,
+): Promise<{
+  json: WorkspacePackageJson;
+  raw: string;
+  uri: vscode.Uri;
+  location: { section: 'dependencies' | 'devDependencies'; version: string };
+}> {
+  const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const fromDependencies = json.dependencies?.[packageName];
+  if (fromDependencies !== undefined) {
+    return { json, raw, uri, location: { section: 'dependencies', version: fromDependencies } };
+  }
+  const fromDevDependencies = json.devDependencies?.[packageName];
+  if (fromDevDependencies !== undefined) {
+    return { json, raw, uri, location: { section: 'devDependencies', version: fromDevDependencies } };
+  }
+  throw new Error(`Package ${packageName} not found in package.json.`);
+}
+
+async function writePackageJson(uri: vscode.Uri, raw: string, json: WorkspacePackageJson): Promise<void> {
+  const indent = detectJsonIndent(raw);
+  const newline = raw.endsWith('\n') ? '\n' : '';
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+}
+
+function setPinnedVersion(version: string, pin: boolean): string {
+  const workspacePrefix = version.startsWith('workspace:') ? 'workspace:' : '';
+  const remainder = workspacePrefix === '' ? version : version.slice(workspacePrefix.length);
+  const versionPrefix = extractVersionPrefix(remainder);
+  const normalized = remainder.slice(versionPrefix.length);
+  return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
 }

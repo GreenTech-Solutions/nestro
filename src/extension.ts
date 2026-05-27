@@ -5,7 +5,9 @@ import {
   helloWorldCommand,
   installUpdateCommand,
   pickVersionCommand,
+  pinVersionCommand,
   runInstallCommand,
+  switchDepTypeCommand,
   updateAllVisibleCommand,
 } from './commands';
 import { logger } from './utils';
@@ -34,6 +36,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.runAudit', () => { void provider.runAudit(); }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pickVersion', (item: PackageItem) => { void pickVersionCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.switchDepType', (item: PackageItem) => { void switchDepTypeCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.pinVersion', (item: PackageItem) => { void pinVersionCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
     vscode.commands.registerCommand('nestro.openOnNpm', (item: PackageItem) => {

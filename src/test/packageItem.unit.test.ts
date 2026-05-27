@@ -3,6 +3,12 @@ import * as vscode from 'vscode';
 import { PackageItem } from '../providers';
 
 describe('PackageItem', () => {
+  it('starts collapsed so details can be expanded inline', () => {
+    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor');
+
+    expect(item.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
+  });
+
   it('uses a spinner context while an update is installing', () => {
     const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', true);
 

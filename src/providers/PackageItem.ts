@@ -10,8 +10,10 @@ export class PackageItem extends vscode.TreeItem {
     public readonly installing = false,
     public readonly vulnerabilitySeverity: AuditSeverity | undefined = undefined,
     public readonly packageFilePath = '',
+    public readonly dev = false,
+    public readonly versionPrefix = '',
   ) {
-    super(packageName, vscode.TreeItemCollapsibleState.None);
+    super(packageName, vscode.TreeItemCollapsibleState.Collapsed);
     const hasUpdate = updateType !== 'none';
     this.description = hasUpdate ? `${currentVersion} → ${latest}` : currentVersion;
     this.tooltip = installing

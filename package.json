@@ -121,15 +121,25 @@
         "title": "Update Package",
         "icon": "$(arrow-up)"
       },
-      {
-        "command": "nestro.pickVersion",
-        "title": "Pick Version...",
-        "icon": "$(list-unordered)"
-      },
-      {
-        "command": "nestro.updateAllVisible",
-        "title": "Update All",
-        "icon": "$(cloud-upload)"
+    {
+      "command": "nestro.pickVersion",
+      "title": "Pick Version...",
+      "icon": "$(list-unordered)"
+    },
+    {
+      "command": "nestro.switchDepType",
+      "title": "Switch to dev/dep",
+      "icon": "$(arrow-swap)"
+    },
+    {
+      "command": "nestro.pinVersion",
+      "title": "Toggle version pin",
+      "icon": "$(lock)"
+    },
+    {
+      "command": "nestro.updateAllVisible",
+      "title": "Update All",
+      "icon": "$(cloud-upload)"
       },
       {
         "command": "nestro.runInstall",
@@ -191,23 +201,43 @@
           "when": "view == nestro.packagesView && viewItem == outdated",
           "group": "inline"
         },
-        {
-          "command": "nestro.pickVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-          "group": "1_update@2"
-        },
-        {
-          "command": "nestro.openOnNpm",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
-          "group": "navigation@1"
-        },
-        {
-          "command": "nestro.copyPackageName",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
-          "group": "navigation@2"
-        }
-      ]
+    {
+      "command": "nestro.pickVersion",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+      "group": "inline@2"
+    },
+    {
+      "command": "nestro.openOnNpm",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+      "group": "inline@3"
+    },
+    {
+      "command": "nestro.switchDepType",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+      "group": "inline@4"
+    },
+    {
+      "command": "nestro.pinVersion",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+      "group": "inline@5"
+    },
+    {
+      "command": "nestro.copyPackageName",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+      "group": "navigation@2"
+    },
+    {
+      "command": "nestro.switchDepType",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+      "group": "2_manage@1"
+    },
+    {
+      "command": "nestro.pinVersion",
+      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+      "group": "2_manage@2"
     }
+  ]
+}
   },
   "scripts": {
     "build": "tsdown",

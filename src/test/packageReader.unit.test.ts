@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import {
   extractVersionPrefix,
   readAllWorkspaceDependencies,
+  setVersionPin,
+  switchDependencyType,
   updateDependencyVersionsInFile,
   updateWorkspaceDependencyVersions,
 } from '../utils';
@@ -37,8 +39,20 @@ describe('readAllWorkspaceDependencies()', () => {
     })));
 
     await expect(readAllWorkspaceDependencies()).resolves.toEqual([
-      { name: 'react', current: '^18.0.0', dev: false, packageFilePath: '/workspace/package.json' },
-      { name: 'vite', current: '^5.0.0', dev: true, packageFilePath: '/workspace/package.json' },
+      {
+        name: 'react',
+        current: '^18.0.0',
+        dev: false,
+        versionPrefix: '^',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'vite',
+        current: '^5.0.0',
+        dev: true,
+        versionPrefix: '^',
+        packageFilePath: '/workspace/package.json',
+      },
     ]);
   });
 
@@ -56,12 +70,14 @@ describe('readAllWorkspaceDependencies()', () => {
         name: 'react',
         current: '^18.0.0',
         dev: false,
+        versionPrefix: '^',
         packageFilePath: '/workspace/apps/frontend/package.json',
       },
       {
         name: '@scope/ui',
         current: '^1.0.0',
         dev: false,
+        versionPrefix: '^',
         packageFilePath: '/workspace/packages/ui/package.json',
       },
     ]);
@@ -77,7 +93,13 @@ describe('readAllWorkspaceDependencies()', () => {
       .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { react: '^18.0.0' } })));
 
     await expect(readAllWorkspaceDependencies()).resolves.toEqual([
-      { name: 'react', current: '^18.0.0', dev: false, packageFilePath: '/workspace/good/package.json' },
+      {
+        name: 'react',
+        current: '^18.0.0',
+        dev: false,
+        versionPrefix: '^',
+        packageFilePath: '/workspace/good/package.json',
+      },
     ]);
   });
 });
@@ -114,6 +136,80 @@ describe('updateWorkspaceDependencyVersions()', () => {
       expect.objectContaining({ fsPath: '/workspace/apps/frontend/package.json' }),
       expect.any(Buffer),
     );
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: { react: '^18.0.0' },
+    });
+  });
+});
+
+describe('switchDependencyType()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
+  });
+
+  it('moves a package from dependencies to devDependencies and preserves the version string', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^18.0.0' },
+      devDependencies: { vite: '^5.0.0' },
+    }, undefined, 2)));
+
+    await switchDependencyType('/workspace/package.json', 'react', false);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      devDependencies: {
+        react: '^18.0.0',
+        vite: '^5.0.0',
+      },
+    });
+  });
+
+  it('moves a package from devDependencies to dependencies and preserves the version string', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^18.0.0' },
+      devDependencies: { vite: '^5.0.0' },
+    }, undefined, 2)));
+
+    await switchDependencyType('/workspace/package.json', 'vite', true);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: {
+        react: '^18.0.0',
+        vite: '^5.0.0',
+      },
+    });
+  });
+});
+
+describe('setVersionPin()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
+  });
+
+  it('removes the version prefix when pinning a dependency', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^18.0.0' },
+    }, undefined, 2)));
+
+    await setVersionPin('/workspace/package.json', 'react', true);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: { react: '18.0.0' },
+    });
+  });
+
+  it('adds a caret when unpinning a dependency', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '18.0.0' },
+    }, undefined, 2)));
+
+    await setVersionPin('/workspace/package.json', 'react', false);
+
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
       dependencies: { react: '^18.0.0' },

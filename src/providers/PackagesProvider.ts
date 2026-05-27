@@ -11,6 +11,7 @@ import {
 import type { AuditSeverity, UpdateType } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { PackageItem } from './PackageItem';
+import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { FilterManager, FilterType } from './FilterManager';
 import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
@@ -60,6 +61,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (element instanceof WorkspaceFolderItem) {
       return element.children;
     }
+    if (element instanceof PackageItem) {
+      return this.getPackageDetails(element);
+    }
     return buildTree(this.allEntries, this.filterManager.current, this.workspaceRoot);
   }
 
@@ -102,7 +106,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const { dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
     this.allEntries[index] = {
-      item: this.createPackageItem(packageName, newVersion, undefined, 'none', false, entryPackageFilePath),
+      item: this.createPackageItem(packageName, newVersion, undefined, 'none', false, entryPackageFilePath, dev),
       dev,
       packageFilePath: entryPackageFilePath,
     };
@@ -112,7 +116,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   resetUpdateData(): void {
     this.invalidateUpdateCache();
     this.allEntries = this.allEntries.map(({ item, dev, packageFilePath }) => ({
-      item: this.createPackageItem(item.packageName, item.currentVersion, undefined, 'none', false, packageFilePath),
+      item: this.createPackageItem(
+        item.packageName,
+        item.currentVersion,
+        undefined,
+        'none',
+        false,
+        packageFilePath,
+        dev,
+        item.versionPrefix,
+      ),
       dev,
       packageFilePath,
     }));
@@ -139,6 +152,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.updateType,
         installing,
         entryPackageFilePath,
+        dev,
+        item.versionPrefix,
       ),
       dev,
       packageFilePath: entryPackageFilePath,
@@ -172,13 +187,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               existing.item.updateType,
               existing.item.installing,
               e.packageFilePath,
+              e.dev,
+              e.versionPrefix,
             ),
             dev: e.dev,
             packageFilePath: e.packageFilePath,
           };
         }
         return {
-          item: this.createPackageItem(e.name, e.current, undefined, 'none', false, e.packageFilePath),
+          item: this.createPackageItem(e.name, e.current, undefined, 'none', false, e.packageFilePath, e.dev, e.versionPrefix),
           dev: e.dev,
           packageFilePath: e.packageFilePath,
         };
@@ -207,6 +224,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             name: e.item.packageName,
             current: e.item.currentVersion,
             dev: e.dev,
+            versionPrefix: e.item.versionPrefix,
             packageFilePath: e.packageFilePath,
           }))
         : await readAllWorkspaceDependencies();
@@ -220,7 +238,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const latest = upgrades.get(this.entryKey(entry.name, entry.packageFilePath));
         const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
         return {
-          item: this.createPackageItem(entry.name, entry.current, latest, updateType, false, entry.packageFilePath),
+          item: this.createPackageItem(
+            entry.name,
+            entry.current,
+            latest,
+            updateType,
+            false,
+            entry.packageFilePath,
+            entry.dev,
+            entry.versionPrefix,
+          ),
           dev: entry.dev,
           packageFilePath: entry.packageFilePath,
         };
@@ -281,6 +308,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     updateType: UpdateType,
     installing = false,
     packageFilePath = '',
+    dev = false,
+    versionPrefix = '',
   ): PackageItem {
     return new PackageItem(
       packageName,
@@ -290,6 +319,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       installing,
       this.auditResults.get(packageName),
       packageFilePath,
+      dev,
+      versionPrefix,
     );
   }
 
@@ -302,6 +333,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.updateType,
         item.installing,
         packageFilePath,
+        dev,
+        item.versionPrefix,
       ),
       dev,
       packageFilePath,
@@ -382,5 +415,38 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       e.item.packageName === packageName
       && (packageFilePath === undefined || e.packageFilePath === packageFilePath)
     ));
+  }
+
+  private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
+    const details = [
+      new PackageDetailItem(`Type: ${item.dev ? 'devDependency' : 'dependency'}`),
+      new PackageDetailItem(`Current: ${item.currentVersion}`),
+    ];
+    if (item.latest !== undefined) {
+      details.push(new PackageDetailItem(`Latest: ${item.latest}`));
+    }
+    if (this.workspaceRoot !== undefined) {
+      const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
+      if (relativeFile !== undefined) {
+        details.push(new PackageDetailItem(`File: ${relativeFile}`));
+      }
+    }
+    return details;
+  }
+
+  private toRelativePackageFilePath(packageFilePath: string): string | undefined {
+    const workspaceRoot = this.workspaceRoot;
+    if (workspaceRoot === undefined || packageFilePath === '') {
+      return undefined;
+    }
+    const normalizedFile = packageFilePath.replace(/\\/g, '/');
+    const normalizedRoot = workspaceRoot.replace(/\\/g, '/').replace(/\/$/, '');
+    if (normalizedFile === `${normalizedRoot}/package.json`) {
+      return undefined;
+    }
+    if (normalizedFile.startsWith(`${normalizedRoot}/`)) {
+      return normalizedFile.slice(normalizedRoot.length + 1);
+    }
+    return packageFilePath;
   }
 }

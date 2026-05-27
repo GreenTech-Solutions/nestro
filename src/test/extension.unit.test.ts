@@ -76,6 +76,22 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.switchDepType command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.switchDepType',
+      expect.any(Function),
+    );
+  });
+
+  it('registers nestro.pinVersion command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.pinVersion',
+      expect.any(Function),
+    );
+  });
+
   it('registers nestro.runAudit command', () => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -130,7 +146,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(22);
+    expect(ctx.subscriptions).toHaveLength(24);
   });
 
   it('creates Nestro output channel', async () => {

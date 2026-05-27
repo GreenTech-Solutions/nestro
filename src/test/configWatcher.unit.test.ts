@@ -78,9 +78,27 @@ describe('PackagesProvider.resetUpdateData()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
-      { name: 'react', current: '18.0.0', dev: false, packageFilePath: '/workspace/package.json' },
-      { name: 'eslint', current: '8.0.0', dev: true, packageFilePath: '/workspace/package.json' },
-      { name: 'typescript', current: '5.0.0', dev: true, packageFilePath: '/workspace/package.json' },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'eslint',
+        current: '8.0.0',
+        dev: true,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'typescript',
+        current: '5.0.0',
+        dev: true,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
     ]);
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],

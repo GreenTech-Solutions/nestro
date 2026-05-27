@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { FilterManager, GroupItem, PackagesProvider } from '../providers';
+import { FilterManager, GroupItem, PackageDetailItem, PackageItem, PackagesProvider } from '../providers';
 import {
   fetchAllLatestVersions,
   readAllWorkspaceDependencies,
@@ -26,8 +26,20 @@ describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
-      { name: 'react', current: '18.0.0', dev: false, packageFilePath: '/workspace/package.json' },
-      { name: 'eslint', current: '8.0.0', dev: true, packageFilePath: '/workspace/package.json' },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'eslint',
+        current: '8.0.0',
+        dev: true,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
     ]);
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
@@ -112,6 +124,46 @@ describe('PackagesProvider', () => {
     await provider.checkUpdates();
 
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('exposes expandable package details for package rows', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
+    const packageItem = groups.flatMap(group => group.children).find((item): item is PackageItem => item instanceof PackageItem);
+
+    expect(packageItem).toBeDefined();
+    expect(provider.getChildren(packageItem)).toEqual([
+      expect.objectContaining({ label: 'Type: dependency' }),
+      expect.objectContaining({ label: 'Current: 18.0.0' }),
+      expect.objectContaining({ label: 'Latest: 19.0.0' }),
+    ]);
+    expect(provider.getChildren(packageItem as PackageItem).every(item => item instanceof PackageDetailItem)).toBe(true);
+  });
+
+  it('shows the package file path for monorepo package rows', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/apps/frontend/package.json',
+      },
+    ]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.checkUpdates();
+    const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
+    const packageItem = groups.flatMap(group => group.children).find((item): item is PackageItem => item instanceof PackageItem);
+
+    expect(provider.getChildren(packageItem as PackageItem)).toEqual([
+      expect.objectContaining({ label: 'Type: dependency' }),
+      expect.objectContaining({ label: 'Current: 18.0.0' }),
+      expect.objectContaining({ label: 'Latest: 19.0.0' }),
+      expect.objectContaining({ label: 'File: apps/frontend/package.json' }),
+    ]);
   });
 });
 
