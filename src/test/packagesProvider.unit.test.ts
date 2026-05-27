@@ -135,9 +135,9 @@ describe('PackagesProvider', () => {
 
     expect(packageItem).toBeDefined();
     expect(provider.getChildren(packageItem)).toEqual([
-      expect.objectContaining({ label: 'Type: dependency' }),
+      expect.objectContaining({ label: 'Dependency' }),
       expect.objectContaining({ label: 'Current: 18.0.0' }),
-      expect.objectContaining({ label: 'Latest: 19.0.0' }),
+      expect.objectContaining({ label: 'Update: 18.0.0 → 19.0.0 (breaking)' }),
     ]);
     expect(provider.getChildren(packageItem as PackageItem).every(item => item instanceof PackageDetailItem)).toBe(true);
   });
@@ -159,9 +159,9 @@ describe('PackagesProvider', () => {
     const packageItem = groups.flatMap(group => group.children).find((item): item is PackageItem => item instanceof PackageItem);
 
     expect(provider.getChildren(packageItem as PackageItem)).toEqual([
-      expect.objectContaining({ label: 'Type: dependency' }),
+      expect.objectContaining({ label: 'Dependency' }),
       expect.objectContaining({ label: 'Current: 18.0.0' }),
-      expect.objectContaining({ label: 'Latest: 19.0.0' }),
+      expect.objectContaining({ label: 'Update: 18.0.0 → 19.0.0 (breaking)' }),
       expect.objectContaining({ label: 'File: apps/frontend/package.json' }),
     ]);
   });

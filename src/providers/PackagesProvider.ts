@@ -419,16 +419,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
     const details = [
-      new PackageDetailItem(`Type: ${item.dev ? 'devDependency' : 'dependency'}`),
-      new PackageDetailItem(`Current: ${item.currentVersion}`),
+      new PackageDetailItem(item.dev ? 'Dev dependency' : 'Dependency', item.dev ? 'tools' : 'package'),
+      new PackageDetailItem(`Current: ${item.currentVersion}`, 'tag'),
     ];
     if (item.latest !== undefined) {
-      details.push(new PackageDetailItem(`Latest: ${item.latest}`));
+      details.push(new PackageDetailItem(`Update: ${item.currentVersion} → ${item.latest} (${item.updateType})`, 'arrow-up'));
+    }
+    if (item.vulnerabilitySeverity !== undefined) {
+      details.push(new PackageDetailItem(`Vulnerability: ${item.vulnerabilitySeverity}`, 'warning'));
     }
     if (this.workspaceRoot !== undefined) {
       const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
       if (relativeFile !== undefined) {
-        details.push(new PackageDetailItem(`File: ${relativeFile}`));
+        details.push(new PackageDetailItem(`File: ${relativeFile}`, 'file'));
       }
     }
     return details;
