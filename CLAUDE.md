@@ -25,7 +25,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Data flow
 1. `activate()` creates `FilterManager` and `PackagesProvider`, then calls `provider.loadPackages()`.
 2. `loadPackages()` reads `package.json` via `readWorkspaceDependencies()` (`src/utils/packageReader.ts`) → populates `allEntries: PackageTreeEntry[]`.
-3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) → enriches each entry with `latest` + `updateType`.
+3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) → enriches each entry with `latest` + `updateType`. Update results are cached to avoid redundant network calls.
 4. `getChildren()` delegates to `buildTree()` (`src/providers/treeBuilder.ts`) which returns `[FilterBarItem, ...GroupItem[]]` — groups split into Dependencies / Dev Dependencies.
 5. Commands mutate provider state via `markPackageUpdating()` / `markPackageUpdated()` / `resetUpdateData()`, then fire `_onDidChangeTreeData`.
 
@@ -50,16 +50,18 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts` — tree item classes
 
 ### Commands (`src/commands/`)
-- `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code
+- `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; bulk update confirms before proceeding
 - `helloWorld.ts` — minimal stub command
 
 ### Utils (`src/utils/`)
-- `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); returns `Map<name, latestVersion>`
+- `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); returns `Map<name, latestVersion>`; results cached across calls
+- `auditClient.ts` — runs `npm audit` to detect package vulnerabilities; populates audit badge indicators on `PackageItem`
 - `packageReader.ts` — reads workspace `package.json` dependencies
 - `packageManager.ts` — detects package manager, builds install/update CLI commands
 - `versionUtils.ts` — `getUpdateType()` classifies semver diff as `patch` | `minor` | `breaking` | `none`
 - `logger.ts` — `Logger` singleton writing to VS Code output channel; use instead of `console.log`
 - `notify.ts` — `showError()` helper
+- `index.ts` — barrel exports for utils
 
 ### Manifest (`package.json`)
 - Command IDs must match exactly between `contributes.commands` and `vscode.commands.registerCommand`

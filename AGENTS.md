@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project
-**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode ^1.120.0`).
+**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn/bun packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode ^1.120.0`).
 
 ## Commands
 ```bash
@@ -23,6 +23,8 @@ pnpm run test:unit    # vitest run — runs *.unit.test.ts without VS Code
 - `.vscode-test.mjs` — integration test config; `vitest.config.ts` — unit test config
 - `src/providers/` — `PackagesProvider.ts`, `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `index.ts`
 - `src/utils/logger.ts` — Logger singleton; `src/utils/versionUtils.ts` — version utilities
+- `src/utils/auditClient.ts` — runs `npm audit` to detect package vulnerabilities; populates audit badge indicators on `PackageItem`
+- `src/utils/index.ts` — barrel exports for utils
 - `eslint.config.mjs` — typescript-eslint, naming-convention, `eqeqeq`, `curly`, `semi`
 - `.vscode/launch.json`, `.vscode/tasks.json`, `.vscode/settings.json` — VS Code workspace config
 

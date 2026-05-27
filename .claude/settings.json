@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/normandy/.nvm/versions/node/v26.1.0/bin/caliber learn observe",
+            "command": "/Users/normandy/.nvm/versions/node/v26.2.0/bin/caliber learn observe",
             "description": "Caliber: recording tool usage for session learning"
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/normandy/.nvm/versions/node/v26.1.0/bin/caliber learn observe --failure",
+            "command": "/Users/normandy/.nvm/versions/node/v26.2.0/bin/caliber learn observe --failure",
             "description": "Caliber: recording tool failure for session learning"
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/normandy/.nvm/versions/node/v26.1.0/bin/caliber learn observe --prompt",
+            "command": "/Users/normandy/.nvm/versions/node/v26.2.0/bin/caliber learn observe --prompt",
             "description": "Caliber: recording user prompt for correction detection"
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/normandy/.nvm/versions/node/v26.1.0/bin/caliber learn finalize --auto",
+            "command": "/Users/normandy/.nvm/versions/node/v26.2.0/bin/caliber learn finalize --auto",
             "description": "Caliber: finalizing session learnings"
           }
         ]
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/normandy/.nvm/versions/node/v26.1.0/bin/caliber refresh --quiet",
+            "command": "/Users/normandy/.nvm/versions/node/v26.2.0/bin/caliber refresh --quiet",
             "description": "Caliber: auto-refreshing docs based on code changes"
           }
         ]
