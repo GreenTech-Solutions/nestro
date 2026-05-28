@@ -1,71 +1,55 @@
-# nestro README
+# Nestro — Package Manager for VS Code
 
-This is the README for your extension "nestro". After writing up a brief description, we recommend including the following sections.
+Nestro is a powerful VS Code extension that lets you seamlessly manage your npm, pnpm, yarn, and bun packages right from the sidebar. It provides real-time update status, version switching, and security audits to keep your dependencies healthy.
+
+![overview](images/overview.png)
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+### 📦 Multi-Package Manager Support
+Works out of the box with `npm`, `pnpm`, `yarn`, and `bun`. Nestro automatically detects your project's package manager and runs the appropriate commands.
 
-For example if there is an image subfolder under your extension project workspace:
+### 🔍 Smart Update Detection
+Easily spot outdated packages in your sidebar. Filter by update type (patch, minor, breaking) to quickly identify which dependencies need attention.
 
-\!\[feature X\]\(images/feature-x.png\)
+### 🛡️ Security Audits
+Run `npm audit` directly from the UI to discover vulnerabilities in your dependencies and visualize them natively in the VS Code sidebar.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+### 🔧 Version Management
+Upgrade to the latest versions with a single click, pick specific versions from a dropdown, switch between `dependencies` and `devDependencies`, or pin versions to prevent accidental upgrades.
+
+### 🏗️ Monorepo Support
+Automatically discovers multiple `package.json` files across your workspace, organizing them neatly into workspaces for seamless monorepo management.
+
+## Getting Started
+
+1. Open a workspace containing at least one `package.json`.
+2. Click on the **Nestro** icon in the Activity Bar to open the sidebar view.
+3. You will see a list of all your packages. Nestro will automatically check for updates or you can run it manually.
+4. Click on the update icon next to an outdated package or right-click to see more options like "Pick Version...", "Switch to dev/dep", or "Toggle version pin".
+
+## Settings
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `nestro.checkUpdatesOnStartup` | boolean | `false` | Automatically check for package updates when the extension activates. |
+| `nestro.includePreReleases` | boolean | `true` | Include pre-release versions when checking for package updates. |
+| `nestro.updateTarget` | string | `"latest"` | Version target strategy for update checks (`latest`, `greatest`, `minor`, `patch`). |
+| `nestro.defaultFilter` | string | `"all"` | Default package sidebar filter (`all`, `hasUpdates`, `patch`, `minor`, `breaking`). |
+| `nestro.deferInstallAfterUpdate` | boolean | `false` | Update `package.json` first and run dependency installation separately. |
+| `nestro.confirmBulkUpdate` | boolean | `true` | Show confirmation dialog before updating all visible packages. |
+| `nestro.runAuditOnStartup` | boolean | `false` | Run npm audit automatically when the extension activates. |
+| `nestro.monorepoGlob` | string | `"**/package.json"` | Glob used to discover `package.json` files in the workspace. |
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+- VS Code `^1.120.0` or higher.
+- `npm`, `pnpm`, `yarn`, or `bun` installed on your system.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+Currently, Nestro supports basic auditing mainly via `npm audit` and relies on installed package managers. Make sure your package manager CLI is available in the system PATH.
 
-## Release Notes
+## Release Notes / Changelog
 
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+See the [CHANGELOG.md](CHANGELOG.md) for details about the latest updates and release history.
