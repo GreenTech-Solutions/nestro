@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { FilterManager, isFilterType, PackageItem, PackagesProvider } from './providers';
 import type { FilterType } from './providers';
 import {
-  helloWorldCommand,
   installUpdateCommand,
   pickVersionCommand,
   pinVersionCommand,
@@ -29,7 +28,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const runAuditOnStartup = config.get<boolean>('runAuditOnStartup', false);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('nestro.helloWorld', helloWorldCommand),
     treeView,
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),

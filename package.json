@@ -3,6 +3,29 @@
   "displayName": "Nestro",
   "description": "Manage npm/pnpm/yarn packages from the VS Code sidebar with update status and version switching",
   "version": "0.0.1",
+  "publisher": "greentech-solutions",
+  "icon": "resources/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GreenTech-Solutions/nestro.git"
+  },
+  "keywords": [
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "packages",
+    "dependencies",
+    "update",
+    "manager",
+    "sidebar",
+    "audit"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.120.0"
   },
@@ -98,10 +121,6 @@
     },
     "commands": [
       {
-        "command": "nestro.helloWorld",
-        "title": "Hello World"
-      },
-      {
         "command": "nestro.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
@@ -121,25 +140,25 @@
         "title": "Update Package",
         "icon": "$(arrow-up)"
       },
-    {
-      "command": "nestro.pickVersion",
-      "title": "Pick Version...",
-      "icon": "$(list-unordered)"
-    },
-    {
-      "command": "nestro.switchDepType",
-      "title": "Switch to dev/dep",
-      "icon": "$(arrow-swap)"
-    },
-    {
-      "command": "nestro.pinVersion",
-      "title": "Toggle version pin",
-      "icon": "$(lock)"
-    },
-    {
-      "command": "nestro.updateAllVisible",
-      "title": "Update All",
-      "icon": "$(cloud-upload)"
+      {
+        "command": "nestro.pickVersion",
+        "title": "Pick Version...",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "nestro.switchDepType",
+        "title": "Switch to dev/dep",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "nestro.pinVersion",
+        "title": "Toggle version pin",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "nestro.updateAllVisible",
+        "title": "Update All",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "nestro.runInstall",
@@ -201,43 +220,43 @@
           "when": "view == nestro.packagesView && viewItem == outdated",
           "group": "inline"
         },
-    {
-      "command": "nestro.pickVersion",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-      "group": "inline@2"
-    },
-    {
-      "command": "nestro.openOnNpm",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
-      "group": "inline@3"
-    },
-    {
-      "command": "nestro.switchDepType",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-      "group": "inline@4"
-    },
-    {
-      "command": "nestro.pinVersion",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-      "group": "inline@5"
-    },
-    {
-      "command": "nestro.copyPackageName",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
-      "group": "navigation@2"
-    },
-    {
-      "command": "nestro.switchDepType",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-      "group": "2_manage@1"
-    },
-    {
-      "command": "nestro.pinVersion",
-      "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-      "group": "2_manage@2"
+        {
+          "command": "nestro.pickVersion",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "inline@2"
+        },
+        {
+          "command": "nestro.openOnNpm",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+          "group": "inline@3"
+        },
+        {
+          "command": "nestro.switchDepType",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "inline@4"
+        },
+        {
+          "command": "nestro.pinVersion",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "inline@5"
+        },
+        {
+          "command": "nestro.copyPackageName",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "nestro.switchDepType",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "nestro.pinVersion",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "2_manage@2"
+        }
+      ]
     }
-  ]
-}
   },
   "scripts": {
     "build": "tsdown",

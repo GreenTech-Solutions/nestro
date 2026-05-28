@@ -52,14 +52,6 @@ describe('activate()', () => {
     mockNestroConfiguration({});
   });
 
-  it('registers nestro.helloWorld command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.helloWorld',
-      expect.any(Function),
-    );
-  });
-
   it('registers nestro.refresh command', () => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -146,7 +138,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(24);
+    expect(ctx.subscriptions).toHaveLength(23);
   });
 
   it('creates Nestro output channel', async () => {
@@ -157,15 +149,6 @@ describe('activate()', () => {
     extension.activate(makeContext());
 
     expect(freshVscode.window.createOutputChannel).toHaveBeenCalledWith('Nestro');
-  });
-
-  it('helloWorld handler calls showInformationMessage', () => {
-    activate(makeContext());
-    const handler = vi.mocked(vscode.commands.registerCommand).mock.calls[0][1] as () => void;
-    handler();
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'Hello World from Nestro again!',
-    );
   });
 
   it('passes configured default filter to the packages provider', () => {
