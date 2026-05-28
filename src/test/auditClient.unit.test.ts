@@ -59,6 +59,21 @@ describe('runNpmAudit()', () => {
     expect(result.vulnerabilities.get('eslint')).toBe('moderate');
   });
 
+  it('parses v1 API advisories format', async () => {
+    mockAuditSuccess(JSON.stringify({
+      advisories: {
+        123: { module_name: 'lodash', severity: 'high' },
+        124: { module_name: 'express', severity: 'low' },
+      },
+    }));
+
+    const result = await runNpmAudit('/workspace');
+
+    expect(result.total).toBe(2);
+    expect(result.vulnerabilities.get('lodash')).toBe('high');
+    expect(result.vulnerabilities.get('express')).toBe('low');
+  });
+
   it('parses audit JSON from stdout when npm exits with vulnerabilities', async () => {
     const error = Object.assign(new Error('audit found vulnerabilities'), {
       stdout: JSON.stringify({ vulnerabilities: { vite: { severity: 'critical' } } }),

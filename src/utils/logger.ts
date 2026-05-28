@@ -7,6 +7,14 @@ class Logger implements vscode.Disposable {
     this.outputChannel.appendLine(`[info] ${message}`);
   }
 
+  warn(message: string): void {
+    this.outputChannel.appendLine(`[warn] ${message}`);
+  }
+
+  debug(message: string): void {
+    this.outputChannel.appendLine(`[debug] ${message}`);
+  }
+
   error(message: string, err?: unknown): void {
     this.outputChannel.appendLine(`[error] ${message}`);
     if (err !== undefined) {

@@ -15,6 +15,7 @@ const severityOrder: AuditSeverity[] = ['critical', 'high', 'moderate', 'low', '
 
 interface NpmAuditJson {
   vulnerabilities?: Record<string, { severity?: string }>;
+  advisories?: Record<string, { module_name?: string; severity?: string }>;
 }
 
 export async function runNpmAudit(cwd: string): Promise<AuditResult> {
@@ -43,29 +44,50 @@ async function runAuditCommand(command: string, args: readonly string[], cwd: st
 }
 
 function parseAuditJson(output: string): AuditResult {
+  logger.debug(`Raw audit output snippet: ${output.slice(0, 200)}`);
   const json = JSON.parse(output) as NpmAuditJson;
   const vulnerabilities = new Map<string, AuditSeverity>();
-  for (const [name, info] of Object.entries(json.vulnerabilities ?? {})) {
-    const severity = parseSeverity(info.severity);
-    if (severity === undefined) {
-      continue;
+
+  if (json.vulnerabilities) {
+    for (const [name, info] of Object.entries(json.vulnerabilities)) {
+      const severity = parseSeverity(info.severity);
+      if (severity === undefined) {
+        continue;
+      }
+      const existing = vulnerabilities.get(name);
+      vulnerabilities.set(name, existing === undefined ? severity : mergeSeverity(existing, severity));
     }
-    const existing = vulnerabilities.get(name);
-    vulnerabilities.set(name, existing === undefined ? severity : mergeSeverity(existing, severity));
   }
+  else if (json.advisories) {
+    for (const info of Object.values(json.advisories)) {
+      if (!info.module_name) {
+        continue;
+      }
+      const severity = parseSeverity(info.severity);
+      if (severity === undefined) {
+        continue;
+      }
+      const existing = vulnerabilities.get(info.module_name);
+      vulnerabilities.set(info.module_name, existing === undefined ? severity : mergeSeverity(existing, severity));
+    }
+  }
+  else {
+    logger.warn('Unrecognised audit JSON format');
+  }
+
   logger.info(`Audit complete: ${vulnerabilities.size} vulnerable package(s).`);
   return { vulnerabilities, total: vulnerabilities.size };
 }
 
-function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
+export function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
   return severityOrder.indexOf(left) <= severityOrder.indexOf(right) ? left : right;
 }
 
-function parseSeverity(value: string | undefined): AuditSeverity | undefined {
+export function parseSeverity(value: string | undefined): AuditSeverity | undefined {
   return severityOrder.find(severity => severity === value);
 }
 
-function getExecStdout(err: unknown): string | undefined {
+export function getExecStdout(err: unknown): string | undefined {
   if (typeof err !== 'object' || err === null || !('stdout' in err)) {
     return undefined;
   }
