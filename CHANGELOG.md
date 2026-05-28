@@ -4,8 +4,9 @@ All notable changes to the "nestro" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [Unreleased]
+## [0.0.1] - 2026-05-28
 
+- Initial release
 - Clean up release packaging to exclude internal tooling, config, and agent metadata.
 - Fix broken documentation asset reference in README.
 - Add inline package actions for opening npmjs.com, picking versions, switching dependency type, and toggling version pinning.

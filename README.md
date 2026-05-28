@@ -1,5 +1,9 @@
 # Nestro — Package Manager for VS Code
 
+[![Version](https://img.shields.io/visual-studio-marketplace/v/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+[![Rating](https://img.shields.io/visual-studio-marketplace/r/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+
 Nestro is a powerful VS Code extension that lets you seamlessly manage your npm, pnpm, yarn, and bun packages right from the sidebar. It provides real-time update status, version switching, and security audits to keep your dependencies healthy.
 
 ## Features
@@ -18,6 +22,20 @@ Upgrade to the latest versions with a single click, pick specific versions from 
 
 ### 🏗️ Monorepo Support
 Automatically discovers multiple `package.json` files across your workspace, organizing them neatly into workspaces for seamless monorepo management.
+
+## Screenshots
+
+### Package Overview
+![Overview](images/overview.png)
+
+### Filter by Update Type
+![Filters](images/filters.png)
+
+### Pick a Specific Version
+![Pick Version](images/pick-version.png)
+
+### Security Audit
+![Audit](images/audit.png)
 
 ## Getting Started
 
@@ -44,9 +62,9 @@ Automatically discovers multiple `package.json` files across your workspace, org
 - VS Code `^1.120.0` or higher.
 - `npm`, `pnpm`, `yarn`, or `bun` installed on your system.
 
-## Known Issues
+## Limitations
 
-Currently, Nestro supports basic auditing mainly via `npm audit` and relies on installed package managers. Make sure your package manager CLI is available in the system PATH.
+Nestro relies on installed package managers for its operations. Make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH. Security audits are currently supported primarily via `npm audit`.
 
 ## Release Notes / Changelog
 
