@@ -2,8 +2,6 @@
 
 Nestro is a powerful VS Code extension that lets you seamlessly manage your npm, pnpm, yarn, and bun packages right from the sidebar. It provides real-time update status, version switching, and security audits to keep your dependencies healthy.
 
-![overview](images/overview.png)
-
 ## Features
 
 ### 📦 Multi-Package Manager Support

@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- Clean up release packaging to exclude internal tooling, config, and agent metadata.
+- Fix broken documentation asset reference in README.
 - Add inline package actions for opening npmjs.com, picking versions, switching dependency type, and toggling version pinning.
 - Add expandable package detail rows showing dependency type, current version, latest version, and package file path.
 - Add monorepo package discovery with folder grouping and per-package-file update commands.

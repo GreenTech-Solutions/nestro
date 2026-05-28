@@ -21,3 +21,11 @@ vsc-extension-quickstart.md
 .github/**
 images/SCREENSHOTS.md
 node_modules/**
+.agents/**
+.claude/**
+.caliber/**
+.caliberignore
+.eslintcache
+tsconfig.test.json
+.env
+
