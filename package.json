@@ -2,7 +2,7 @@
   "name": "nestro",
   "displayName": "Nestro",
   "description": "Manage npm/pnpm/yarn packages from the VS Code sidebar with update status and version switching",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "greentech-solutions",
   "icon": "resources/icon.png",
   "license": "MIT",
