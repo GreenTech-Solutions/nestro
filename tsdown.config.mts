@@ -21,7 +21,9 @@ export default defineConfig({
   deps: {
     neverBundle: [
       'vscode',
+    ],
+    alwaysBundle: [
       'npm-check-updates',
-    ]
+    ],
   }
 });

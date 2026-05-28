@@ -1,3 +1,5 @@
+import { run } from 'npm-check-updates';
+
 export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
 
 export async function fetchAllLatestVersions(
@@ -5,7 +7,6 @@ export async function fetchAllLatestVersions(
   target: NcuUpdateTarget,
   includePreReleases: boolean,
 ): Promise<Map<string, string>> {
-  const { run } = await import('npm-check-updates');
   const result = await run({
     packageFile: packageFilePath,
     target,
