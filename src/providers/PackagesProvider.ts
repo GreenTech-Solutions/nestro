@@ -271,7 +271,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
     }
     finally {
-      this.loading = false;
       this.emitTreeChanged();
     }
   }
@@ -397,8 +396,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     packageFiles: readonly string[],
     packageFilesKey: string,
   ): Promise<Map<string, string>> {
-    this.loading = true;
-    this.emitTreeChanged();
     const upgrades = new Map<string, string>();
     for (const packageFilePath of packageFiles) {
       const fileUpgrades = await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
