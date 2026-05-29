@@ -273,26 +273,26 @@
     "test:unit:watch": "vitest"
   },
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^12.0.8",
-    "@stylistic/eslint-plugin": "^5.10.0",
-    "@types/mocha": "^10.0.10",
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/git": "10.0.1",
+    "@semantic-release/github": "12.0.8",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@types/mocha": "10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.120.0",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^3.9.1",
-    "eslint": "^9.39.3",
-    "eslint-config-flat-gitignore": "^2.3.0",
-    "eslint-plugin-sonarjs": "^4.0.3",
-    "npm-run-all2": "^9.0.1",
-    "semantic-release": "^25.0.3",
-    "semantic-release-vsce": "^6.1.5",
-    "tsdown": "^0.22.0",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.56.1",
-    "vitest": "^4.1.7"
+    "@types/vscode": "1.120.0",
+    "@vscode/test-cli": "0.0.12",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "3.9.1",
+    "eslint": "9.39.3",
+    "eslint-config-flat-gitignore": "2.3.0",
+    "eslint-plugin-sonarjs": "4.0.3",
+    "npm-run-all2": "9.0.1",
+    "semantic-release": "25.0.3",
+    "semantic-release-vsce": "6.1.5",
+    "tsdown": "0.22.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1",
+    "vitest": "4.1.7"
   },
   "type": "commonjs",
   "packageManager": "pnpm@11.0.8",
@@ -303,6 +303,9 @@
     ]
   },
   "dependencies": {
-    "npm-check-updates": "^22.2.1"
+    "npm-check-updates": "22.2.1"
+  },
+  "vsce": {
+    "dependencies": false
   }
 }

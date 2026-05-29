@@ -13,12 +13,7 @@
       }
     ],
     [
-      "semantic-release-vsce",
-      {
-        "packageVsix": true,
-        "publish": false,
-        "publishOVSX": true
-      }
+      "semantic-release-vsce"
     ],
     [
       "@semantic-release/github",
