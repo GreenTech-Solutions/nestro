@@ -17,3 +17,6 @@ dist/
 
 # Secrets
 .env
+
+# OS generated
+.DS_Store

@@ -1,8 +1,10 @@
 # Nestro — Package Manager for VS Code
 
-[![Version](https://img.shields.io/visual-studio-marketplace/v/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/greentech-solutions.nestro)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+[![Version](https://vsmarketplacebadges.dev/version-short/greentech-solutions.nestro.svg)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+[![Open VSX](https://img.shields.io/open-vsx/v/greentech-solutions/nestro)](https://open-vsx.org/extension/greentech-solutions/nestro)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/greentech-solutions.nestro.svg)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Build](https://img.shields.io/github/actions/workflow/status/GreenTech-Solutions/nestro/release.yml)
 
 Nestro is a powerful VS Code extension that lets you seamlessly manage your npm, pnpm, yarn, and bun packages right from the sidebar. It provides real-time update status, version switching, and security audits to keep your dependencies healthy.
 
