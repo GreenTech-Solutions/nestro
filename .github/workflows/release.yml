@@ -14,26 +14,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 1. Checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          version: 11
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version: "lts/*" 
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - name: 3.1 Prepare pnpm
+        uses: pnpm/action-setup@v6
 
-      - run: pnpm run lint
+      - name: 3.2 Install dependencies
+        run: pnpm install
 
-      - run: pnpm run build
+      - name: 4. Check for errors
+        run: |
+          pnpm type-check
+          if [ $? -ne 0 ]; then
+            exit 1
+          fi
 
-      - run: pnpm exec semantic-release
+      - name: 5. Build
+        run: pnpm run build
+
+      - name: 6. Release
+        run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
