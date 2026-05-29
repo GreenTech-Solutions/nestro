@@ -4,8 +4,68 @@
   ],
   "tagFormat": "v${version}",
   "plugins": [
-    "@semantic-release/commit-analyzer",
-    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "angular",
+        "releaseRules": [
+          {
+            "type": "feat",
+            "release": "minor"
+          },
+          {
+            "type": "fix",
+            "release": "patch"
+          },
+          {
+            "type": "part",
+            "release": "patch"
+          },
+          {
+            "type": "refactoring",
+            "release": "patch"
+          },
+          {
+            "type": "service",
+            "release": "patch"
+          },
+          {
+            "type": "ghost",
+            "release": false
+          },
+          {
+            "type": "spark",
+            "release": "patch"
+          },
+          {
+            "type": "chore",
+            "release": "patch"
+          }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "angular",
+        "presetConfig": {
+          "types": [
+            {
+              "type": "feat",
+              "section": "Changed"
+            },
+            {
+              "type": "fix",
+              "section": "Fixed"
+            },
+            {
+              "section": "Small changes",
+              "type": "spark"
+            }
+          ]
+        }
+      }
+    ],
     [
       "@semantic-release/changelog",
       {
