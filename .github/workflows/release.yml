@@ -32,7 +32,7 @@ jobs:
 
       - name: 4. Check for errors
         run: |
-          pnpm type-check
+          pnpm typecheck
           if [ $? -ne 0 ]; then
             exit 1
           fi
