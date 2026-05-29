@@ -1,4 +1,9 @@
 allowBuilds:
   '@vscode/vsce-sign': true
   keytar: true
-  sharp: set this to true or false
+  sharp: true
+
+overrides:
+  serialize-javascript: ^7.0.5
+  diff: ^8.0.3
+  tmp: ^0.2.6
