@@ -13,14 +13,14 @@ import * as vscode from 'vscode';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
-    expect(buildTree([], 'all')).toEqual([]);
+    expect(buildTree([], 'all', '')).toEqual([]);
   });
 
   it('builds a filter row and dependency groups', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
-    ], 'all');
+    ], 'all', '');
 
     expect(tree[0]).toBeInstanceOf(FilterBarItem);
     const groups = tree.slice(1).filter((item): item is GroupItem => item instanceof GroupItem);
@@ -37,7 +37,7 @@ describe('buildTree', () => {
   it('shows an empty-filter message when no packages match', () => {
     const tree = buildTree([
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
-    ], 'breaking');
+    ], 'breaking', '');
 
     expect(tree[0]).toBeInstanceOf(FilterBarItem);
     expect(tree[1]).toBeInstanceOf(MessageItem);
@@ -48,7 +48,7 @@ describe('buildTree', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '18.0.1', 'patch', false),
       makeEntry('typescript', '5.0.0', '6.0.0', 'breaking', true),
-    ], 'patch');
+    ], 'patch', '');
 
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups).toHaveLength(1);
@@ -60,7 +60,7 @@ describe('buildTree', () => {
       makeEntry('patch-package', '1.0.0', '1.0.1', 'patch', false),
       makeEntry('breaking-package', '1.0.0', '2.0.0', 'breaking', false),
       makeEntry('minor-package', '1.0.0', '1.1.0', 'minor', false),
-    ], 'hasUpdates');
+    ], 'hasUpdates', '');
 
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups).toHaveLength(1);
@@ -74,7 +74,7 @@ describe('buildTree', () => {
   it('keeps the flat tree shape for a single package file', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),
-    ], 'all', '/workspace');
+    ], 'all', '', '/workspace');
 
     expect(tree[0]).toBeInstanceOf(FilterBarItem);
     expect(tree.some(item => item instanceof WorkspaceFolderItem)).toBe(false);
@@ -84,11 +84,23 @@ describe('buildTree', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/apps/frontend/package.json'),
       makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
-    ], 'all', '/workspace');
+    ], 'all', '', '/workspace');
 
     const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
     expect(folders.map(folder => folder.label)).toEqual(['apps/frontend', 'packages/ui']);
     expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
+  });
+
+  it('filters packages by a search query', () => {
+    const tree = buildTree([
+      makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
+      makeEntry('react-dom', '18.0.0', '19.0.0', 'breaking', false),
+      makeEntry('vite', '5.0.0', undefined, 'none', true),
+    ], 'all', 'react');
+
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].children.map(child => child.label)).toEqual(['react', 'react-dom']);
   });
 });
 

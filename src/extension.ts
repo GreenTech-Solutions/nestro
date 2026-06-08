@@ -48,6 +48,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
+    vscode.commands.registerCommand('nestro.searchPackages', () => { void provider.showSearch(); }),
     vscode.commands.registerCommand('nestro.openSettings', () => {
       void vscode.commands.executeCommand('workbench.action.openSettings', 'nestro');
     }),

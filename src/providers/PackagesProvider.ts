@@ -72,11 +72,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (element instanceof PackageItem) {
       return this.getPackageDetails(element);
     }
-    return [...this.buildStatusItems(), ...buildTree(this.allEntries, this.filterManager.current, this.workspaceRoot)];
+    return [...this.buildStatusItems(), ...buildTree(
+      this.allEntries,
+      this.filterManager.current,
+      this.filterManager.search,
+      this.workspaceRoot,
+    )];
   }
 
   setFilter(type: FilterType): void {
     this.filterManager.set(type);
+  }
+
+  async showSearch(): Promise<void> {
+    await this.filterManager.showSearch();
   }
 
   get suppressingWrites(): boolean {
@@ -101,7 +110,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.loading) {
       return [];
     }
-    return getFilteredEntries(this.allEntries, this.filterManager.current)
+    return getFilteredEntries(this.allEntries, this.filterManager.current, this.filterManager.search)
       .map(entry => entry.item)
       .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
   }

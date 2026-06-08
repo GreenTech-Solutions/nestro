@@ -52,6 +52,7 @@ export class FilterManager implements vscode.Disposable {
   readonly onDidChange = this._onDidChange.event;
 
   private _current: FilterType;
+  private _search = '';
 
   constructor(initialFilter: FilterType = 'all') {
     this._current = initialFilter;
@@ -61,12 +62,36 @@ export class FilterManager implements vscode.Disposable {
     return this._current;
   }
 
+  get search(): string {
+    return this._search;
+  }
+
   set(type: FilterType): void {
     if (this._current === type) {
       return;
     }
     this._current = type;
     this._onDidChange.fire();
+  }
+
+  setSearch(value: string): void {
+    const normalized = value.trim().toLocaleLowerCase();
+    if (this._search === normalized) {
+      return;
+    }
+    this._search = normalized;
+    this._onDidChange.fire();
+  }
+
+  async showSearch(): Promise<void> {
+    const result = await vscode.window.showInputBox({
+      prompt: 'Search packages by name',
+      placeHolder: 'Type a package name',
+      value: this._search,
+    });
+    if (result !== undefined) {
+      this.setSearch(result);
+    }
   }
 
   async showPicker(counts: FilterCounts): Promise<void> {

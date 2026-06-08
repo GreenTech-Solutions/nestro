@@ -2,6 +2,7 @@
 
 - Fix version picker ordering so it shows the full registry list in descending semver order and respects `nestro.includePreReleases`.
 - Add a package removal action to the package tree context menu.
+- Add package name search to the sidebar tree.
 
 ## [0.1.1](https://github.com/GreenTech-Solutions/nestro/compare/v0.1.0...v0.1.1) (2026-05-29)
 

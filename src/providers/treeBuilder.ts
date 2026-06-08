@@ -23,6 +23,7 @@ export interface PackageTreeEntry {
 export function buildTree(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  search: string,
   workspaceRoot?: string,
 ): vscode.TreeItem[] {
   if (entries.length === 0) {
@@ -31,12 +32,12 @@ export function buildTree(
 
   const packageFiles = new Set(entries.map(entry => entry.packageFilePath));
   if (packageFiles.size <= 1 || workspaceRoot === undefined) {
-    return buildFlatTree(entries, filterType);
+    return buildFlatTree(entries, filterType, search);
   }
 
   return [
-    new FilterBarItem(getFilterCounts(entries), filterType),
-    ...buildWorkspaceGroups(entries, filterType, workspaceRoot),
+    new FilterBarItem(getFilterCounts(entries), filterType, search),
+    ...buildWorkspaceGroups(entries, filterType, search, workspaceRoot),
   ];
 }
 
@@ -69,21 +70,29 @@ export function getFilterCounts(entries: readonly PackageTreeEntry[]): FilterCou
 export function getFilteredEntries(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  search = '',
 ): PackageTreeEntry[] {
-  return filterType === 'all'
+  const filteredByType = filterType === 'all'
     ? [...entries]
     : filterType === 'hasUpdates'
       ? entries.filter(e => e.item.updateType !== 'none')
       : entries.filter(e => e.item.updateType === filterType);
+
+  if (search === '') {
+    return filteredByType;
+  }
+
+  return filteredByType.filter(entry => entry.item.packageName.toLocaleLowerCase().includes(search));
 }
 
 function buildGroups(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  search: string,
 ): vscode.TreeItem[] {
-  const filtered = getFilteredEntries(entries, filterType);
+  const filtered = getFilteredEntries(entries, filterType, search);
   if (filtered.length === 0) {
-    return [new MessageItem('No packages match the current filter.')];
+    return [new MessageItem(search === '' ? 'No packages match the current filter.' : 'No packages match the current search.')];
   }
 
   if (filterType === 'hasUpdates') {
@@ -107,16 +116,18 @@ function buildGroups(
 function buildFlatTree(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  search: string,
 ): vscode.TreeItem[] {
   return [
-    new FilterBarItem(getFilterCounts(entries), filterType),
-    ...buildGroups(entries, filterType),
+    new FilterBarItem(getFilterCounts(entries), filterType, search),
+    ...buildGroups(entries, filterType, search),
   ];
 }
 
 function buildWorkspaceGroups(
   entries: readonly PackageTreeEntry[],
   filterType: FilterType,
+  search: string,
   workspaceRoot: string,
 ): vscode.TreeItem[] {
   const byFile = new Map<string, PackageTreeEntry[]>();
@@ -126,7 +137,7 @@ function buildWorkspaceGroups(
 
   const folders: WorkspaceFolderItem[] = [];
   for (const [packageFilePath, fileEntries] of byFile) {
-    const groups: GroupItem[] = buildGroups(fileEntries, filterType)
+    const groups: GroupItem[] = buildGroups(fileEntries, filterType, search)
       .filter((item): item is GroupItem => item instanceof GroupItem);
     if (groups.length > 0) {
       folders.push(new WorkspaceFolderItem(
@@ -137,5 +148,7 @@ function buildWorkspaceGroups(
     }
   }
 
-  return folders.length > 0 ? folders : [new MessageItem('No packages match the current filter.')];
+  return folders.length > 0
+    ? folders
+    : [new MessageItem(search === '' ? 'No packages match the current filter.' : 'No packages match the current search.')];
 }

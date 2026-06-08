@@ -80,6 +80,19 @@ describe('PackagesProvider', () => {
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
+  it('filters visible packages by search query', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+
+    await provider.checkUpdates();
+    filterManager.setSearch('react');
+
+    const tree = provider.getChildren();
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].children.map(child => child.label)).toEqual(['react']);
+  });
+
   it('reuses fresh update check results', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 

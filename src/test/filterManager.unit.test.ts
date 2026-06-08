@@ -51,4 +51,12 @@ describe('FilterManager', () => {
 
     expect(manager.current).toBe('breaking');
   });
+
+  it('stores a normalized package search query', () => {
+    const manager = new FilterManager('all');
+
+    manager.setSearch('  React DOM  ');
+
+    expect(manager.search).toBe('react dom');
+  });
 });

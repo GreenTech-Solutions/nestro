@@ -183,6 +183,11 @@
         "icon": "$(copy)"
       },
       {
+        "command": "nestro.searchPackages",
+        "title": "Search Packages",
+        "icon": "$(search)"
+      },
+      {
         "command": "nestro.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
@@ -212,6 +217,11 @@
         },
         {
           "command": "nestro.runInstall",
+          "when": "view == nestro.packagesView",
+          "group": "navigation"
+        },
+        {
+          "command": "nestro.searchPackages",
           "when": "view == nestro.packagesView",
           "group": "navigation"
         },
