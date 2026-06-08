@@ -11,4 +11,7 @@
 	// @deprecated
 	// "typescript.tsc.autoDetect": "off",
 	"js/ts.tsc.autoDetect": "off",
+	"workbench.colorCustomizations": {
+		"titleBar.activeBackground": "#3766cb"
+	}
 }
