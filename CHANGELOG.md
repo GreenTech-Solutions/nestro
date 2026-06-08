@@ -1,3 +1,19 @@
+# [0.2.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.1.1...v0.2.0) (2026-06-08)
+
+
+### Bug Fixes
+
+* keep dependency sections alphabetized ([7e4f50e](https://github.com/GreenTech-Solutions/nestro/commit/7e4f50eca2c7f9a3c70281cb28b4fd1b207d2328))
+* show complete stable version list in picker ([4319ac1](https://github.com/GreenTech-Solutions/nestro/commit/4319ac1bb576e0413dd78550f6e2ca12e268bab2))
+
+
+### Features
+
+* add package removal command ([ca3515e](https://github.com/GreenTech-Solutions/nestro/commit/ca3515e89ab5097cc5c4eb2dee59df64e4caff90))
+* add package search in sidebar ([a8e241a](https://github.com/GreenTech-Solutions/nestro/commit/a8e241ade554ef36c9e69ee9b7ad92143fdecf1f))
+* **search:** add clear search query command ([cd7e7fb](https://github.com/GreenTech-Solutions/nestro/commit/cd7e7fbe549f0e02dfb38d71f82774a16afc6e8a))
+* **search:** split search query into tree item ([9c5907c](https://github.com/GreenTech-Solutions/nestro/commit/9c5907ccd18b5662e02d3857ea96f9f2b20965fe))
+
 ## [Unreleased]
 
 - Fix version picker ordering so it shows the full registry list in descending semver order and respects `nestro.includePreReleases`.
