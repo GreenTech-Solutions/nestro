@@ -151,17 +151,17 @@ describe('switchDependencyType()', () => {
 
   it('moves a package from dependencies to devDependencies and preserves the version string', async () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
-      dependencies: { react: '^18.0.0' },
-      devDependencies: { vite: '^5.0.0' },
+      dependencies: { zod: '^3.0.0' },
+      devDependencies: { axios: '^1.0.0' },
     }, undefined, 2)));
 
-    await switchDependencyType('/workspace/package.json', 'react', false);
+    await switchDependencyType('/workspace/package.json', 'zod', false);
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
       devDependencies: {
-        react: '^18.0.0',
-        vite: '^5.0.0',
+        axios: '^1.0.0',
+        zod: '^3.0.0',
       },
     });
   });
@@ -169,16 +169,16 @@ describe('switchDependencyType()', () => {
   it('moves a package from devDependencies to dependencies and preserves the version string', async () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^18.0.0' },
-      devDependencies: { vite: '^5.0.0' },
+      devDependencies: { axios: '^1.0.0' },
     }, undefined, 2)));
 
-    await switchDependencyType('/workspace/package.json', 'vite', true);
+    await switchDependencyType('/workspace/package.json', 'axios', true);
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
       dependencies: {
+        axios: '^1.0.0',
         react: '^18.0.0',
-        vite: '^5.0.0',
       },
     });
   });

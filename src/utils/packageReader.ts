@@ -103,10 +103,10 @@ export async function switchDependencyType(
     json[sourceKey] = source;
   }
 
-  json[targetKey] = {
+  json[targetKey] = sortDependencyMap({
     ...(json[targetKey] ?? {}),
     [packageName]: version,
-  };
+  });
 
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
@@ -229,4 +229,10 @@ function setPinnedVersion(version: string, pin: boolean): string {
   const versionPrefix = extractVersionPrefix(remainder);
   const normalized = remainder.slice(versionPrefix.length);
   return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
+}
+
+function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(dependencies).sort(([left], [right]) => left.localeCompare(right)),
+  );
 }
