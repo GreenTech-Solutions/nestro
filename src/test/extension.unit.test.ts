@@ -84,6 +84,14 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.removePackage command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.removePackage',
+      expect.any(Function),
+    );
+  });
+
   it('registers nestro.runAudit command', () => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -138,7 +146,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(23);
+    expect(ctx.subscriptions).toHaveLength(24);
   });
 
   it('creates Nestro output channel', async () => {

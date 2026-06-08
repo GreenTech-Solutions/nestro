@@ -158,6 +158,11 @@
         "icon": "$(lock)"
       },
       {
+        "command": "nestro.removePackage",
+        "title": "Remove Package",
+        "icon": "$(trash)"
+      },
+      {
         "command": "nestro.updateAllVisible",
         "title": "Update All",
         "icon": "$(cloud-upload)"
@@ -243,6 +248,11 @@
           "group": "inline@5"
         },
         {
+          "command": "nestro.removePackage",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "inline@6"
+        },
+        {
           "command": "nestro.copyPackageName",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
           "group": "navigation@2"
@@ -256,6 +266,11 @@
           "command": "nestro.pinVersion",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
           "group": "2_manage@2"
+        },
+        {
+          "command": "nestro.removePackage",
+          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "group": "2_manage@3"
         }
       ]
     }
