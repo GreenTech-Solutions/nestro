@@ -109,6 +109,7 @@ describe('PackagesProvider.resetUpdateData()', () => {
   it('clears latest versions and update types while keeping current package versions', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     provider.resetUpdateData();
 

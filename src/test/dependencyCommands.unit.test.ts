@@ -106,7 +106,7 @@ describe('removePackageCommand()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     executeTaskMock.mockResolvedValue({} as vscode.TaskExecution);
-    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove Package');
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove Package' as never);
     onDidEndTaskProcessMock.mockImplementation((listener) => {
       listener({ execution: {} as vscode.TaskExecution, exitCode: 0 } as vscode.TaskProcessEndEvent);
       return { dispose: vi.fn() } as vscode.Disposable;
@@ -150,7 +150,7 @@ describe('removePackageCommand()', () => {
   });
 
   it('does nothing when the user cancels removal', async () => {
-    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
 
     await removePackageCommand(
       new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),

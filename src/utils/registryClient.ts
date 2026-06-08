@@ -41,15 +41,12 @@ export async function fetchPackageVersions(packageName: string): Promise<Package
 
 export function selectVersionsForPicker(
   allVersions: readonly string[],
-  tags: Record<string, string>,
+  _tags: Record<string, string>,
   currentVersion: string,
   includePreReleases: boolean,
 ): string[] {
   const normalizedCurrent = currentVersion.replace(/^workspace:/, '').replace(/^([~^]|>=|>|<=|<)/, '');
-  const selected = new Set([
-    ...Object.values(tags),
-    normalizedCurrent,
-  ]);
+  const selected = new Set([normalizedCurrent]);
 
   return allVersions
     .filter((version) => (

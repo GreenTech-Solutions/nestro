@@ -69,14 +69,13 @@ describe('selectVersionsForPicker()', () => {
     ]);
   });
 
-  it('keeps the current and tagged prerelease versions visible when filtering', () => {
+  it('keeps only the current prerelease visible when filtering', () => {
     expect(selectVersionsForPicker(
       ['2.0.0-beta.2', '2.0.0-beta.1', '1.2.0', '1.0.0'],
       { next: '2.0.0-beta.2' },
       '2.0.0-beta.1',
       false,
     )).toEqual([
-      '2.0.0-beta.2',
       '2.0.0-beta.1',
       '1.2.0',
       '1.0.0',

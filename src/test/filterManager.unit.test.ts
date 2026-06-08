@@ -59,4 +59,45 @@ describe('FilterManager', () => {
 
     expect(manager.search).toBe('react dom');
   });
+
+  it('opens a search input with a clear button', async () => {
+    const manager = new FilterManager('all');
+    const listeners: {
+      accept?: () => void;
+      hide?: () => void;
+      trigger?: (button: vscode.QuickInputButton) => void;
+    } = {};
+    const inputBox = {
+      title: '',
+      prompt: '',
+      placeholder: '',
+      value: 'react',
+      buttons: [] as vscode.QuickInputButton[],
+      show: vi.fn(),
+      hide: vi.fn(() => listeners.hide?.()),
+      dispose: vi.fn(),
+      onDidAccept: vi.fn((listener: () => void) => {
+        listeners.accept = listener;
+        return { dispose: vi.fn() } as vscode.Disposable;
+      }),
+      onDidHide: vi.fn((listener: () => void) => {
+        listeners.hide = listener;
+        return { dispose: vi.fn() } as vscode.Disposable;
+      }),
+      onDidTriggerButton: vi.fn((listener: (button: vscode.QuickInputButton) => void) => {
+        listeners.trigger = listener;
+        return { dispose: vi.fn() } as vscode.Disposable;
+      }),
+    };
+    vi.mocked(vscode.window.createInputBox).mockReturnValue(inputBox as unknown as vscode.InputBox);
+
+    const pending = manager.showSearch();
+    const clearButton = inputBox.buttons[0];
+    listeners.trigger?.(clearButton);
+    expect(inputBox.value).toBe('');
+    listeners.accept?.();
+    await pending;
+
+    expect(manager.search).toBe('');
+  });
 });

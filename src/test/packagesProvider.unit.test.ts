@@ -7,6 +7,7 @@ import {
   PackageDetailItem,
   PackageItem,
   PackagesProvider,
+  SearchQueryItem,
   StatusItem,
 } from '../providers';
 import {
@@ -57,12 +58,14 @@ describe('PackagesProvider', () => {
   it('starts with the configured initial filter', async () => {
     const provider = new PackagesProvider(new FilterManager('hasUpdates'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
 
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1].label).toBe('Filter: Has Updates');
+    expect(tree[1]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[2].label).toBe('Filter: Has Updates');
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
@@ -70,13 +73,15 @@ describe('PackagesProvider', () => {
   it('allows setFilter to override the initial filter', async () => {
     const provider = new PackagesProvider(new FilterManager('hasUpdates'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     provider.setFilter('all');
 
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1].label).toBe('Filter: All');
+    expect(tree[1]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[2].label).toBe('Filter: All');
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
@@ -84,6 +89,7 @@ describe('PackagesProvider', () => {
     const filterManager = new FilterManager('all');
     const provider = new PackagesProvider(filterManager);
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     filterManager.setSearch('react');
 
@@ -96,6 +102,7 @@ describe('PackagesProvider', () => {
   it('reuses fresh update check results', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     await provider.checkUpdates();
 
@@ -105,6 +112,7 @@ describe('PackagesProvider', () => {
   it('fetches updates again after cache invalidation', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     provider.invalidateUpdateCache();
     await provider.checkUpdates();
@@ -118,6 +126,7 @@ describe('PackagesProvider', () => {
       vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
       const provider = new PackagesProvider(new FilterManager('all'));
 
+      await provider.loadPackages();
       await provider.checkUpdates();
       vi.setSystemTime(new Date('2026-05-27T00:05:01.000Z'));
       await provider.checkUpdates();
@@ -133,6 +142,7 @@ describe('PackagesProvider', () => {
     mockNestroConfiguration({ updateTarget: 'latest' });
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     mockNestroConfiguration({ updateTarget: 'minor' });
     await provider.checkUpdates();
@@ -144,6 +154,7 @@ describe('PackagesProvider', () => {
     mockNestroConfiguration({ includePreReleases: true });
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     mockNestroConfiguration({ includePreReleases: false });
     await provider.checkUpdates();
@@ -154,6 +165,7 @@ describe('PackagesProvider', () => {
   it('exposes expandable package details for package rows', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
     const packageItem = groups.flatMap(group => group.children).find((item): item is PackageItem => item instanceof PackageItem);
@@ -179,6 +191,7 @@ describe('PackagesProvider', () => {
     ]);
     const provider = new PackagesProvider(new FilterManager('all'));
 
+    await provider.loadPackages();
     await provider.checkUpdates();
     const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
     const packageItem = groups.flatMap(group => group.children).find((item): item is PackageItem => item instanceof PackageItem);
@@ -213,7 +226,8 @@ describe('PackagesProvider', () => {
     expect(tree[0].label).toBe('Last update check');
     expect(tree[1]).toBeInstanceOf(StatusItem);
     expect(tree[1].label).toBe('Audit complete');
-    expect(tree[2]).toBeInstanceOf(FilterBarItem);
+    expect(tree[2]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[3]).toBeInstanceOf(FilterBarItem);
   });
 });
 

@@ -4,6 +4,7 @@ import { FilterCounts, FilterType } from './FilterManager';
 import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
+import { SearchQueryItem } from './SearchQueryItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import type { UpdateType } from '../utils';
 
@@ -36,7 +37,8 @@ export function buildTree(
   }
 
   return [
-    new FilterBarItem(getFilterCounts(entries), filterType, search),
+    new SearchQueryItem(search),
+    new FilterBarItem(getFilterCounts(entries), filterType),
     ...buildWorkspaceGroups(entries, filterType, search, workspaceRoot),
   ];
 }
@@ -119,7 +121,8 @@ function buildFlatTree(
   search: string,
 ): vscode.TreeItem[] {
   return [
-    new FilterBarItem(getFilterCounts(entries), filterType, search),
+    new SearchQueryItem(search),
+    new FilterBarItem(getFilterCounts(entries), filterType),
     ...buildGroups(entries, filterType, search),
   ];
 }

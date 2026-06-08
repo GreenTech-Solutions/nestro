@@ -6,6 +6,7 @@ import {
   MessageItem,
   PackageItem,
   PackageTreeEntry,
+  SearchQueryItem,
   toRelativeLabel,
   WorkspaceFolderItem,
 } from '../providers';
@@ -22,8 +23,9 @@ describe('buildTree', () => {
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'all', '');
 
-    expect(tree[0]).toBeInstanceOf(FilterBarItem);
-    const groups = tree.slice(1).filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[1]).toBeInstanceOf(FilterBarItem);
+    const groups = tree.slice(2).filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups.map(group => group.label)).toEqual(['Dependencies', 'Dev Dependencies']);
     expect(groups[0].description).toBe('1 packages · 1 outdated');
     expect(groups[1].description).toBe('1 packages');
@@ -39,9 +41,10 @@ describe('buildTree', () => {
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'breaking', '');
 
-    expect(tree[0]).toBeInstanceOf(FilterBarItem);
-    expect(tree[1]).toBeInstanceOf(MessageItem);
-    expect(tree[1].label).toBe('No packages match the current filter.');
+    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[1]).toBeInstanceOf(FilterBarItem);
+    expect(tree[2]).toBeInstanceOf(MessageItem);
+    expect(tree[2].label).toBe('No packages match the current filter.');
   });
 
   it('filters packages by update type', () => {
@@ -76,7 +79,8 @@ describe('buildTree', () => {
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),
     ], 'all', '', '/workspace');
 
-    expect(tree[0]).toBeInstanceOf(FilterBarItem);
+    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
+    expect(tree[1]).toBeInstanceOf(FilterBarItem);
     expect(tree.some(item => item instanceof WorkspaceFolderItem)).toBe(false);
   });
 
@@ -86,6 +90,7 @@ describe('buildTree', () => {
       makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
     ], 'all', '', '/workspace');
 
+    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
     const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
     expect(folders.map(folder => folder.label)).toEqual(['apps/frontend', 'packages/ui']);
     expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
@@ -101,6 +106,17 @@ describe('buildTree', () => {
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react', 'react-dom']);
+  });
+
+  it('shows the current search query in a dedicated item', () => {
+    const tree = buildTree([
+      makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
+    ], 'all', 'react');
+
+    expect(tree[0]).toEqual(expect.objectContaining({
+      label: 'Search query',
+      description: 'react',
+    }));
   });
 });
 

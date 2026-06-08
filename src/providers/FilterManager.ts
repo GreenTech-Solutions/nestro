@@ -53,6 +53,10 @@ export class FilterManager implements vscode.Disposable {
 
   private _current: FilterType;
   private _search = '';
+  private readonly clearSearchButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon('clear-all'),
+    tooltip: 'Clear search query',
+  };
 
   constructor(initialFilter: FilterType = 'all') {
     this._current = initialFilter;
@@ -84,11 +88,46 @@ export class FilterManager implements vscode.Disposable {
   }
 
   async showSearch(): Promise<void> {
-    const result = await vscode.window.showInputBox({
-      prompt: 'Search packages by name',
-      placeHolder: 'Type a package name',
-      value: this._search,
+    const inputBox = vscode.window.createInputBox();
+    inputBox.title = 'Search packages';
+    inputBox.prompt = 'Search packages by name';
+    inputBox.placeholder = 'Type a package name';
+    inputBox.value = this._search;
+    inputBox.buttons = [this.clearSearchButton];
+
+    const result = await new Promise<string | undefined>((resolve) => {
+      const disposables: vscode.Disposable[] = [];
+      let finished = false;
+      const finish = (value: string | undefined): void => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        while (disposables.length > 0) {
+          disposables.pop()?.dispose();
+        }
+        inputBox.dispose();
+        resolve(value);
+      };
+
+      disposables.push(
+        inputBox.onDidAccept(() => {
+          finish(inputBox.value);
+          inputBox.hide();
+        }),
+        inputBox.onDidHide(() => {
+          finish(undefined);
+        }),
+        inputBox.onDidTriggerButton((button) => {
+          if (button === this.clearSearchButton) {
+            inputBox.value = '';
+          }
+        }),
+      );
+
+      inputBox.show();
     });
+
     if (result !== undefined) {
       this.setSearch(result);
     }

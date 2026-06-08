@@ -6,5 +6,6 @@ export * from './StatusItem';
 export * from './WorkspaceFolderItem';
 export * from './FilterBarItem';
 export * from './FilterManager';
+export * from './SearchQueryItem';
 export * from './MessageItem';
 export * from './treeBuilder';
