@@ -24,7 +24,7 @@ vi.mock('../clients', async () => {
   return {
     ...actual,
     ClientManager: vi.fn(function (this: { getClient: ReturnType<typeof vi.fn> }) {
-      this.getClient = vi.fn(async () => new actual.NpmClient('/workspace'));
+      this.getClient = vi.fn(() => Promise.resolve(new actual.NpmClient('/workspace')));
     }),
   };
 });

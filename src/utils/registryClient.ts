@@ -49,10 +49,10 @@ export function selectVersionsForPicker(
   const selected = new Set([normalizedCurrent]);
 
   return allVersions
-    .filter((version) => (
+    .filter(version => (
       includePreReleases
       || !isPreReleaseVersion(version)
       || selected.has(version)
     ))
-    .sort((left, right) => compareRawVersions(right, left));
+    .sort((left, right) => -compareRawVersions(left, right));
 }
