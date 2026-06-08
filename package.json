@@ -188,6 +188,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "nestro.clearSearchQuery",
+        "title": "Clear Search Query",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "nestro.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
@@ -266,6 +271,11 @@
           "command": "nestro.copyPackageName",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
           "group": "navigation@2"
+        },
+        {
+          "command": "nestro.clearSearchQuery",
+          "when": "view == nestro.packagesView && viewItem == search-active",
+          "group": "inline"
         },
         {
           "command": "nestro.switchDepType",

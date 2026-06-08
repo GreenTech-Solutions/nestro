@@ -60,6 +60,15 @@ describe('FilterManager', () => {
     expect(manager.search).toBe('react dom');
   });
 
+  it('clears the package search query', () => {
+    const manager = new FilterManager('all');
+
+    manager.setSearch('react');
+    manager.clearSearch();
+
+    expect(manager.search).toBe('');
+  });
+
   it('opens a search input with a clear button', async () => {
     const manager = new FilterManager('all');
     const listeners: {

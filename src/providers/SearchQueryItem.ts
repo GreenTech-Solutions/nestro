@@ -9,6 +9,6 @@ export class SearchQueryItem extends vscode.TreeItem {
       : `Current package search query: ${search}`;
     this.iconPath = new vscode.ThemeIcon('search');
     this.command = { command: 'nestro.searchPackages', title: 'Edit Search Query' };
-    this.contextValue = 'search';
+    this.contextValue = search === '' ? 'search-empty' : 'search-active';
   }
 }

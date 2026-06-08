@@ -87,6 +87,10 @@ export class FilterManager implements vscode.Disposable {
     this._onDidChange.fire();
   }
 
+  clearSearch(): void {
+    this.setSearch('');
+  }
+
   async showSearch(): Promise<void> {
     const inputBox = vscode.window.createInputBox();
     inputBox.title = 'Search packages';

@@ -88,6 +88,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     await this.filterManager.showSearch();
   }
 
+  clearSearch(): void {
+    this.filterManager.clearSearch();
+  }
+
   get suppressingWrites(): boolean {
     return this.isWriting;
   }

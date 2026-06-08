@@ -25,6 +25,7 @@ vi.mock('../providers', () => ({
     this.resetUpdateData = vi.fn();
     this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
     this.showSearch = vi.fn().mockResolvedValue(undefined);
+    this.clearSearch = vi.fn();
     this.getVisibleOutdatedPackages = vi.fn(() => []);
     this.suppressingWrites = false;
     this.dispose = vi.fn();
@@ -141,6 +142,14 @@ describe('activate()', () => {
     );
   });
 
+  it('registers nestro.clearSearchQuery command', () => {
+    activate(makeContext());
+    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+      'nestro.clearSearchQuery',
+      expect.any(Function),
+    );
+  });
+
   it('creates tree view for nestro.packagesView', () => {
     activate(makeContext());
     expect(vscode.window.createTreeView).toHaveBeenCalledWith(
@@ -155,7 +164,7 @@ describe('activate()', () => {
   it('pushes all disposables to context.subscriptions', () => {
     const ctx = makeContext();
     activate(ctx);
-    expect(ctx.subscriptions).toHaveLength(25);
+    expect(ctx.subscriptions).toHaveLength(26);
   });
 
   it('creates Nestro output channel', async () => {
