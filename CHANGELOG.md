@@ -1,3 +1,7 @@
+## [Unreleased]
+
+- Fix version picker ordering so it shows the full registry list in descending semver order and respects `nestro.includePreReleases`.
+
 ## [0.1.1](https://github.com/GreenTech-Solutions/nestro/compare/v0.1.0...v0.1.1) (2026-05-29)
 
 # [0.1.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.0.1...v0.1.0) (2026-05-29)

@@ -18,7 +18,15 @@ export async function pickVersionCommand(item: PackageItem, provider: PackagesPr
 
   try {
     const { tags, versions } = await fetchPackageVersions(item.packageName);
-    const selectedVersions = selectVersionsForPicker(versions, tags, item.currentVersion);
+    const includePreReleases = vscode.workspace
+      .getConfiguration('nestro')
+      .get<boolean>('includePreReleases', true);
+    const selectedVersions = selectVersionsForPicker(
+      versions,
+      tags,
+      item.currentVersion,
+      includePreReleases,
+    );
     const tagByVersion = new Map(Object.entries(tags).map(([tag, version]) => [version, tag]));
     const normalizedCurrent = normalizeCurrentVersion(item.currentVersion);
 

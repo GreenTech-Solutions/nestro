@@ -43,33 +43,44 @@ describe('fetchPackageVersions()', () => {
 });
 
 describe('selectVersionsForPicker()', () => {
-  it('returns every version when the list is short', () => {
-    expect(selectVersionsForPicker(['1.2.0', '1.1.0', '1.0.0'], {}, '1.0.0')).toEqual([
-      '1.2.0',
-      '1.1.0',
+  it('returns the full list sorted by semantic version precedence', () => {
+    expect(selectVersionsForPicker(
+      ['1.0.0', '10.0.0', '2.0.0-beta.1', '2.0.0'],
+      {},
+      '1.0.0',
+      true,
+    )).toEqual([
+      '10.0.0',
+      '2.0.0',
+      '2.0.0-beta.1',
       '1.0.0',
     ]);
   });
 
-  it('keeps a compact set for long version histories', () => {
-    const versions = makeVersions(50);
-    const selected = selectVersionsForPicker(versions, { latest: versions[0] }, versions.at(-1) ?? '');
-
-    expect(selected.length).toBeLessThanOrEqual(25);
+  it('filters prereleases when the setting is disabled', () => {
+    expect(selectVersionsForPicker(
+      ['2.0.0-beta.1', '1.2.0', '1.1.0-alpha.1', '1.0.0'],
+      {},
+      '1.0.0',
+      false,
+    )).toEqual([
+      '1.2.0',
+      '1.0.0',
+    ]);
   });
 
-  it('always includes the latest tag', () => {
-    const versions = makeVersions(50);
-    const selected = selectVersionsForPicker(versions, { latest: '1.10.0' }, '1.0.0');
-
-    expect(selected).toContain('1.10.0');
-  });
-
-  it('does not return duplicate versions', () => {
-    const versions = makeVersions(50);
-    const selected = selectVersionsForPicker(versions, { latest: versions[0], next: versions[0] }, versions[0]);
-
-    expect(new Set(selected).size).toBe(selected.length);
+  it('keeps the current and tagged prerelease versions visible when filtering', () => {
+    expect(selectVersionsForPicker(
+      ['2.0.0-beta.2', '2.0.0-beta.1', '1.2.0', '1.0.0'],
+      { next: '2.0.0-beta.2' },
+      '2.0.0-beta.1',
+      false,
+    )).toEqual([
+      '2.0.0-beta.2',
+      '2.0.0-beta.1',
+      '1.2.0',
+      '1.0.0',
+    ]);
   });
 });
 
@@ -82,12 +93,5 @@ function mockRegistryResponse(body: string): void {
       response.emit('end');
     });
     return new EventEmitter() as ClientRequest;
-  });
-}
-
-function makeVersions(count: number): string[] {
-  return Array.from({ length: count }, (_, index) => {
-    const version = count - index;
-    return `1.${version}.0`;
   });
 }

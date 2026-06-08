@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getGreatestVersion, getUpdateType, isVersionOutdated } from '../utils';
+import {
+  compareRawVersions,
+  getGreatestVersion,
+  getUpdateType,
+  isPreReleaseVersion,
+  isVersionOutdated,
+} from '../utils';
 
 describe('version utils', () => {
   it('does not mark an older latest version as an update', () => {
@@ -25,5 +31,15 @@ describe('version utils', () => {
 
   it('can exclude pre-release versions when selecting the greatest version', () => {
     expect(getGreatestVersion(['1.0.0', '1.1.0-beta.1'], false)).toBe('1.0.0');
+  });
+
+  it('sorts versions using semantic precedence instead of string order', () => {
+    expect(compareRawVersions('10.0.0', '9.999.999')).toBeGreaterThan(0);
+    expect(compareRawVersions('2.0.0', '2.0.0-beta.1')).toBeGreaterThan(0);
+  });
+
+  it('detects pre-release versions', () => {
+    expect(isPreReleaseVersion('1.2.3-beta.1')).toBe(true);
+    expect(isPreReleaseVersion('1.2.3')).toBe(false);
   });
 });

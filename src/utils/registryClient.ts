@@ -1,4 +1,5 @@
 import * as https from 'node:https';
+import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 
 interface NpmRegistryPackument {
   'dist-tags': Record<string, string>;
@@ -42,25 +43,19 @@ export function selectVersionsForPicker(
   allVersions: readonly string[],
   tags: Record<string, string>,
   currentVersion: string,
+  includePreReleases: boolean,
 ): string[] {
-  if (allVersions.length <= 20) {
-    return [...allVersions];
-  }
-
   const normalizedCurrent = currentVersion.replace(/^workspace:/, '').replace(/^([~^]|>=|>|<=|<)/, '');
-  const tagVersions = Object.values(tags);
-  const recent = allVersions.slice(0, 10);
-  const milestones: string[] = [];
-  const seenMajors = new Set<string>();
+  const selected = new Set([
+    ...Object.values(tags),
+    normalizedCurrent,
+  ]);
 
-  for (const version of allVersions) {
-    const major = version.split('.')[0];
-    if (!seenMajors.has(major)) {
-      seenMajors.add(major);
-      milestones.push(version);
-    }
-  }
-
-  const selected = new Set([...tagVersions, normalizedCurrent, ...recent, ...milestones]);
-  return allVersions.filter(version => selected.has(version));
+  return allVersions
+    .filter((version) => (
+      includePreReleases
+      || !isPreReleaseVersion(version)
+      || selected.has(version)
+    ))
+    .sort((left, right) => compareRawVersions(right, left));
 }

@@ -45,6 +45,27 @@ export function getGreatestVersion(versions: string[], includePreReleases: boole
   return greatest?.raw;
 }
 
+export function compareRawVersions(left: string, right: string): number {
+  const leftVersion = parseVersion(left);
+  const rightVersion = parseVersion(right);
+
+  if (leftVersion === undefined && rightVersion === undefined) {
+    return left.localeCompare(right);
+  }
+  if (leftVersion === undefined) {
+    return -1;
+  }
+  if (rightVersion === undefined) {
+    return 1;
+  }
+
+  return compareVersions(leftVersion, rightVersion);
+}
+
+export function isPreReleaseVersion(raw: string): boolean {
+  return (parseVersion(raw)?.preRelease.length ?? 0) > 0;
+}
+
 function parseVersion(raw: string): ParsedVersion | undefined {
   const match = raw.trim().match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?/);
   if (match === null) {

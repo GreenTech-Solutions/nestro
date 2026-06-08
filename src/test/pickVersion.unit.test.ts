@@ -58,6 +58,24 @@ describe('pickVersionCommand()', () => {
     expect(syntheticItem.packageFilePath).toBe('/workspace/package.json');
   });
 
+  it('passes the prerelease setting through to the version selector', async () => {
+    const quickPick = makeQuickPick();
+    const { selectVersionsForPicker } = await import('../utils');
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string, defaultValue: unknown) => key === 'includePreReleases' ? false : defaultValue),
+    } as unknown as vscode.WorkspaceConfiguration);
+
+    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+
+    expect(selectVersionsForPicker).toHaveBeenCalledWith(
+      ['19.0.0', '18.0.0'],
+      { latest: '19.0.0' },
+      '^18.0.0',
+      false,
+    );
+  });
+
   it('does not install when the current version is selected', async () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
