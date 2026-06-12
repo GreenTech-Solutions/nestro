@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { ClientManager } from '../clients';
 import { PackageItem, PackagesProvider } from '../providers';
 import {
-  getWorkspacePackageFilePath,
+  getPackageDirectory,
+  getWorkspacePackageFilePaths,
   logger,
   showError,
   updateDependencyVersionsInFile,
@@ -26,11 +26,11 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
         return;
       }
 
-      const cwd = path.dirname(packageFilePath);
+      const cwd = getPackageDirectory(packageFilePath);
       const client = await clientManager.getClient(cwd);
       await runPackageUpdateTask(
         [{ item, version: latest }],
-        client.buildUpdateCommand([{ name: item.packageName, version: latest }]),
+        client.buildUpdateCommand([{ name: item.packageName, version: latest, section: getPackageSection(item) }]),
         `Update ${item.packageName}`,
         provider,
         cwd,
@@ -45,10 +45,11 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
 
 export async function runInstallCommand(): Promise<void> {
   try {
-    const client = await clientManager.getClient(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '');
+    const packageFilePath = await resolveInstallPackageFilePath();
+    const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
     const command = client.buildInstallCommand();
     logger.info(`Running install command: ${command}`);
-    await executeShellTask(command, 'Install Dependencies');
+    await executeShellTask(command, 'Install Dependencies', getPackageDirectory(packageFilePath));
   }
   catch (err) {
     showError(`failed to run install — ${err instanceof Error ? err.message : String(err)}`, err);
@@ -85,7 +86,7 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         update.item.packageFilePath || undefined,
       ));
       await provider.withWriteSuppressed(async () => {
-        for (const group of groupUpdatesByPackageFile(updates)) {
+        for (const group of groupDeferredUpdatesByPackageFile(updates)) {
           await updateDependencyVersionsInFile(
             group.packageFilePath,
             group.updates.map(update => ({ name: update.item.packageName, version: update.version })),
@@ -101,11 +102,15 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
       return;
     }
 
-    for (const group of groupUpdatesByPackageFile(updates)) {
-      const cwd = path.dirname(group.packageFilePath);
+    for (const group of groupImmediateUpdatesByPackageFile(updates)) {
+      const cwd = getPackageDirectory(group.packageFilePath);
       const client = await clientManager.getClient(cwd);
       const command = client.buildUpdateCommand(
-        group.updates.map(update => ({ name: update.item.packageName, version: update.version })),
+        group.updates.map(update => ({
+          name: update.item.packageName,
+          version: update.version,
+          section: getPackageSection(update.item),
+        })),
       );
       await runPackageUpdateTask(group.updates, command, 'Update All Packages', provider, cwd);
     }
@@ -176,11 +181,10 @@ async function executeShellTask(command: string, taskName: string, cwd?: string)
 }
 
 function getPackageFilePath(item: PackageItem): string {
-  const packageFilePath = item.packageFilePath || getWorkspacePackageFilePath();
-  if (packageFilePath === undefined) {
+  if (item.packageFilePath === '') {
     throw new Error('No workspace package.json found.');
   }
-  return packageFilePath;
+  return item.packageFilePath;
 }
 
 function markUpdated(
@@ -209,7 +213,7 @@ function markUpdating(
   provider.markPackageUpdating(packageName, installing, packageFilePath);
 }
 
-function groupUpdatesByPackageFile(
+function groupDeferredUpdatesByPackageFile(
   updates: readonly { item: PackageItem; version: string }[],
 ): { packageFilePath: string; updates: { item: PackageItem; version: string }[] }[] {
   const byFile = new Map<string, { item: PackageItem; version: string }[]>();
@@ -221,4 +225,55 @@ function groupUpdatesByPackageFile(
     packageFilePath,
     updates: groupUpdates,
   }));
+}
+
+function groupImmediateUpdatesByPackageFile(
+  updates: readonly { item: PackageItem; version: string }[],
+): { packageFilePath: string; updates: { item: PackageItem; version: string }[] }[] {
+  const byFile = new Map<string, { item: PackageItem; version: string }[]>();
+  for (const update of updates) {
+    const packageFilePath = getPackageFilePath(update.item);
+    const section = getPackageSection(update.item);
+    const groupKey = `${packageFilePath}\0${section}`;
+    byFile.set(groupKey, [...(byFile.get(groupKey) ?? []), update]);
+  }
+  return [...byFile.values()].map(groupUpdates => ({
+    packageFilePath: getPackageFilePath(groupUpdates[0].item),
+    updates: groupUpdates,
+  }));
+}
+
+function getPackageSection(item: PackageItem): 'dependencies' | 'devDependencies' {
+  return item.dev ? 'devDependencies' : 'dependencies';
+}
+
+async function resolveInstallPackageFilePath(): Promise<string> {
+  const packageFilePaths = await getWorkspacePackageFilePaths();
+  if (packageFilePaths.length === 0) {
+    throw new Error('No workspace package.json found.');
+  }
+  if (packageFilePaths.length === 1) {
+    return packageFilePaths[0];
+  }
+
+  const selected = await vscode.window.showQuickPick(
+    packageFilePaths.map(packageFilePath => ({
+      label: formatPackageFileLabel(packageFilePath),
+      description: packageFilePath,
+      packageFilePath,
+    })),
+    { placeHolder: 'Select the package.json to install dependencies for' },
+  );
+  if (selected === undefined) {
+    throw new Error('Install cancelled.');
+  }
+
+  return selected.packageFilePath;
+}
+
+function formatPackageFileLabel(packageFilePath: string): string {
+  const normalized = packageFilePath.replace(/\\/g, '/');
+  return normalized.endsWith('/package.json')
+    ? normalized.slice(0, -'/package.json'.length) || normalized
+    : normalized;
 }

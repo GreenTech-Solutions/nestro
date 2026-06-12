@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { logger } from './logger';
 
@@ -132,16 +133,7 @@ export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
 }
 
 export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntry[]> {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    logger.info('No workspace folder found.');
-    return [];
-  }
-
-  const configuredGlob = glob ?? vscode.workspace
-    .getConfiguration('nestro')
-    .get<string>('monorepoGlob', '**/package.json');
-  const files = await vscode.workspace.findFiles(configuredGlob, '**/node_modules/**');
+  const files = await findWorkspacePackageJsonFiles(glob);
   if (files.length === 0) {
     logger.info('No workspace package.json found.');
     return [];
@@ -176,6 +168,28 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
     }
   }
   return results;
+}
+
+export async function getWorkspacePackageFilePaths(glob?: string): Promise<string[]> {
+  const files = await findWorkspacePackageJsonFiles(glob);
+  return files.map(uri => uri.fsPath);
+}
+
+export function getPackageDirectory(packageFilePath: string): string {
+  return path.dirname(packageFilePath);
+}
+
+async function findWorkspacePackageJsonFiles(glob?: string): Promise<vscode.Uri[]> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    logger.info('No workspace folder found.');
+    return [];
+  }
+
+  const configuredGlob = glob ?? vscode.workspace
+    .getConfiguration('nestro')
+    .get<string>('monorepoGlob', '**/package.json');
+  return await vscode.workspace.findFiles(configuredGlob, '**/node_modules/**');
 }
 
 function detectJsonIndent(raw: string): number {

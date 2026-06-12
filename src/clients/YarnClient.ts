@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 
 export class YarnClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]): string {
-    return `yarn add ${this.formatPackageTargets(packages)}`;
+    return `yarn add ${this.formatPackageTargets(packages)}${this.getSectionFlag(packages, '--dev')}`;
   }
 
   buildInstallCommand(): string {

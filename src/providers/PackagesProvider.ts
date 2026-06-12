@@ -1,8 +1,11 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
 import {
   fetchAllLatestVersions,
+  getPackageDirectory,
   getUpdateType,
+  getWorkspacePackageFilePaths,
   logger,
   NcuUpdateTarget,
   readAllWorkspaceDependencies,
@@ -201,6 +204,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   async loadPackages(): Promise<void> {
     logger.info('Loading workspace packages.');
     this.loading = true;
+    this.auditResults = new Map();
+    this.auditState = 'idle';
+    this.lastAuditCount = undefined;
     this.emitTreeChanged();
     try {
       const entries = await readAllWorkspaceDependencies();
@@ -303,16 +309,23 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async runAudit(): Promise<void> {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (folder === undefined) {
+    const packageFilePaths = await this.getKnownPackageFilePaths();
+    if (packageFilePaths.length === 0) {
       return;
     }
 
     this.auditState = 'running';
     this.emitTreeChanged();
     try {
-      const client = await this.clientManager.getClient(folder.uri.fsPath);
-      this.auditResults = await client.runAudit();
+      const auditResults = new Map<string, AuditSeverity>();
+      for (const packageFilePath of packageFilePaths) {
+        const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
+        const fileResults = await client.runAudit();
+        for (const [packageName, severity] of fileResults) {
+          auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+        }
+      }
+      this.auditResults = auditResults;
       this.auditState = 'done';
       this.lastAuditCount = this.auditResults.size;
       logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
@@ -356,7 +369,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       latest,
       updateType,
       installing,
-      this.auditResults.get(packageName),
+      this.auditResults.get(this.entryKey(packageName, packageFilePath)),
       packageFilePath,
       dev,
       versionPrefix,
@@ -439,6 +452,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 
+  private async getKnownPackageFilePaths(): Promise<string[]> {
+    const knownPackageFilePaths = [...new Set(this.allEntries.map(entry => entry.packageFilePath).filter(Boolean))];
+    if (knownPackageFilePaths.length > 0) {
+      return knownPackageFilePaths;
+    }
+
+    return await getWorkspacePackageFilePaths();
+  }
+
   private entryKey(packageName: string, packageFilePath: string): string {
     return `${packageFilePath}\0${packageName}`;
   }
@@ -505,18 +527,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   private toRelativePackageFilePath(packageFilePath: string): string | undefined {
-    const workspaceRoot = this.workspaceRoot;
-    if (workspaceRoot === undefined || packageFilePath === '') {
+    if (packageFilePath === '') {
       return undefined;
     }
-    const normalizedFile = packageFilePath.replace(/\\/g, '/');
-    const normalizedRoot = workspaceRoot.replace(/\\/g, '/').replace(/\/$/, '');
-    if (normalizedFile === `${normalizedRoot}/package.json`) {
+
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath));
+    if (workspaceFolder === undefined) {
+      return packageFilePath;
+    }
+
+    const relativeFile = path.relative(workspaceFolder.uri.fsPath, packageFilePath).replace(/\\/g, '/');
+    if (relativeFile === 'package.json') {
       return undefined;
     }
-    if (normalizedFile.startsWith(`${normalizedRoot}/`)) {
-      return normalizedFile.slice(normalizedRoot.length + 1);
-    }
-    return packageFilePath;
+
+    return relativeFile;
   }
 }

@@ -3,7 +3,7 @@ import { Client, PackageTarget } from './Client';
 
 export class PnpmClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]): string {
-    return `pnpm add ${this.formatPackageTargets(packages)}`;
+    return `pnpm add ${this.formatPackageTargets(packages)}${this.getSectionFlag(packages, '--save-dev')}`;
   }
 
   buildInstallCommand(): string {

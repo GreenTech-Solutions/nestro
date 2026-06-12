@@ -1,12 +1,22 @@
-import { run } from 'npm-check-updates';
-
 export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
+
+type Run = (options: {
+  packageFile: string;
+  target: NcuUpdateTarget;
+  pre: boolean;
+  jsonUpgraded: true;
+  removeRange: true;
+  silent: true;
+}) => Promise<unknown>;
+
+let cachedRun: Run | undefined;
 
 export async function fetchAllLatestVersions(
   packageFilePath: string,
   target: NcuUpdateTarget,
   includePreReleases: boolean,
 ): Promise<Map<string, string>> {
+  const run = await getRun();
   const result = await run({
     packageFile: packageFilePath,
     target,
@@ -21,6 +31,15 @@ export async function fetchAllLatestVersions(
   }
 
   return new Map(Object.entries(result));
+}
+
+async function getRun(): Promise<Run> {
+  if (cachedRun !== undefined) {
+    return cachedRun;
+  }
+
+  ({ run: cachedRun } = await import('npm-check-updates'));
+  return cachedRun;
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

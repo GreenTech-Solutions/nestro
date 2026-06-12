@@ -16,6 +16,11 @@
 
 ## [Unreleased]
 
+- Fix `npm-check-updates` loading so the full VS Code test suite compiles and runs again under the CommonJS test build.
+- Fix package-manager update commands so `devDependencies` stay in `devDependencies` for single updates, version picks, and bulk updates.
+- Fix monorepo watcher handling so `nestro.monorepoGlob` changes recreate file watchers immediately.
+- Fix `Run Install` and security audits to target the correct package root instead of always using the first workspace folder.
+- Fix audit badges so vulnerabilities are tracked per `package.json` instead of leaking across matching package names in different workspaces.
 - Fix filter counts so installing packages immediately disappear from update counters, preserve version prefixes after install, and invalidate cached update data when update tasks succeed.
 - Fix monorepo refresh ordering so the workspace root stays first and other package sources sort alphabetically.
 - Fix filter labels so update severities display as Patch, Minor, and Breaking.

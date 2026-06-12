@@ -17,13 +17,13 @@ Works out of the box with `npm`, `pnpm`, `yarn`, and `bun`. Nestro automatically
 Easily spot outdated packages in your sidebar. Filter by update type (patch, minor, breaking) to quickly identify which dependencies need attention.
 
 ### 🛡️ Security Audits
-Run `npm audit` directly from the UI to discover vulnerabilities in your dependencies and visualize them natively in the VS Code sidebar.
+Run package-manager audits directly from the UI to discover vulnerabilities across the detected package roots in your workspace and visualize them natively in the VS Code sidebar.
 
 ### 🔧 Version Management
 Upgrade to the latest versions with a single click, pick specific versions from a dropdown, switch between `dependencies` and `devDependencies`, or pin versions to prevent accidental upgrades.
 
 ### 🏗️ Monorepo Support
-Automatically discovers multiple `package.json` files across your workspace, organizing them neatly into workspaces for seamless monorepo management.
+Automatically discovers multiple `package.json` files across your workspace, organizes them by package root, refreshes watcher coverage when `nestro.monorepoGlob` changes, and lets `Run Install` target the package root you choose.
 
 ## Screenshots
 
@@ -45,6 +45,7 @@ Automatically discovers multiple `package.json` files across your workspace, org
 2. Click on the **Nestro** icon in the Activity Bar to open the sidebar view.
 3. You will see a list of all your packages. Nestro will automatically check for updates or you can run it manually.
 4. Click on the update icon next to an outdated package or right-click to see more options like "Pick Version...", "Switch to dev/dep", or "Toggle version pin".
+5. In monorepos with multiple package roots, `Run Install` asks which `package.json` should be used.
 
 ## Settings
 
@@ -66,7 +67,7 @@ Automatically discovers multiple `package.json` files across your workspace, org
 
 ## Limitations
 
-Nestro relies on installed package managers for its operations. Make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH. Security audits are currently supported primarily via `npm audit`.
+Nestro relies on installed package managers for its operations. Make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH.
 
 ## Release Notes / Changelog
 

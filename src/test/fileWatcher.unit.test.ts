@@ -60,6 +60,17 @@ describe('registerPackageJsonWatcher()', () => {
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
+
+  it('recreates watchers when refresh is called', () => {
+    const provider = makeProvider(false);
+
+    const watcherController = registerPackageJsonWatcher(makeContext(), provider);
+    expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(1);
+
+    watcherController.refresh();
+
+    expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(2);
+  });
 });
 
 function makeProvider(suppressingWrites: boolean): {

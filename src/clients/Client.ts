@@ -1,8 +1,11 @@
 import { AuditResult, AuditSeverity, runNpmAudit } from '../utils/auditClient';
 
+export type DependencySection = 'dependencies' | 'devDependencies';
+
 export interface PackageTarget {
   name: string;
   version: string;
+  section: DependencySection;
 }
 
 export interface InstallOptions {
@@ -30,5 +33,10 @@ export abstract class Client {
 
   protected formatPackageTargets(packages: readonly PackageTarget[]): string {
     return packages.map(packageTarget => `${packageTarget.name}@${packageTarget.version}`).join(' ');
+  }
+
+  protected getSectionFlag(packages: readonly PackageTarget[], devFlag: string): string {
+    const hasDevDependencies = packages.some(packageTarget => packageTarget.section === 'devDependencies');
+    return hasDevDependencies ? ` ${devFlag}` : '';
   }
 }

@@ -9,14 +9,26 @@ import {
   PackagesProvider,
   SearchQueryItem,
   StatusItem,
+  WorkspaceFolderItem,
 } from '../providers';
 import {
   fetchAllLatestVersions,
+  getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
 } from '../utils';
 
+const getClientMock = vi.fn();
+
+vi.mock('../clients', () => ({
+  ClientManager: vi.fn(function (this: { getClient: typeof getClientMock }) {
+    this.getClient = getClientMock;
+  }),
+}));
+
 vi.mock('../utils', () => ({
   fetchAllLatestVersions: vi.fn(),
+  getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
+  getWorkspacePackageFilePaths: vi.fn(),
   getUpdateType: vi.fn((current: string, latest: string) => (
     current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
   )),
@@ -53,6 +65,8 @@ describe('PackagesProvider', () => {
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
     ]));
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/package.json']);
+    getClientMock.mockReset();
   });
 
   it('starts with the configured initial filter', async () => {
@@ -246,6 +260,48 @@ describe('PackagesProvider', () => {
     expect(entry.item.currentVersion).toBe('^19.0.0');
     expect(entry.item.versionPrefix).toBe('^');
     expect(entry.item.updateType).toBe('none');
+  });
+
+  it('runs audits per package file and keeps vulnerability badges scoped to that file', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/apps/web/package.json',
+      },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/packages/ui/package.json',
+      },
+    ]);
+    getClientMock
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+      })
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockResolvedValue(new Map()),
+      });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    const folders = provider.getChildren().filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    const groups = folders.flatMap(folder => folder.children);
+    const packages = groups.flatMap(group => group.children).filter((item): item is PackageItem => item instanceof PackageItem);
+
+    expect(getClientMock).toHaveBeenCalledWith('/workspace/apps/web');
+    expect(getClientMock).toHaveBeenCalledWith('/workspace/packages/ui');
+    expect(packages.map(item => [item.packageFilePath, item.vulnerabilitySeverity])).toEqual([
+      ['/workspace/apps/web/package.json', 'high'],
+      ['/workspace/packages/ui/package.json', undefined],
+    ]);
   });
 });
 

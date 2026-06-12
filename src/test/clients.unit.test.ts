@@ -5,33 +5,48 @@ import { BunClient, ClientManager, NpmClient, PnpmClient, YarnClient } from '../
 describe('package manager clients', () => {
   it('builds npm update commands', () => {
     expect(new NpmClient('/workspace').buildUpdateCommand([
-      { name: 'react', version: '18.0.0' },
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
     ])).toBe('npm install react@18.0.0');
   });
 
   it('builds pnpm update commands', () => {
     expect(new PnpmClient('/workspace').buildUpdateCommand([
-      { name: 'react', version: '18.0.0' },
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
     ])).toBe('pnpm add react@18.0.0');
   });
 
   it('builds yarn update commands', () => {
     expect(new YarnClient('/workspace').buildUpdateCommand([
-      { name: 'react', version: '18.0.0' },
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
     ])).toBe('yarn add react@18.0.0');
   });
 
   it('builds bun update commands', () => {
     expect(new BunClient('/workspace').buildUpdateCommand([
-      { name: 'react', version: '18.0.0' },
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
     ])).toBe('bun add react@18.0.0');
   });
 
   it('includes multiple packages in one command', () => {
     expect(new PnpmClient('/workspace').buildUpdateCommand([
-      { name: 'react', version: '19.0.0' },
-      { name: 'typescript', version: '5.9.3' },
+      { name: 'react', version: '19.0.0', section: 'dependencies' },
+      { name: 'typescript', version: '5.9.3', section: 'dependencies' },
     ])).toBe('pnpm add react@19.0.0 typescript@5.9.3');
+  });
+
+  it('adds a save-dev flag for dev dependency updates', () => {
+    expect(new NpmClient('/workspace').buildUpdateCommand([
+      { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
+    ])).toBe('npm install vitest@4.0.0 --save-dev');
+    expect(new PnpmClient('/workspace').buildUpdateCommand([
+      { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
+    ])).toBe('pnpm add vitest@4.0.0 --save-dev');
+    expect(new YarnClient('/workspace').buildUpdateCommand([
+      { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
+    ])).toBe('yarn add vitest@4.0.0 --dev');
+    expect(new BunClient('/workspace').buildUpdateCommand([
+      { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
+    ])).toBe('bun add vitest@4.0.0 --dev');
   });
 
   it('builds npm remove commands', () => {

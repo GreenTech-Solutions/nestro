@@ -13,16 +13,20 @@ export function buildInstallCommand(
   packageName: string,
   version: string,
 ): string {
-  return buildPackageUpdateCommand(packageManager, [{ packageName, version }]);
+  return buildPackageUpdateCommand(packageManager, [{ packageName, version, section: 'dependencies' }]);
 }
 
 export function buildPackageUpdateCommand(
   packageManager: PackageManager,
-  updates: readonly { packageName: string; version: string }[],
+  updates: readonly { packageName: string; version: string; section: 'dependencies' | 'devDependencies' }[],
 ): string {
   return clientManager
     .createClient(packageManager, '')
-    .buildUpdateCommand(updates.map(update => ({ name: update.packageName, version: update.version })));
+    .buildUpdateCommand(updates.map(update => ({
+      name: update.packageName,
+      version: update.version,
+      section: update.section,
+    })));
 }
 
 export function buildRunInstallCommand(packageManager: PackageManager): string {

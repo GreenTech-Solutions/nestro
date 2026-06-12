@@ -72,6 +72,19 @@ describe('registerConfigurationWatcher()', () => {
     expect(provider.resetUpdateData).not.toHaveBeenCalled();
     expect(provider.invalidateUpdateCache).not.toHaveBeenCalled();
   });
+
+  it('recreates package.json watchers when monorepoGlob changes', () => {
+    const provider = makeProvider();
+    const refreshPackageJsonWatcher = vi.fn();
+
+    registerConfigurationWatcher(makeContext(), provider, refreshPackageJsonWatcher);
+    const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
+    listener(makeConfigEvent(['nestro.monorepoGlob']));
+
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(refreshPackageJsonWatcher).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('PackagesProvider.resetUpdateData()', () => {

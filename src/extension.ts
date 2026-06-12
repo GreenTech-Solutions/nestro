@@ -58,8 +58,8 @@ export function activate(context: vscode.ExtensionContext): void {
     provider,
   );
 
-  registerPackageJsonWatcher(context, provider);
-  registerConfigurationWatcher(context, provider);
+  const packageJsonWatcher = registerPackageJsonWatcher(context, provider);
+  registerConfigurationWatcher(context, provider, () => packageJsonWatcher.refresh());
 
   void provider.loadPackages().then(() => {
     if (checkUpdatesOnStartup) {
@@ -76,18 +76,7 @@ export function deactivate(): void {}
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,
   provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'>,
-): void {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (folder === undefined) {
-    return;
-  }
-
-  const watcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(
-      folder,
-      vscode.workspace.getConfiguration('nestro').get<string>('monorepoGlob', '**/package.json'),
-    ),
-  );
+): vscode.Disposable & { refresh(): void } {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   const scheduleRefresh = (): void => {
@@ -101,21 +90,47 @@ export function registerPackageJsonWatcher(
     }, 500);
   };
 
-  context.subscriptions.push(
-    watcher,
-    watcher.onDidChange(scheduleRefresh),
-    watcher.onDidCreate(scheduleRefresh),
-    watcher.onDidDelete(() => {
+  const createWatchers = (): vscode.Disposable[] => {
+    const glob = vscode.workspace.getConfiguration('nestro').get<string>('monorepoGlob', '**/package.json');
+    const folders = vscode.workspace.workspaceFolders ?? [];
+
+    return folders.flatMap((folder) => {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(folder, glob),
+      );
+      return [
+        watcher,
+        watcher.onDidChange(scheduleRefresh),
+        watcher.onDidCreate(scheduleRefresh),
+        watcher.onDidDelete(() => {
+          clearTimeout(debounceTimer);
+          provider.invalidateUpdateCache();
+          void provider.loadPackages();
+        }),
+      ];
+    });
+  };
+
+  let disposables = createWatchers();
+  const controller = {
+    refresh: (): void => {
+      disposables.forEach(disposable => disposable.dispose());
       clearTimeout(debounceTimer);
-      provider.invalidateUpdateCache();
-      void provider.loadPackages();
-    }),
-  );
+      disposables = createWatchers();
+    },
+    dispose: (): void => {
+      disposables.forEach(disposable => disposable.dispose());
+      clearTimeout(debounceTimer);
+    },
+  };
+  context.subscriptions.push(controller);
+  return controller;
 }
 
 export function registerConfigurationWatcher(
   context: vscode.ExtensionContext,
   provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'resetUpdateData' | 'setFilter'>,
+  refreshPackageJsonWatcher?: () => void,
 ): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -133,6 +148,7 @@ export function registerConfigurationWatcher(
       }
       if (e.affectsConfiguration('nestro.monorepoGlob')) {
         provider.invalidateUpdateCache();
+        refreshPackageJsonWatcher?.();
         void provider.loadPackages();
       }
     }),

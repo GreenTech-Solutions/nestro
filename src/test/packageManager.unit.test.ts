@@ -40,8 +40,8 @@ describe('install command builder', () => {
 
   it('builds batch update commands', () => {
     expect(buildPackageUpdateCommand('pnpm', [
-      { packageName: 'react', version: '19.0.0' },
-      { packageName: 'typescript', version: '5.9.3' },
+      { packageName: 'react', version: '19.0.0', section: 'dependencies' },
+      { packageName: 'typescript', version: '5.9.3', section: 'dependencies' },
     ])).toBe('pnpm add react@19.0.0 typescript@5.9.3');
   });
 

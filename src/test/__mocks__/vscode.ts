@@ -68,6 +68,10 @@ export const workspace = {
     onDidDelete: vi.fn(() => ({ dispose: vi.fn() })),
   })),
   workspaceFolders: [{ uri: { fsPath: '/workspace' } }],
+  getWorkspaceFolder: vi.fn((uri: { fsPath: string }) => {
+    const folder = workspace.workspaceFolders.find(candidate => uri.fsPath.startsWith(candidate.uri.fsPath));
+    return folder;
+  }),
   findFiles: vi.fn().mockResolvedValue([]),
   fs: {
     readFile: vi.fn().mockResolvedValue(Buffer.from('{}')),

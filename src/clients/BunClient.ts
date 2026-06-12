@@ -3,7 +3,7 @@ import { Client, PackageTarget } from './Client';
 
 export class BunClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]): string {
-    return `bun add ${this.formatPackageTargets(packages)}`;
+    return `bun add ${this.formatPackageTargets(packages)}${this.getSectionFlag(packages, '--dev')}`;
   }
 
   buildInstallCommand(): string {
