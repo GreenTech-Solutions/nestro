@@ -118,6 +118,12 @@
           "type": "string",
           "default": "**/package.json",
           "description": "Glob used to discover package.json files in the workspace."
+        },
+        "nestro.autoCheckUpdatesDebounce": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Seconds to wait after a package.json change before auto-re-checking for updates. Set to 0 to disable auto re-check. Requires a previous manual Check for Updates in the session."
         }
       }
     },
@@ -216,11 +222,6 @@
           "group": "navigation"
         },
         {
-          "command": "nestro.runAudit",
-          "when": "view == nestro.packagesView",
-          "group": "navigation@5"
-        },
-        {
           "command": "nestro.updateAllVisible",
           "when": "view == nestro.packagesView && nestro.canUpdateVisiblePackages",
           "group": "navigation"
@@ -231,19 +232,24 @@
           "group": "navigation"
         },
         {
-          "command": "nestro.searchPackages",
-          "when": "view == nestro.packagesView",
-          "group": "navigation"
-        },
-        {
           "command": "nestro.openSettings",
           "when": "view == nestro.packagesView",
-          "group": "navigation"
+          "group": "navigation@99"
+        },
+        {
+          "command": "nestro.searchPackages",
+          "when": "view == nestro.packagesView",
+          "group": "2_advanced@1"
+        },
+        {
+          "command": "nestro.runAudit",
+          "when": "view == nestro.packagesView",
+          "group": "2_advanced@2"
         },
         {
           "command": "nestro.pinAllVersions",
           "when": "view == nestro.packagesView",
-          "group": "2_advanced"
+          "group": "2_advanced@3"
         }
       ],
       "view/item/context": [

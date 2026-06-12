@@ -38,6 +38,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditState: 'idle' | 'running' | 'done' = 'idle';
   private lastAuditCount: number | undefined;
   private readonly clientManager = new ClientManager();
+  private autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
   private updateCache: {
     data: Map<string, string>;
     timestamp: number;
@@ -214,11 +215,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const existingMap = new Map(this.allEntries.map(e => [this.entryKey(e.item.packageName, e.packageFilePath), e]));
       this.allEntries = entries.map((e) => {
         const existing = existingMap.get(this.entryKey(e.name, e.packageFilePath));
-        if (existing && existing.item.currentVersion === e.current) {
+        // Compare bare semver (strip prefix) so that a pin operation (^1.2.3 → 1.2.3)
+        // preserves existing update data rather than resetting it to 'none'.
+        const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
+        const newSemver = e.current.slice(e.versionPrefix.length);
+        if (existing && existingSemver === newSemver) {
           return {
             item: this.createPackageItem(
-              existing.item.packageName,
-              existing.item.currentVersion,
+              e.name,
+              e.current,
               existing.item.latest,
               existing.item.updateType,
               existing.item.installing,
@@ -243,11 +248,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     finally {
       this.loading = false;
       this.emitTreeChanged();
+      if (this.checkState === 'done') {
+        this.scheduleAutoCheckUpdates();
+      }
     }
   }
 
   async checkUpdates(): Promise<void> {
     logger.info('Checking package updates.');
+    this.invalidateUpdateCache();
     this.checkState = 'running';
     this.emitTreeChanged();
     try {
@@ -304,8 +313,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   dispose(): void {
+    clearTimeout(this.autoCheckTimer);
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
+  }
+
+  private scheduleAutoCheckUpdates(): void {
+    clearTimeout(this.autoCheckTimer);
+    const delaySec = vscode.workspace
+      .getConfiguration('nestro')
+      .get<number>('autoCheckUpdatesDebounce', 60);
+    if (delaySec <= 0) {
+      return;
+    }
+    this.autoCheckTimer = setTimeout(() => { void this.checkUpdates(); }, delaySec * 1000);
   }
 
   async runAudit(): Promise<void> {
