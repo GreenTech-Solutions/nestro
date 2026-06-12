@@ -1,73 +1,108 @@
 # AGENTS.md
 
 ## Project
-**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn/bun packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode ^1.120.0`).
+**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn/bun packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode ^1.120.0`). Update detection uses `npm-check-updates` (dynamically imported in `src/utils/ncuClient.ts`).
 
 ## Commands
 ```bash
-pnpm run build        # tsdown → out/extension.cjs
-pnpm run dev          # tsdown --watch
-pnpm run lint         # eslint src/ via eslint.config.mjs
-pnpm run typecheck    # tsc --noEmit (type-check without emit)
-pnpm run test         # pretest (tsc + lint) + vscode-test (Electron instance)
-pnpm run test:unit    # vitest run — runs *.unit.test.ts without VS Code
+pnpm run build          # tsdown → out/extension.cjs
+pnpm run dev            # tsdown --watch
+pnpm run lint           # run-s lint:eslint lint:stylelint (eslint + stylelint, both --fix)
+pnpm run typecheck      # tsc --noEmit
+pnpm run test           # pretest (tsc -p tsconfig.test.json + lint) + vscode-test (Electron)
+pnpm run test:unit      # vitest run — *.unit.test.ts without VS Code
+pnpm run test:unit:watch  # vitest (watch mode)
 ```
 
-## Key Files
-- `src/extension.ts` — entry: `activate(context)` + `deactivate()`
-- `package.json` — manifest: `contributes.commands`, `activationEvents`, `main: ./out/extension.cjs`, `engines.vscode ^1.120.0`
-- `out/extension.cjs` — compiled output VS Code loads
-- `tsdown.config.mts` — bundler config; `tsconfig.json` — TypeScript config; `tsconfig.test.json` — test compilation
-- `src/test/extension.test.ts` — Mocha tests: `suite()` / `test()` + `assert.strictEqual`
-- `src/test/*.unit.test.ts` — Vitest unit tests (no Electron)
-- `.vscode-test.mjs` — integration test config; `vitest.config.ts` — unit test config
-- `src/providers/` — `PackagesProvider.ts`, `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `WorkspaceFolderItem.ts`, `index.ts`
-- `src/clients/` — `Client.ts`, `ClientManager.ts`, `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts`, `index.ts`
-- `src/utils/logger.ts` — Logger singleton; `src/utils/versionUtils.ts` — version utilities
-- `src/utils/auditClient.ts` — runs `npm audit` to detect package vulnerabilities; populates audit badge indicators on `PackageItem`
-- `src/utils/index.ts` — barrel exports for utils
-- `eslint.config.mjs` — typescript-eslint, naming-convention, `eqeqeq`, `curly`, `semi`
-- `.vscode/launch.json`, `.vscode/tasks.json`, `.vscode/settings.json` — VS Code workspace config
+Integration tests: `.vscode-test.mjs` picks up all `out/test/**/*.test.js`; no single-file isolation.
+Unit tests: Vitest, `vscode` mocked via `src/test/__mocks__/vscode.ts`.
+Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension Development Host window.
 
 ## Architecture
 
-### Lifecycle
-`src/extension.ts` exports:
-- `activate(context: vscode.ExtensionContext)` — registers commands, providers, disposables on activation
-- `deactivate()` — cleanup on shutdown
-- All disposables → `context.subscriptions.push(disposable)`
+### Data flow
+1. `activate()` creates `FilterManager` and `PackagesProvider`, then calls `provider.loadPackages()`.
+2. `loadPackages()` reads `package.json` via `readWorkspaceDependencies()` (`src/utils/packageReader.ts`) → populates `allEntries: PackageTreeEntry[]`.
+3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) → enriches each entry with `latest` + `updateType`. Update results are cached to avoid redundant network calls.
+4. `getChildren()` delegates to `buildTree()` (`src/providers/treeBuilder.ts`) which returns `[FilterBarItem, ...GroupItem[]]` — groups split into Dependencies / Dev Dependencies.
+5. Commands mutate provider state via `markPackageUpdating()` / `markPackageUpdated()` / `resetUpdateData()` / `invalidateUpdateCache()`, then fire `_onDidChangeTreeData`.
 
-### Manifest (`package.json`)
-- `contributes.commands` IDs must exactly match `vscode.commands.registerCommand` IDs
-- `activationEvents: []` — activates on any command
-- `main: ./out/extension.cjs` — VS Code loads compiled output
+### Key patterns
 
-### Build
-`tsdown` bundles `src/extension.ts` → `out/extension.cjs` (config: `tsdown.config.mts`). `vscode` excluded from bundle. Integration tests compiled separately via `tsc -p tsconfig.test.json`.
+**Write suppression** — When a command writes to `package.json` (e.g. updating a version), it calls `provider.withWriteSuppressed(fn)`. The file watcher checks `provider.suppressingWrites` and skips the debounced reload to prevent a feedback loop.
+
+**Package manager detection** — `detectPackageManager()` in `src/utils/packageManager.ts` reads `packageManager` field from `package.json` first, then falls back to lockfile detection (pnpm-lock.yaml → yarn.lock → bun.lock → package-lock.json), then defaults to `npm`.
+
+**Deferred install mode** — When `nestro.deferInstallAfterUpdate` is enabled, commands write version changes directly to `package.json` (via `updateWorkspaceDependencyVersions`) without running a package manager install. The user then runs `nestro.runInstall` separately.
+
+**Per-click debounce** — `checkUpdates()` enforces a debounce via `nestro.checkUpdatesDebounce` (seconds); repeated calls within the window are skipped. Set `nestro.checkUpdatesForceAlways` to `true` to bypass the debounce and always run immediately.
+
+**Context variables** — `emitTreeChanged()` sets two VS Code context keys used by `when` clauses in `package.json` menus:
+- `nestro.canUpdateVisiblePackages` — true when filtered list has outdated packages (controls "Update All" button)
+- `nestro.noWorkspace` — true when no packages found (shows welcome content)
+
+`PackageItem.contextValue` is set to `"outdated"` when a package has updates; used by `viewItem == outdated` in `view/item/context` menu to show the inline update button.
 
 ### Providers (`src/providers/`)
-- `PackagesProvider.ts` — `TreeDataProvider` implementation
-- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
-- `index.ts` — barrel exports
+- `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
+- `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
+- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`; no VS Code state; workspace folders sorted `(root)` first then alphabetically; `getFilterCounts()` excludes packages currently installing
+- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
 
 ### Clients (`src/clients/`)
 - `Client.ts` — abstract base for package manager clients
 - `ClientManager.ts` — instantiates the correct client based on detected package manager
 - `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts` — concrete client implementations
-- `index.ts` — barrel exports
+- `index.ts` — barrel exports for clients
 
-### Testing
-Two test modes:
-- **Integration** (`pnpm run test`): Mocha + `@vscode/test-cli` + `@vscode/test-electron` — real VS Code Electron. Config: `.vscode-test.mjs`. Files: `src/test/extension.test.ts`.
-- **Unit** (`pnpm run test:unit`): Vitest — no Electron. `vscode` mocked via `src/test/__mocks__/vscode.ts`. Config: `vitest.config.ts`. Files: `src/test/*.unit.test.ts`.
+### Commands (`src/commands/`)
+- `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; calls `invalidateUpdateCache()` on successful exit; bulk update confirms before proceeding
+- `pickVersion.ts` — `pickVersionCommand`; shows QuickPick for selecting a specific package version
+- `pinAllVersions.ts` — `pinAllVersionsCommand`; pins all workspace dependency versions using `withWriteSuppressed`, then reloads packages
+- `helloWorld.ts` — minimal stub command
+
+### Utils (`src/utils/`)
+- `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); returns `Map<name, latestVersion>`; results cached across calls
+- `auditClient.ts` — runs `npm audit` to detect package vulnerabilities; populates audit badge indicators on `PackageItem`
+- `packageReader.ts` — reads workspace `package.json` dependencies
+- `packageManager.ts` — detects package manager, builds install/update CLI commands
+- `versionUtils.ts` — `getUpdateType()` classifies semver diff as `patch` | `minor` | `breaking` | `none`
+- `logger.ts` — `Logger` singleton writing to VS Code output channel; use instead of `console.log`
+- `notify.ts` — `showError()` helper
+- `index.ts` — barrel exports for utils
+
+### Manifest (`package.json`)
+- Command IDs must match exactly between `contributes.commands` and `vscode.commands.registerCommand`
+- `activationEvents: []` — activates on any command invocation
+- `main: ./out/extension.cjs` — must stay in sync with tsdown output extension
+
+### Build
+`tsdown` bundles `src/extension.ts` → `out/extension.cjs`; `vscode` is never bundled (external). Integration tests compiled separately via `tsc -p tsconfig.test.json` → `out/test/`. `tsconfig.json` uses `"module": "esnext"` + `"moduleResolution": "bundler"` for tsdown; `tsconfig.test.json` uses `"module": "Node16"`.
 
 ## Conventions
-- Command IDs: `nestro.<camelCase>` in `package.json` `contributes.commands` **and** `registerCommand`
-- TypeScript: strict mode — no `any`, explicit return types
-- Disposables: `context.subscriptions.push(...)` — no leaks
-- Imports: `import * as vscode from 'vscode'` (namespace import)
-- ESLint: `eqeqeq`, `curly`, `no-throw-literal`, `semi` warnings enforced
-- `CHANGELOG.md` updated for every user-facing change
+- Command IDs: `nestro.<camelCase>` — declare in `package.json` `contributes.commands` **and** register in `activate()`
+- TypeScript: strict mode — no `any`, explicit return types on exported functions
+- Disposables: always `context.subscriptions.push(...)` — never leak event listeners or providers
+- Imports: `import * as vscode from 'vscode'` (namespace import, not default)
+- Always import from barrel `index.ts`, never from implementation files directly
+- `CHANGELOG.md` updated for every user-facing change following Keep a Changelog format
+- Full codestyle reference: **[CODESTYLE.md](CODESTYLE.md)**
+
+## Commit Message Format
+
+Angular preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
+
+| Type | Meaning | Bump |
+|------|---------|:----:|
+| `feat` | New user-facing feature | minor |
+| `fix` | Bug fix | patch |
+| `part` | Partial fix / partial feature | patch |
+| `refactor` | Refactoring, no behavior change | patch |
+| `style` | Visual / UI-only change | patch |
+| `chore` | Tooling, deps, config | patch |
+| `ghost` | Internal change, no release | — |
+
+Scope examples: `toolbar`, `audit`, `picker`, `provider`, `deps`.
 
 <!-- caliber:managed:pre-commit -->
 ## Before Committing

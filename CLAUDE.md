@@ -37,6 +37,8 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 
 **Deferred install mode** — When `nestro.deferInstallAfterUpdate` is enabled, commands write version changes directly to `package.json` (via `updateWorkspaceDependencyVersions`) without running a package manager install. The user then runs `nestro.runInstall` separately.
 
+**Per-click debounce** — `checkUpdates()` enforces a debounce via `nestro.checkUpdatesDebounce` (seconds); repeated calls within the window are skipped. Set `nestro.checkUpdatesForceAlways` to `true` to bypass the debounce and always run immediately.
+
 **Context variables** — `emitTreeChanged()` sets two VS Code context keys used by `when` clauses in `package.json` menus:
 - `nestro.canUpdateVisiblePackages` — true when filtered list has outdated packages (controls "Update All" button)
 - `nestro.noWorkspace` — true when no packages found (shows welcome content)
@@ -58,6 +60,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Commands (`src/commands/`)
 - `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; calls `invalidateUpdateCache()` on successful exit; bulk update confirms before proceeding
 - `pickVersion.ts` — `pickVersionCommand`; shows QuickPick for selecting a specific package version
+- `pinAllVersions.ts` — `pinAllVersionsCommand`; pins all workspace dependency versions using `withWriteSuppressed`, then reloads packages
 - `helloWorld.ts` — minimal stub command
 
 ### Utils (`src/utils/`)
@@ -83,7 +86,25 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - TypeScript: strict mode — no `any`, explicit return types on exported functions
 - Disposables: always `context.subscriptions.push(...)` — never leak event listeners or providers
 - Imports: `import * as vscode from 'vscode'` (namespace import, not default)
+- Always import from barrel `index.ts`, never from implementation files directly
 - `CHANGELOG.md` updated for every user-facing change following Keep a Changelog format
+- Full codestyle reference: **[CODESTYLE.md](CODESTYLE.md)**
+
+## Commit Message Format
+
+Angular preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
+
+| Type | Meaning | Bump |
+|------|---------|:----:|
+| `feat` | New user-facing feature | minor |
+| `fix` | Bug fix | patch |
+| `part` | Partial fix / partial feature | patch |
+| `refactor` | Refactoring, no behavior change | patch |
+| `style` | Visual / UI-only change | patch |
+| `chore` | Tooling, deps, config | patch |
+| `ghost` | Internal change, no release | — |
+
+Scope examples: `toolbar`, `audit`, `picker`, `provider`, `deps`.
 
 <!-- caliber:managed:pre-commit -->
 ## Before Committing

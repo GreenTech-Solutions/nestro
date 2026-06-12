@@ -52,6 +52,8 @@ Automatically discovers multiple `package.json` files across your workspace, org
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `nestro.checkUpdatesOnStartup` | boolean | `false` | Automatically check for package updates when the extension activates. |
+| `nestro.checkUpdatesDebounce` | number | `60` | Minimum seconds between repeated update checks; set to `0` to disable. |
+| `nestro.checkUpdatesForceAlways` | boolean | `false` | Always run Check for Updates immediately, ignoring the debounce interval. |
 | `nestro.includePreReleases` | boolean | `true` | Include pre-release versions when checking for package updates. |
 | `nestro.updateTarget` | string | `"latest"` | Version target strategy for update checks (`latest`, `greatest`, `minor`, `patch`). |
 | `nestro.defaultFilter` | string | `"all"` | Default package sidebar filter (`all`, `hasUpdates`, `patch`, `minor`, `breaking`). |
