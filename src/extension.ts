@@ -4,6 +4,7 @@ import type { FilterType } from './providers';
 import {
   installUpdateCommand,
   pickVersionCommand,
+  pinAllVersionsCommand,
   pinVersionCommand,
   removePackageCommand,
   runInstallCommand,
@@ -40,6 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.removePackage', (item: PackageItem) => { void removePackageCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
+    vscode.commands.registerCommand('nestro.pinAllVersions', () => { void pinAllVersionsCommand(provider); }),
     vscode.commands.registerCommand('nestro.openOnNpm', (item: PackageItem) => {
       void vscode.env.openExternal(vscode.Uri.parse(`https://www.npmjs.com/package/${item.packageName}`));
     }),

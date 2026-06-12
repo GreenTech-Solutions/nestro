@@ -196,6 +196,11 @@
         "command": "nestro.openSettings",
         "title": "Settings",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "nestro.pinAllVersions",
+        "title": "Pin All Versions",
+        "icon": "$(lock)"
       }
     ],
     "menus": {
@@ -234,6 +239,11 @@
           "command": "nestro.openSettings",
           "when": "view == nestro.packagesView",
           "group": "navigation"
+        },
+        {
+          "command": "nestro.pinAllVersions",
+          "when": "view == nestro.packagesView",
+          "group": "2_advanced"
         }
       ],
       "view/item/context": [

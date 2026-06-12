@@ -127,6 +127,35 @@ export async function setVersionPin(
   await writePackageJson(uri, raw, json);
 }
 
+export async function pinAllWorkspaceDependencyVersions(): Promise<number> {
+  const files = await findWorkspacePackageJsonFiles();
+  let count = 0;
+  for (const uri of files) {
+    count += await pinAllVersionsInFile(uri.fsPath);
+  }
+  return count;
+}
+
+async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
+  const { json, raw, uri } = await readPackageJson(packageFilePath);
+  let count = 0;
+  for (const section of ['dependencies', 'devDependencies'] as const) {
+    const deps = json[section];
+    if (deps === undefined) continue;
+    for (const [name, version] of Object.entries(deps)) {
+      const prefix = extractVersionPrefix(version);
+      if (prefix === '^' || prefix === '~') {
+        deps[name] = setPinnedVersion(version, true);
+        count++;
+      }
+    }
+  }
+  if (count > 0) {
+    await writePackageJson(uri, raw, json);
+  }
+  return count;
+}
+
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
   const entries = await readAllWorkspaceDependencies();
   return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
