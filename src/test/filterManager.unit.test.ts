@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { FilterManager } from '../providers';
+import { createFilterQuickPickItems, FilterManager, getFilterLabel } from '../providers';
 
 describe('FilterManager', () => {
   beforeEach(() => {
@@ -108,5 +108,28 @@ describe('FilterManager', () => {
     await pending;
 
     expect(manager.search).toBe('');
+  });
+
+  it('uses the correct severity labels for patch and minor filters', () => {
+    expect(getFilterLabel('patch')).toBe('Patch');
+    expect(getFilterLabel('minor')).toBe('Minor');
+  });
+
+  it('shows the correct labels in filter quick-pick items', () => {
+    const items = createFilterQuickPickItems({
+      all: 4,
+      hasUpdates: 3,
+      patch: 1,
+      minor: 1,
+      breaking: 1,
+    }, 'patch');
+
+    expect(items.map(item => item.label)).toEqual([
+      'All',
+      'Has Updates',
+      'Patch',
+      'Minor',
+      'Breaking',
+    ]);
   });
 });

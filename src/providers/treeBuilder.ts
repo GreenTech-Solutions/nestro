@@ -62,10 +62,10 @@ export function toRelativeLabel(packageFilePath: string, workspaceRoot: string):
 export function getFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
   return {
     all: entries.length,
-    hasUpdates: entries.filter(e => e.item.updateType !== 'none').length,
-    patch: entries.filter(e => e.item.updateType === 'patch').length,
-    minor: entries.filter(e => e.item.updateType === 'minor').length,
-    breaking: entries.filter(e => e.item.updateType === 'breaking').length,
+    hasUpdates: entries.filter(e => e.item.updateType !== 'none' && !e.item.installing).length,
+    patch: entries.filter(e => e.item.updateType === 'patch' && !e.item.installing).length,
+    minor: entries.filter(e => e.item.updateType === 'minor' && !e.item.installing).length,
+    breaking: entries.filter(e => e.item.updateType === 'breaking' && !e.item.installing).length,
   };
 }
 
@@ -150,6 +150,16 @@ function buildWorkspaceGroups(
       ));
     }
   }
+
+  folders.sort((a, b) => {
+    if (a.label === '(root)') {
+      return -1;
+    }
+    if (b.label === '(root)') {
+      return 1;
+    }
+    return String(a.label).localeCompare(String(b.label));
+  });
 
   return folders.length > 0
     ? folders

@@ -229,6 +229,24 @@ describe('PackagesProvider', () => {
     expect(tree[2]).toBeInstanceOf(SearchQueryItem);
     expect(tree[3]).toBeInstanceOf(FilterBarItem);
   });
+
+  it('preserves the version prefix when a package is marked updated', () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    setProviderState(provider, {
+      allEntries: [{
+        item: new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+        dev: false,
+        packageFilePath: '/workspace/package.json',
+      }],
+    });
+
+    provider.markPackageUpdated('react', '19.0.0');
+
+    const entry = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries[0];
+    expect(entry.item.currentVersion).toBe('^19.0.0');
+    expect(entry.item.versionPrefix).toBe('^');
+    expect(entry.item.updateType).toBe('none');
+  });
 });
 
 function mockNestroConfiguration(values: Record<string, unknown>): void {

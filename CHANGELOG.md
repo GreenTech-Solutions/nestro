@@ -16,6 +16,9 @@
 
 ## [Unreleased]
 
+- Fix filter counts so installing packages immediately disappear from update counters, preserve version prefixes after install, and invalidate cached update data when update tasks succeed.
+- Fix monorepo refresh ordering so the workspace root stays first and other package sources sort alphabetically.
+- Fix filter labels so update severities display as Patch, Minor, and Breaking.
 - Fix version picker ordering so it shows the full registry list in descending semver order and respects `nestro.includePreReleases`.
 - Add a package removal action to the package tree context menu.
 - Add package name search to the sidebar tree.

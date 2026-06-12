@@ -146,6 +146,7 @@ async function runPackageUpdateTask(
 
     listener?.dispose();
     if (e.exitCode === 0) {
+      provider.invalidateUpdateCache();
       updates.forEach(update => markUpdated(
         provider,
         update.item.packageName,

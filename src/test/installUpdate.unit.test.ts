@@ -16,6 +16,7 @@ describe('installUpdateCommand()', () => {
 
   it('uses the detected package manager in the update task command', async () => {
     const provider = {
+      invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
@@ -38,6 +39,7 @@ describe('installUpdateCommand()', () => {
 
   it('marks the package updated after the task exits successfully', async () => {
     const provider = {
+      invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
@@ -51,10 +53,12 @@ describe('installUpdateCommand()', () => {
     listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
 
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3');
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
 
   it('shows package update progress while the task runs', async () => {
     const provider = {
+      invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
@@ -83,6 +87,7 @@ describe('installUpdateCommand()', () => {
       '',
     ].join('\n')));
     const provider = {
+      invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
@@ -245,6 +250,7 @@ function mockNestroConfiguration(values: Record<string, unknown>): void {
 function makeProvider(packages: PackageItem[]): PackagesProvider {
   return {
     getVisibleOutdatedPackages: vi.fn(() => packages),
+    invalidateUpdateCache: vi.fn(),
     markPackageUpdated: vi.fn(),
     markPackageUpdating: vi.fn(),
     withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),

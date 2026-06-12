@@ -9,8 +9,8 @@ export interface FilterCounts extends Record<FilterType, number> {}
 const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
   all: { label: 'All' },
   hasUpdates: { label: 'Has Updates', color: 'charts.blue' },
-  patch: { label: 'Minor', color: 'charts.green' },
-  minor: { label: 'Major', color: 'charts.yellow' },
+  patch: { label: 'Patch', color: 'charts.green' },
+  minor: { label: 'Minor', color: 'charts.yellow' },
   breaking: { label: 'Breaking', color: 'charts.red' },
 };
 

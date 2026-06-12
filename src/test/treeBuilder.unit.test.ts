@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTree,
   FilterBarItem,
+  getFilterCounts,
   GroupItem,
   MessageItem,
   PackageItem,
@@ -96,6 +97,17 @@ describe('buildTree', () => {
     expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
   });
 
+  it('sorts workspace folders with root first and the rest alphabetically', () => {
+    const tree = buildTree([
+      makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
+      makeEntry('root-dep', '1.0.0', undefined, 'none', false, '/workspace/package.json'),
+      makeEntry('frontend', '1.0.0', undefined, 'none', false, '/workspace/apps/frontend/package.json'),
+    ], 'all', '', '/workspace');
+
+    const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    expect(folders.map(folder => folder.label)).toEqual(['(root)', 'apps/frontend', 'packages/ui']);
+  });
+
   it('filters packages by a search query', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
@@ -130,6 +142,23 @@ describe('toRelativeLabel', () => {
   });
 });
 
+describe('getFilterCounts', () => {
+  it('excludes installing packages from update-related counters but keeps them in all', () => {
+    expect(getFilterCounts([
+      makeEntry('patch-installing', '1.0.0', '1.0.1', 'patch', false, '/workspace/package.json', true),
+      makeEntry('minor-ready', '1.0.0', '1.1.0', 'minor', false),
+      makeEntry('breaking-ready', '1.0.0', '2.0.0', 'breaking', false),
+      makeEntry('current', '1.0.0', undefined, 'none', false),
+    ])).toEqual({
+      all: 4,
+      hasUpdates: 2,
+      patch: 0,
+      minor: 1,
+      breaking: 1,
+    });
+  });
+});
+
 function makeEntry(
   name: string,
   current: string,
@@ -137,9 +166,10 @@ function makeEntry(
   updateType: PackageTreeEntry['item']['updateType'],
   dev: boolean,
   packageFilePath = '/workspace/package.json',
+  installing = false,
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType, false, undefined, packageFilePath),
+    item: new PackageItem(name, current, latest, updateType, installing, undefined, packageFilePath),
     dev,
     packageFilePath,
   };

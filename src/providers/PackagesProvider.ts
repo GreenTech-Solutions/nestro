@@ -125,9 +125,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
-    const { dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
+    const { dev, packageFilePath: entryPackageFilePath, item } = this.allEntries[index];
     this.allEntries[index] = {
-      item: this.createPackageItem(packageName, newVersion, undefined, 'none', false, entryPackageFilePath, dev),
+      item: this.createPackageItem(
+        packageName,
+        item.versionPrefix + newVersion,
+        undefined,
+        'none',
+        false,
+        entryPackageFilePath,
+        dev,
+        item.versionPrefix,
+      ),
       dev,
       packageFilePath: entryPackageFilePath,
     };
