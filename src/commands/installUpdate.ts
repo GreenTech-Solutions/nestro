@@ -259,7 +259,6 @@ async function resolveInstallPackageFilePath(): Promise<string> {
   const selected = await vscode.window.showQuickPick(
     packageFilePaths.map(packageFilePath => ({
       label: formatPackageFileLabel(packageFilePath),
-      description: packageFilePath,
       packageFilePath,
     })),
     { placeHolder: 'Select the package.json to install dependencies for' },
@@ -273,7 +272,22 @@ async function resolveInstallPackageFilePath(): Promise<string> {
 
 function formatPackageFileLabel(packageFilePath: string): string {
   const normalized = packageFilePath.replace(/\\/g, '/');
-  return normalized.endsWith('/package.json')
-    ? normalized.slice(0, -'/package.json'.length) || normalized
+  const folders = vscode.workspace.workspaceFolders ?? [];
+
+  for (const folder of folders) {
+    const folderPath = folder.uri.fsPath.replace(/\\/g, '/');
+    if (normalized.startsWith(folderPath)) {
+      const relative = normalized.slice(folderPath.length).replace(/^\//, '');
+      const withoutFile = relative.endsWith('/package.json')
+        ? relative.slice(0, -'/package.json'.length)
+        : relative;
+      return withoutFile || '(root)';
+    }
+  }
+
+  // fallback for paths outside any known workspace folder
+  const withoutFile = normalized.endsWith('/package.json')
+    ? normalized.slice(0, -'/package.json'.length)
     : normalized;
+  return withoutFile || normalized;
 }
