@@ -124,6 +124,11 @@
           "default": 60,
           "minimum": 0,
           "description": "Minimum seconds between consecutive Check for Updates runs. A second click within this window is ignored. Set to 0 to disable throttling."
+        },
+        "nestro.checkUpdatesForceAlways": {
+          "type": "boolean",
+          "default": false,
+          "description": "Always run Check for Updates immediately, ignoring the debounce interval."
         }
       }
     },

@@ -251,10 +251,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async checkUpdates(): Promise<void> {
-    if (this.lastCheckTime !== undefined) {
-      const debounceSec = vscode.workspace
-        .getConfiguration('nestro')
-        .get<number>('checkUpdatesDebounce', 60);
+    const config = vscode.workspace.getConfiguration('nestro');
+    const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
+    if (!forceAlways && this.lastCheckTime !== undefined) {
+      const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
       if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
         logger.info('Check for updates skipped — debounce interval has not elapsed.');
         return;
