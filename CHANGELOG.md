@@ -1,3 +1,17 @@
+# [0.4.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.3.0...v0.4.0) (2026-06-12)
+
+
+### Bug Fixes
+
+* show relative paths in package.json picker instead of absolute ([1300258](https://github.com/GreenTech-Solutions/nestro/commit/1300258c949af38ded1b377be45b199a665281bd))
+
+
+### Features
+
+* add checkUpdatesForceAlways setting to bypass debounce ([9e9c1af](https://github.com/GreenTech-Solutions/nestro/commit/9e9c1afb71994e81c674332ca4adf41b4725cd2f))
+* add Pin All Versions command to advanced tools overflow menu ([09000e6](https://github.com/GreenTech-Solutions/nestro/commit/09000e61972217a5f5539de21b2f7ec2b8c47e36))
+* toolbar cleanup, pin-version update preservation, forced re-check ([3c6f7a5](https://github.com/GreenTech-Solutions/nestro/commit/3c6f7a5f3d18108f882a2f65e406ca6ac38850ec))
+
 # [0.3.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.2.0...v0.3.0) (2026-06-12)
 
 
