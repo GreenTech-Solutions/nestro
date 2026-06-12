@@ -1,3 +1,11 @@
+# [0.3.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.2.0...v0.3.0) (2026-06-12)
+
+
+### Features
+
+* add cache invalidation to command updates and sort workspace folders ([6834ff0](https://github.com/GreenTech-Solutions/nestro/commit/6834ff01634e5846ffedd7d8d875930f59556e3b))
+* enhance package manager commands to support devDependencies ([efe24ee](https://github.com/GreenTech-Solutions/nestro/commit/efe24ee039384895fd1f2b4886d4fe40239a6b9f))
+
 # [0.2.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.1.1...v0.2.0) (2026-06-08)
 
 
