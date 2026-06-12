@@ -27,7 +27,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 2. `loadPackages()` reads `package.json` via `readWorkspaceDependencies()` (`src/utils/packageReader.ts`) → populates `allEntries: PackageTreeEntry[]`.
 3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) → enriches each entry with `latest` + `updateType`. Update results are cached to avoid redundant network calls.
 4. `getChildren()` delegates to `buildTree()` (`src/providers/treeBuilder.ts`) which returns `[FilterBarItem, ...GroupItem[]]` — groups split into Dependencies / Dev Dependencies.
-5. Commands mutate provider state via `markPackageUpdating()` / `markPackageUpdated()` / `resetUpdateData()`, then fire `_onDidChangeTreeData`.
+5. Commands mutate provider state via `markPackageUpdating()` / `markPackageUpdated()` / `resetUpdateData()` / `invalidateUpdateCache()`, then fire `_onDidChangeTreeData`.
 
 ### Key patterns
 
@@ -46,7 +46,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Providers (`src/providers/`)
 - `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
 - `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
-- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`; no VS Code state
+- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`; no VS Code state; workspace folders sorted `(root)` first then alphabetically; `getFilterCounts()` excludes packages currently installing
 - `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
 
 ### Clients (`src/clients/`)
@@ -56,7 +56,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `index.ts` — barrel exports for clients
 
 ### Commands (`src/commands/`)
-- `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; bulk update confirms before proceeding
+- `installUpdate.ts` — `installUpdateCommand`, `runInstallCommand`, `updateAllVisibleCommand`; all run package manager via VS Code shell tasks (`vscode.tasks.executeTask`) and listen to `onDidEndTaskProcess` for exit code; calls `invalidateUpdateCache()` on successful exit; bulk update confirms before proceeding
 - `pickVersion.ts` — `pickVersionCommand`; shows QuickPick for selecting a specific package version
 - `helloWorld.ts` — minimal stub command
 
