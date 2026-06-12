@@ -38,7 +38,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditState: 'idle' | 'running' | 'done' = 'idle';
   private lastAuditCount: number | undefined;
   private readonly clientManager = new ClientManager();
-  private autoCheckTimer: ReturnType<typeof setTimeout> | undefined;
   private updateCache: {
     data: Map<string, string>;
     timestamp: number;
@@ -248,13 +247,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     finally {
       this.loading = false;
       this.emitTreeChanged();
-      if (this.checkState === 'done') {
-        this.scheduleAutoCheckUpdates();
-      }
     }
   }
 
   async checkUpdates(): Promise<void> {
+    if (this.lastCheckTime !== undefined) {
+      const debounceSec = vscode.workspace
+        .getConfiguration('nestro')
+        .get<number>('checkUpdatesDebounce', 60);
+      if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
+        logger.info('Check for updates skipped — debounce interval has not elapsed.');
+        return;
+      }
+    }
     logger.info('Checking package updates.');
     this.invalidateUpdateCache();
     this.checkState = 'running';
@@ -313,20 +318,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   dispose(): void {
-    clearTimeout(this.autoCheckTimer);
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
-  }
-
-  private scheduleAutoCheckUpdates(): void {
-    clearTimeout(this.autoCheckTimer);
-    const delaySec = vscode.workspace
-      .getConfiguration('nestro')
-      .get<number>('autoCheckUpdatesDebounce', 60);
-    if (delaySec <= 0) {
-      return;
-    }
-    this.autoCheckTimer = setTimeout(() => { void this.checkUpdates(); }, delaySec * 1000);
   }
 
   async runAudit(): Promise<void> {

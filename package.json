@@ -119,11 +119,11 @@
           "default": "**/package.json",
           "description": "Glob used to discover package.json files in the workspace."
         },
-        "nestro.autoCheckUpdatesDebounce": {
+        "nestro.checkUpdatesDebounce": {
           "type": "number",
           "default": 60,
           "minimum": 0,
-          "description": "Seconds to wait after a package.json change before auto-re-checking for updates. Set to 0 to disable auto re-check. Requires a previous manual Check for Updates in the session."
+          "description": "Minimum seconds between consecutive Check for Updates runs. A second click within this window is ignored. Set to 0 to disable throttling."
         }
       }
     },
