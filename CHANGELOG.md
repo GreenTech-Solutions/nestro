@@ -38,6 +38,7 @@
 
 ## [Unreleased]
 
+- Declare internal filter commands for keybinding metadata while keeping them hidden from the Command Palette.
 - Fix check-for-updates debounce so cache/config invalidation allows an immediate fresh update check.
 - Fix `npm-check-updates` loading so the full VS Code test suite compiles and runs again under the CommonJS test build.
 - Fix package-manager update commands so `devDependencies` stay in `devDependencies` for single updates, version picks, and bulk updates.
