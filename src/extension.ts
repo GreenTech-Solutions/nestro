@@ -118,11 +118,7 @@ export function registerPackageJsonWatcher(
         watcher,
         watcher.onDidChange(scheduleRefresh),
         watcher.onDidCreate(scheduleRefresh),
-        watcher.onDidDelete(() => {
-          clearTimeout(debounceTimer);
-          provider.invalidateUpdateCache();
-          void provider.loadPackages();
-        }),
+        watcher.onDidDelete(scheduleRefresh),
       ];
     });
   };
