@@ -23,6 +23,11 @@ export async function fetchPackageVersions(packageName: string): Promise<Package
       });
       res.on('end', () => {
         try {
+          if (res.statusCode !== undefined && (res.statusCode < 200 || res.statusCode >= 300)) {
+            reject(new Error(`npm registry responded with HTTP ${res.statusCode} for ${packageName}`));
+            return;
+          }
+
           const json = JSON.parse(data) as NpmRegistryPackument;
           resolve({
             tags: json['dist-tags'] ?? {},

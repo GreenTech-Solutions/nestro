@@ -40,6 +40,22 @@ describe('fetchPackageVersions()', () => {
 
     await expect(fetchPackageVersions('react')).rejects.toThrow('network down');
   });
+
+  it('rejects 404 registry responses with a descriptive status error', async () => {
+    mockRegistryResponse(JSON.stringify({ error: 'Not found' }), 404);
+
+    await expect(fetchPackageVersions('missing-package')).rejects.toThrow(
+      'npm registry responded with HTTP 404 for missing-package',
+    );
+  });
+
+  it('rejects 5xx registry responses with a descriptive status error', async () => {
+    mockRegistryResponse(JSON.stringify({ error: 'Internal Server Error' }), 503);
+
+    await expect(fetchPackageVersions('@scope/package')).rejects.toThrow(
+      'npm registry responded with HTTP 503 for @scope/package',
+    );
+  });
 });
 
 describe('selectVersionsForPicker()', () => {
@@ -83,9 +99,10 @@ describe('selectVersionsForPicker()', () => {
   });
 });
 
-function mockRegistryResponse(body: string): void {
+function mockRegistryResponse(body: string, statusCode = 200): void {
   vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {
     const response = new EventEmitter() as IncomingMessage;
+    response.statusCode = statusCode;
     process.nextTick(() => {
       callback?.(response);
       response.emit('data', body);
