@@ -35,11 +35,15 @@ export class ClientManager {
 
   async detectPackageManager(cwd?: string): Promise<PackageManager> {
     try {
+      if (cwd !== undefined) {
+        const fromAncestor = await this.detectPackageManagerFromAncestors(cwd);
+        return fromAncestor ?? 'npm';
+      }
+
       const fromManifest = await this.detectPackageManagerFromManifest(cwd);
       if (fromManifest !== undefined) {
         return fromManifest;
       }
-
       const fromLockfile = await this.detectPackageManagerFromLockfile(cwd);
       return fromLockfile ?? 'npm';
     }
@@ -47,6 +51,27 @@ export class ClientManager {
       logger.error('Failed to detect package manager.', err);
       throw err;
     }
+  }
+
+  private async detectPackageManagerFromAncestors(cwd: string): Promise<PackageManager | undefined> {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
+    const directories = getAncestorDirectories(cwd, workspaceFolder?.uri.fsPath);
+
+    for (const directory of directories) {
+      const fromManifest = await this.detectPackageManagerFromManifest(directory);
+      if (fromManifest !== undefined) {
+        return fromManifest;
+      }
+    }
+
+    for (const directory of directories) {
+      const fromLockfile = await this.detectPackageManagerFromLockfile(directory);
+      if (fromLockfile !== undefined) {
+        return fromLockfile;
+      }
+    }
+
+    return undefined;
   }
 
   private async detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
@@ -104,4 +129,34 @@ export class ClientManager {
 
 function parsePackageManager(value: string | undefined): PackageManager | undefined {
   return packageManagerNames.find(name => name === value);
+}
+
+function getAncestorDirectories(cwd: string, workspaceFolderPath: string | undefined): string[] {
+  if (workspaceFolderPath === undefined) {
+    return [cwd];
+  }
+
+  const normalizedCwd = path.resolve(cwd);
+  const normalizedWorkspaceFolderPath = path.resolve(workspaceFolderPath);
+  const relativePath = path.relative(normalizedWorkspaceFolderPath, normalizedCwd);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return [];
+  }
+
+  const directories: string[] = [];
+  let current = normalizedCwd;
+  while (true) {
+    directories.push(current);
+    if (current === normalizedWorkspaceFolderPath) {
+      break;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return directories;
 }

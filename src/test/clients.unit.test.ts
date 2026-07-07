@@ -57,6 +57,13 @@ describe('package manager clients', () => {
 describe('ClientManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [{ uri: { fsPath: '/workspace' } }],
+    });
+    vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {
+      return vscode.workspace.workspaceFolders?.find(candidate => uri.fsPath.startsWith(candidate.uri.fsPath));
+    });
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
   });
@@ -73,4 +80,57 @@ describe('ClientManager', () => {
 
     await expect(new ClientManager().getClient('/workspace')).resolves.toBeInstanceOf(expectedClient);
   });
+
+  it('detects a root pnpm lockfile from a nested workspace package', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': '{}',
+      '/workspace/pnpm-lock.yaml': '',
+      '/workspace/packages/app/package.json': '{}',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('pnpm');
+  });
+
+  it('detects ancestor packageManager metadata from a nested workspace package', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@4.12.0' }),
+      '/workspace/packages/app/package.json': '{}',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('yarn');
+  });
+
+  it('prefers ancestor packageManager metadata over nested stray lockfiles', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0' }),
+      '/workspace/packages/app/package.json': '{}',
+      '/workspace/packages/app/package-lock.json': '',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('pnpm');
+  });
+
+  it('does not read above the owning workspace folder when walking ancestors', async () => {
+    mockWorkspaceFiles({
+      '/pnpm-lock.yaml': '',
+      '/workspace/package.json': '{}',
+      '/workspace/packages/app/package.json': '{}',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('npm');
+    expect(vscode.workspace.fs.readFile).not.toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: '/pnpm-lock.yaml' }),
+    );
+  });
 });
+
+function mockWorkspaceFiles(files: Record<string, string>): void {
+  vi.mocked(vscode.workspace.fs.readFile).mockImplementation(async (uri: vscode.Uri) => {
+    const value = files[uri.fsPath];
+    if (value === undefined) {
+      throw new Error(`File not found: ${uri.fsPath}`);
+    }
+
+    return Buffer.from(value);
+  });
+}
