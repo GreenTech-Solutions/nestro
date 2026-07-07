@@ -25,9 +25,13 @@ interface QuickPickMock {
   busy: boolean;
   items: vscode.QuickPickItem[];
   selectedItems: vscode.QuickPickItem[];
+  acceptDisposable: vscode.Disposable;
+  dispose: ReturnType<typeof vi.fn>;
+  hideDisposable: vscode.Disposable;
   show: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
   onDidAccept: ReturnType<typeof vi.fn>;
+  onDidHide: ReturnType<typeof vi.fn>;
 }
 
 describe('pickVersionCommand()', () => {
@@ -52,6 +56,8 @@ describe('pickVersionCommand()', () => {
     await Promise.resolve();
 
     expect(installUpdateCommand).toHaveBeenCalledTimes(1);
+    expect(quickPick.acceptDisposable.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
     const syntheticItem = vi.mocked(installUpdateCommand).mock.calls[0][0];
     expect(syntheticItem.packageName).toBe('react');
     expect(syntheticItem.latest).toBe('19.0.0');
@@ -97,17 +103,54 @@ describe('pickVersionCommand()', () => {
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Failed to fetch versions for react.');
     expect(quickPick.hide).toHaveBeenCalledTimes(1);
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes the picker without mutating it when cancelled while loading', async () => {
+    const quickPick = makeQuickPick();
+    let resolveFetch: (value: { tags: Record<string, string>; versions: string[] }) => void = () => {};
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    vi.mocked(fetchPackageVersions).mockReturnValueOnce(new Promise(resolve => {
+      resolveFetch = resolve;
+    }));
+
+    const command = pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    quickPick.onDidHide.mock.calls[0][0]();
+    resolveFetch({
+      tags: { latest: '19.0.0' },
+      versions: ['19.0.0', '18.0.0'],
+    });
+    await command;
+
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.items).toEqual([]);
+    expect(quickPick.busy).toBe(true);
+    expect(quickPick.placeholder).toBe('Loading versions...');
+    expect(quickPick.onDidAccept).not.toHaveBeenCalled();
   });
 });
 
 function makeQuickPick(): QuickPickMock {
+  let hideListener: (() => void) | undefined;
+  const acceptDisposable = { dispose: vi.fn() };
+  const hideDisposable = { dispose: vi.fn() };
+
   return {
+    acceptDisposable,
     busy: false,
+    dispose: vi.fn(),
+    hide: vi.fn(() => {
+      hideListener?.();
+    }),
+    hideDisposable,
     items: [],
+    onDidAccept: vi.fn(() => acceptDisposable),
+    onDidHide: vi.fn((listener: () => void) => {
+      hideListener = listener;
+      return hideDisposable;
+    }),
     selectedItems: [],
     show: vi.fn(),
-    hide: vi.fn(),
-    onDidAccept: vi.fn(),
   };
 }
 
