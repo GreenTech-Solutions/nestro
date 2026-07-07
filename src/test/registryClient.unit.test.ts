@@ -8,6 +8,11 @@ vi.mock('node:https', () => ({
   get: vi.fn(),
 }));
 
+interface MockClientRequest extends EventEmitter {
+  destroy: ReturnType<typeof vi.fn>;
+  setTimeout: ReturnType<typeof vi.fn>;
+}
+
 describe('fetchPackageVersions()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -31,11 +36,11 @@ describe('fetchPackageVersions()', () => {
   it('rejects on network errors', async () => {
     const error = new Error('network down');
     vi.mocked(https.get).mockImplementationOnce(() => {
-      const request = new EventEmitter();
+      const request = createMockRequest();
       process.nextTick(() => {
         request.emit('error', error);
       });
-      return request as ClientRequest;
+      return toClientRequest(request);
     });
 
     await expect(fetchPackageVersions('react')).rejects.toThrow('network down');
@@ -55,6 +60,45 @@ describe('fetchPackageVersions()', () => {
     await expect(fetchPackageVersions('@scope/package')).rejects.toThrow(
       'npm registry responded with HTTP 503 for @scope/package',
     );
+  });
+
+  it('sets a registry request timeout and rejects with package context', async () => {
+    const request = createMockRequest();
+    vi.mocked(https.get).mockImplementationOnce(() => {
+      process.nextTick(() => {
+        request.emit('timeout');
+      });
+      return toClientRequest(request);
+    });
+
+    await expect(fetchPackageVersions('react')).rejects.toThrow(
+      'npm registry request timed out after 15000ms for react',
+    );
+    expect(request.setTimeout).toHaveBeenCalledWith(15000);
+    expect(request.destroy).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'npm registry request timed out after 15000ms for react',
+    }));
+  });
+
+  it('rejects oversized registry responses before unbounded buffering', async () => {
+    const request = createMockRequest();
+    vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {
+      const response = new EventEmitter() as IncomingMessage;
+      response.statusCode = 200;
+      process.nextTick(() => {
+        callback?.(response);
+        response.emit('data', Buffer.alloc((5 * 1024 * 1024) + 1));
+        response.emit('end');
+      });
+      return toClientRequest(request);
+    });
+
+    await expect(fetchPackageVersions('large-package')).rejects.toThrow(
+      'npm registry response exceeded 5242880 bytes for large-package',
+    );
+    expect(request.destroy).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'npm registry response exceeded 5242880 bytes for large-package',
+    }));
   });
 });
 
@@ -108,6 +152,17 @@ function mockRegistryResponse(body: string, statusCode = 200): void {
       response.emit('data', body);
       response.emit('end');
     });
-    return new EventEmitter() as ClientRequest;
+    return toClientRequest(createMockRequest());
   });
+}
+
+function createMockRequest(): MockClientRequest {
+  const request = new EventEmitter() as MockClientRequest;
+  request.destroy = vi.fn();
+  request.setTimeout = vi.fn();
+  return request;
+}
+
+function toClientRequest(request: MockClientRequest): ClientRequest {
+  return request as unknown as ClientRequest;
 }

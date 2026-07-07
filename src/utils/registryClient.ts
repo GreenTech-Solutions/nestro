@@ -1,5 +1,9 @@
 import * as https from 'node:https';
+import type { ClientRequest, IncomingMessage } from 'node:http';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
+
+const REGISTRY_REQUEST_TIMEOUT_MS = 15_000;
+const REGISTRY_RESPONSE_MAX_BYTES = 5 * 1024 * 1024;
 
 interface NpmRegistryPackument {
   'dist-tags': Record<string, string>;
@@ -16,31 +20,81 @@ export async function fetchPackageVersions(packageName: string): Promise<Package
   const url = `https://registry.npmjs.org/${encodedName}`;
 
   return await new Promise<PackageVersions>((resolve, reject) => {
-    const request = https.get(url, { headers: { Accept: 'application/vnd.npm.install-v1+json' } }, (res) => {
-      let data = '';
-      res.on('data', (chunk: Buffer | string) => {
-        data += chunk.toString();
-      });
-      res.on('end', () => {
-        try {
-          if (res.statusCode !== undefined && (res.statusCode < 200 || res.statusCode >= 300)) {
-            reject(new Error(`npm registry responded with HTTP ${res.statusCode} for ${packageName}`));
-            return;
-          }
+    let request: ClientRequest | undefined;
+    let response: IncomingMessage | undefined;
+    let settled = false;
 
-          const json = JSON.parse(data) as NpmRegistryPackument;
-          resolve({
-            tags: json['dist-tags'] ?? {},
-            versions: Object.keys(json.versions ?? {}).reverse(),
-          });
+    const settle = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      request?.removeListener('timeout', onTimeout);
+      response?.removeListener('data', onData);
+      response?.removeListener('end', onEnd);
+      response?.removeListener('error', onResponseError);
+      callback();
+    };
+    const rejectOnce = (err: Error): void => {
+      settle(() => reject(err));
+    };
+    const resolveOnce = (versions: PackageVersions): void => {
+      settle(() => resolve(versions));
+    };
+    const onTimeout = (): void => {
+      const error = new Error(`npm registry request timed out after ${REGISTRY_REQUEST_TIMEOUT_MS}ms for ${packageName}`);
+      request?.destroy(error);
+      rejectOnce(error);
+    };
+    const onRequestError = (err: Error): void => {
+      rejectOnce(err);
+    };
+    const onResponseError = (err: Error): void => {
+      rejectOnce(err);
+    };
+    let data = '';
+    let receivedBytes = 0;
+    const onData = (chunk: Buffer | string): void => {
+      const chunkText = chunk.toString();
+      receivedBytes += Buffer.byteLength(chunkText);
+
+      if (receivedBytes > REGISTRY_RESPONSE_MAX_BYTES) {
+        const error = new Error(`npm registry response exceeded ${REGISTRY_RESPONSE_MAX_BYTES} bytes for ${packageName}`);
+        request?.destroy(error);
+        rejectOnce(error);
+        return;
+      }
+
+      data += chunkText;
+    };
+    const onEnd = (): void => {
+      try {
+        if (response?.statusCode !== undefined && (response.statusCode < 200 || response.statusCode >= 300)) {
+          rejectOnce(new Error(`npm registry responded with HTTP ${response.statusCode} for ${packageName}`));
+          return;
         }
-        catch (err) {
-          reject(err);
-        }
-      });
-      res.on('error', reject);
+
+        const json = JSON.parse(data) as NpmRegistryPackument;
+        resolveOnce({
+          tags: json['dist-tags'] ?? {},
+          versions: Object.keys(json.versions ?? {}).reverse(),
+        });
+      }
+      catch (err) {
+        rejectOnce(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+
+    request = https.get(url, { headers: { Accept: 'application/vnd.npm.install-v1+json' } }, (res) => {
+      response = res;
+      res.on('data', onData);
+      res.on('end', onEnd);
+      res.on('error', onResponseError);
     });
-    request.on('error', reject);
+    request.setTimeout(REGISTRY_REQUEST_TIMEOUT_MS);
+    request.on('timeout', onTimeout);
+    request.on('error', onRequestError);
   });
 }
 
