@@ -181,6 +181,30 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves live installing state when update checks finish', async () => {
+    let resolveFetch: (value: Map<string, string>) => void = () => {};
+    vi.mocked(fetchAllLatestVersions).mockReturnValueOnce(new Promise((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    const updateCheck = provider.checkUpdates();
+    provider.markPackageUpdating('react', true, '/workspace/package.json');
+    resolveFetch(new Map([['react', '19.0.0']]));
+    await updateCheck;
+
+    const packages = provider.getChildren()
+      .filter((item): item is GroupItem => item instanceof GroupItem)
+      .flatMap(group => group.children)
+      .filter((item): item is PackageItem => item instanceof PackageItem);
+    const react = packages.find(item => item.packageName === 'react');
+
+    expect(react?.latest).toBe('19.0.0');
+    expect(react?.installing).toBe(true);
+    expect(react?.contextValue).toBe('installing');
+  });
+
   it('expires update check cache after five minutes', async () => {
     vi.useFakeTimers();
     try {

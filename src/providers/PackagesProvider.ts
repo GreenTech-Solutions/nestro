@@ -289,22 +289,38 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const upgrades = this.isCacheValid(target, includePreReleases, packageFilesKey)
         ? this.updateCache?.data ?? new Map<string, string>()
         : await this.fetchAndCacheUpdates(target, includePreReleases, packageFiles, packageFilesKey);
-      this.allEntries = source.map((entry) => {
-        const latest = upgrades.get(this.entryKey(entry.name, entry.packageFilePath));
-        const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
+      const liveEntries = this.allEntries.length > 0
+        ? this.allEntries
+        : source.map(entry => ({
+            item: this.createPackageItem(
+              entry.name,
+              entry.current,
+              undefined,
+              'none',
+              false,
+              entry.packageFilePath,
+              entry.dev,
+              entry.versionPrefix,
+            ),
+            dev: entry.dev,
+            packageFilePath: entry.packageFilePath,
+          }));
+      this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
+        const latest = upgrades.get(this.entryKey(item.packageName, packageFilePath));
+        const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
         return {
           item: this.createPackageItem(
-            entry.name,
-            entry.current,
+            item.packageName,
+            item.currentVersion,
             latest,
             updateType,
-            false,
-            entry.packageFilePath,
-            entry.dev,
-            entry.versionPrefix,
+            item.installing,
+            packageFilePath,
+            dev,
+            item.versionPrefix,
           ),
-          dev: entry.dev,
-          packageFilePath: entry.packageFilePath,
+          dev,
+          packageFilePath,
         };
       });
       logger.info(`Checked updates for ${source.length} package(s).`);
