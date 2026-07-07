@@ -167,6 +167,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   invalidateUpdateCache(): void {
     this.updateCache = undefined;
+    this.lastCheckTime = undefined;
     logger.info('Update cache invalidated.');
   }
 
@@ -253,7 +254,21 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   async checkUpdates(): Promise<void> {
     const config = vscode.workspace.getConfiguration('nestro');
     const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-    if (!forceAlways && this.lastCheckTime !== undefined) {
+    const includePreReleases = config.get<boolean>('includePreReleases', true);
+    const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+    const source = this.allEntries.length > 0
+      ? this.allEntries.map(e => ({
+          name: e.item.packageName,
+          current: e.item.currentVersion,
+          dev: e.dev,
+          versionPrefix: e.item.versionPrefix,
+          packageFilePath: e.packageFilePath,
+        }))
+      : await readAllWorkspaceDependencies();
+    const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
+    const packageFilesKey = this.packageFilesKey(packageFiles);
+    const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
+    if (!forceAlways && cacheValid && this.lastCheckTime !== undefined) {
       const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
       if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
         logger.info('Check for updates skipped — debounce interval has not elapsed.');
@@ -265,24 +280,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.checkState = 'running';
     this.emitTreeChanged();
     try {
-      const includePreReleases = vscode.workspace
-        .getConfiguration('nestro')
-        .get<boolean>('includePreReleases', true);
-      const target = vscode.workspace
-        .getConfiguration('nestro')
-        .get<NcuUpdateTarget>('updateTarget', 'latest');
-      const source = this.allEntries.length > 0
-        ? this.allEntries.map(e => ({
-            name: e.item.packageName,
-            current: e.item.currentVersion,
-            dev: e.dev,
-            versionPrefix: e.item.versionPrefix,
-            packageFilePath: e.packageFilePath,
-          }))
-        : await readAllWorkspaceDependencies();
       logger.info(`Checking updates for ${source.length} package(s).`);
-      const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-      const packageFilesKey = this.packageFilesKey(packageFiles);
       const upgrades = this.isCacheValid(target, includePreReleases, packageFilesKey)
         ? this.updateCache?.data ?? new Map<string, string>()
         : await this.fetchAndCacheUpdates(target, includePreReleases, packageFiles, packageFilesKey);
