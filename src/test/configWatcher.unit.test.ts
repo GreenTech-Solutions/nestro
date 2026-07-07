@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { registerConfigurationWatcher } from '../extension';
+import { registerConfigurationWatcher, registerWorkspaceFoldersWatcher } from '../extension';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { fetchAllLatestVersions, readAllWorkspaceDependencies } from '../utils';
 
@@ -84,6 +84,26 @@ describe('registerConfigurationWatcher()', () => {
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(refreshPackageJsonWatcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('registerWorkspaceFoldersWatcher()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('refreshes package watchers and reloads packages when workspace folders change', () => {
+    const context = makeContext();
+    const provider = { loadPackages: vi.fn() };
+    const refreshPackageJsonWatcher = vi.fn();
+
+    registerWorkspaceFoldersWatcher(context, provider, refreshPackageJsonWatcher);
+    const listener = vi.mocked(vscode.workspace.onDidChangeWorkspaceFolders).mock.calls[0][0];
+    listener({ added: [], removed: [] } as unknown as vscode.WorkspaceFoldersChangeEvent);
+
+    expect(context.subscriptions).toHaveLength(1);
+    expect(refreshPackageJsonWatcher).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 });
 

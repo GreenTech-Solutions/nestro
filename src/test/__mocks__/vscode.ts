@@ -61,6 +61,7 @@ export const workspace = {
     get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
   })),
   onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
+  onDidChangeWorkspaceFolders: vi.fn(() => ({ dispose: vi.fn() })),
   createFileSystemWatcher: vi.fn(() => ({
     dispose: vi.fn(),
     onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
