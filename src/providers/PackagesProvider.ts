@@ -252,34 +252,39 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async checkUpdates(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('nestro');
-    const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-    const includePreReleases = config.get<boolean>('includePreReleases', true);
-    const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-    const source = this.allEntries.length > 0
-      ? this.allEntries.map(e => ({
-          name: e.item.packageName,
-          current: e.item.currentVersion,
-          dev: e.dev,
-          versionPrefix: e.item.versionPrefix,
-          packageFilePath: e.packageFilePath,
-        }))
-      : await readAllWorkspaceDependencies();
-    const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-    const packageFilesKey = this.packageFilesKey(packageFiles);
-    const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
-    if (!forceAlways && cacheValid && this.lastCheckTime !== undefined) {
-      const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
-      if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
-        logger.info('Check for updates skipped — debounce interval has not elapsed.');
-        return;
-      }
+    if (this.checkState === 'running') {
+      return;
     }
-    logger.info('Checking package updates.');
-    this.invalidateUpdateCache();
+
     this.checkState = 'running';
     this.emitTreeChanged();
     try {
+      const config = vscode.workspace.getConfiguration('nestro');
+      const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
+      const includePreReleases = config.get<boolean>('includePreReleases', true);
+      const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+      const source = this.allEntries.length > 0
+        ? this.allEntries.map(e => ({
+            name: e.item.packageName,
+            current: e.item.currentVersion,
+            dev: e.dev,
+            versionPrefix: e.item.versionPrefix,
+            packageFilePath: e.packageFilePath,
+          }))
+        : await readAllWorkspaceDependencies();
+      const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
+      const packageFilesKey = this.packageFilesKey(packageFiles);
+      const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
+      if (!forceAlways && cacheValid && this.lastCheckTime !== undefined) {
+        const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
+        if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
+          logger.info('Check for updates skipped — debounce interval has not elapsed.');
+          this.checkState = 'done';
+          return;
+        }
+      }
+      logger.info('Checking package updates.');
+      this.invalidateUpdateCache();
       logger.info(`Checking updates for ${source.length} package(s).`);
       const upgrades = this.isCacheValid(target, includePreReleases, packageFilesKey)
         ? this.updateCache?.data ?? new Map<string, string>()

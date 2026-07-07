@@ -134,6 +134,53 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores concurrent update checks while a check is already running', async () => {
+    let resolveFetch: (value: Map<string, string>) => void = () => {};
+    vi.mocked(fetchAllLatestVersions).mockReturnValueOnce(new Promise((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    const firstCheck = provider.checkUpdates();
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+
+    const secondCheck = provider.checkUpdates();
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+
+    resolveFetch(new Map([['react', '19.0.0']]));
+    await Promise.all([firstCheck, secondCheck]);
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores concurrent update checks before workspace packages are loaded', async () => {
+    let resolveDependencies: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+    vi.mocked(readAllWorkspaceDependencies).mockReturnValueOnce(new Promise((resolve) => {
+      resolveDependencies = resolve;
+    }));
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    const firstCheck = provider.checkUpdates();
+    expect(readAllWorkspaceDependencies).toHaveBeenCalledTimes(1);
+
+    const secondCheck = provider.checkUpdates();
+    expect(readAllWorkspaceDependencies).toHaveBeenCalledTimes(1);
+
+    resolveDependencies([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await Promise.all([firstCheck, secondCheck]);
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+  });
+
   it('expires update check cache after five minutes', async () => {
     vi.useFakeTimers();
     try {
