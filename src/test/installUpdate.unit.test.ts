@@ -102,6 +102,33 @@ describe('installUpdateCommand()', () => {
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
   });
 
+  it('updates the clicked devDependencies row when deferred install is enabled', async () => {
+    mockDeferredInstall(true);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { typescript: '^4.0.0' },
+      devDependencies: { typescript: '~5.0.0' },
+    }, undefined, 2)));
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+
+    await installUpdateCommand(
+      new PackageItem('typescript', '~5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', true, '~'),
+      provider,
+    );
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: { typescript: '^4.0.0' },
+      devDependencies: { typescript: '~5.9.3' },
+    });
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
+  });
+
   it('preserves devDependencies when updating through the package manager', async () => {
     const provider = {
       invalidateUpdateCache: vi.fn(),

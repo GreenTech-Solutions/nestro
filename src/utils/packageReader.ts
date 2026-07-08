@@ -13,9 +13,12 @@ export interface PackageFileEntry extends PackageEntry {
   packageFilePath: string;
 }
 
+export type DependencySection = 'dependencies' | 'devDependencies';
+
 export interface PackageVersionUpdate {
   name: string;
   version: string;
+  section: DependencySection;
 }
 
 interface WorkspacePackageJson {
@@ -60,17 +63,14 @@ export async function updateDependencyVersionsInFile(
   const missing: string[] = [];
 
   for (const update of updates) {
-    if (json.dependencies?.[update.name] !== undefined) {
-      const prefix = extractVersionPrefix(json.dependencies[update.name]);
-      json.dependencies[update.name] = `${prefix}${update.version}`;
+    const dependencies = json[update.section];
+    if (dependencies?.[update.name] !== undefined) {
+      const current = dependencies[update.name];
+      const prefix = extractVersionPrefix(current);
+      dependencies[update.name] = `${prefix}${update.version}`;
       continue;
     }
-    if (json.devDependencies?.[update.name] !== undefined) {
-      const prefix = extractVersionPrefix(json.devDependencies[update.name]);
-      json.devDependencies[update.name] = `${prefix}${update.version}`;
-      continue;
-    }
-    missing.push(update.name);
+    missing.push(`${update.name} (${update.section})`);
   }
 
   if (missing.length > 0) {
@@ -246,7 +246,7 @@ async function readPackageJsonEntry(
   json: WorkspacePackageJson;
   raw: string;
   uri: vscode.Uri;
-  location: { section: 'dependencies' | 'devDependencies'; version: string };
+  location: { section: DependencySection; version: string };
 }> {
   const { json, raw, uri } = await readPackageJson(packageFilePath);
   const fromDependencies = json.dependencies?.[packageName];

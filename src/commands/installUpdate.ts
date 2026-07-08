@@ -20,7 +20,7 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
       if (isDeferredInstallEnabled()) {
         markUpdating(provider, item.packageName, true, item.packageFilePath || undefined);
         await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(packageFilePath, [
-          { name: item.packageName, version: latest },
+          { name: item.packageName, version: latest, section: getPackageSection(item) },
         ]));
         markUpdated(provider, item.packageName, latest, item.packageFilePath || undefined);
         return;
@@ -89,7 +89,11 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         for (const group of groupDeferredUpdatesByPackageFile(updates)) {
           await updateDependencyVersionsInFile(
             group.packageFilePath,
-            group.updates.map(update => ({ name: update.item.packageName, version: update.version })),
+            group.updates.map(update => ({
+              name: update.item.packageName,
+              version: update.version,
+              section: getPackageSection(update.item),
+            })),
           );
         }
       });
