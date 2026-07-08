@@ -1,11 +1,19 @@
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
+import * as vscode from 'vscode';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchPackageVersions, selectVersionsForPicker } from '../utils/registryClient';
 
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+}));
 vi.mock('node:https', () => ({
   get: vi.fn(),
+}));
+vi.mock('node:os', () => ({
+  homedir: vi.fn(() => '/home/user'),
 }));
 
 interface MockClientRequest extends EventEmitter {
@@ -16,6 +24,11 @@ interface MockClientRequest extends EventEmitter {
 describe('fetchPackageVersions()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [{ uri: { fsPath: '/workspace' } }],
+    });
   });
 
   it('parses dist-tags and versions from the npm registry response', async () => {
@@ -31,6 +44,69 @@ describe('fetchPackageVersions()', () => {
       tags: { latest: '18.2.0', next: '19.0.0-rc.1' },
       versions: ['18.2.0', '18.0.0'],
     });
+    expectRegistryUrl('https://registry.npmjs.org/react');
+  });
+
+  it('uses the project .npmrc default registry when present', async () => {
+    mockNpmrcFiles({
+      '/workspace/.npmrc': 'registry=https://registry.example.com/npm/',
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+
+    await expect(fetchPackageVersions('react')).resolves.toEqual({
+      tags: {},
+      versions: ['1.0.0'],
+    });
+    expectRegistryUrl('https://registry.example.com/npm/react');
+  });
+
+  it('uses the user .npmrc default registry when project config is missing', async () => {
+    mockNpmrcFiles({
+      '/home/user/.npmrc': 'registry=https://user-registry.example.com',
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+
+    await fetchPackageVersions('react');
+
+    expectRegistryUrl('https://user-registry.example.com/react');
+  });
+
+  it('prefers project .npmrc over user .npmrc for matching keys', async () => {
+    mockNpmrcFiles({
+      '/home/user/.npmrc': 'registry=https://user-registry.example.com',
+      '/workspace/.npmrc': 'registry=https://project-registry.example.com',
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+
+    await fetchPackageVersions('react');
+
+    expectRegistryUrl('https://project-registry.example.com/react');
+  });
+
+  it('uses scoped .npmrc registries for scoped packages', async () => {
+    mockNpmrcFiles({
+      '/workspace/.npmrc': [
+        'registry=https://registry.example.com',
+        '@private:registry=https://private.example.com/npm/',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+
+    await fetchPackageVersions('@private/pkg');
+
+    expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
   });
 
   it('rejects on network errors', async () => {
@@ -154,6 +230,22 @@ function mockRegistryResponse(body: string, statusCode = 200): void {
     });
     return toClientRequest(createMockRequest());
   });
+}
+
+function mockNpmrcFiles(files: Record<string, string>): void {
+  vi.mocked(readFile).mockImplementation(async (filePath) => {
+    const value = files[String(filePath)];
+
+    if (value === undefined) {
+      throw new Error(`File not found: ${String(filePath)}`);
+    }
+
+    return value;
+  });
+}
+
+function expectRegistryUrl(url: string): void {
+  expect(vi.mocked(https.get).mock.calls[0][0]).toBe(url);
 }
 
 function createMockRequest(): MockClientRequest {

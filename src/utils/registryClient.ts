@@ -1,9 +1,14 @@
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import path from 'node:path';
+import * as vscode from 'vscode';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 
 const REGISTRY_REQUEST_TIMEOUT_MS = 15_000;
 const REGISTRY_RESPONSE_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 
 interface NpmRegistryPackument {
   'dist-tags': Record<string, string>;
@@ -17,7 +22,8 @@ export interface PackageVersions {
 
 export async function fetchPackageVersions(packageName: string): Promise<PackageVersions> {
   const encodedName = encodeURIComponent(packageName).replace('%40', '@');
-  const url = `https://registry.npmjs.org/${encodedName}`;
+  const registryUrl = await resolveRegistryUrl(packageName);
+  const url = buildRegistryPackageUrl(registryUrl, encodedName);
 
   return await new Promise<PackageVersions>((resolve, reject) => {
     let request: ClientRequest | undefined;
@@ -96,6 +102,93 @@ export async function fetchPackageVersions(packageName: string): Promise<Package
     request.on('timeout', onTimeout);
     request.on('error', onRequestError);
   });
+}
+
+async function resolveRegistryUrl(packageName: string): Promise<string> {
+  const config = new Map<string, string>();
+
+  for (const npmrcPath of getNpmrcPaths()) {
+    const npmrc = await readNpmrcFile(npmrcPath);
+    mergeNpmrcConfig(config, npmrc);
+  }
+
+  const scopedRegistry = getScopedRegistry(packageName, config);
+
+  return scopedRegistry ?? config.get('registry') ?? DEFAULT_REGISTRY_URL;
+}
+
+function getNpmrcPaths(): string[] {
+  const paths = [path.join(homedir(), '.npmrc')];
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  if (workspaceRoot !== undefined) {
+    paths.push(path.join(workspaceRoot, '.npmrc'));
+  }
+
+  return paths;
+}
+
+async function readNpmrcFile(npmrcPath: string): Promise<string> {
+  try {
+    return await readFile(npmrcPath, 'utf8');
+  }
+  catch {
+    return '';
+  }
+}
+
+function mergeNpmrcConfig(config: Map<string, string>, npmrc: string): void {
+  for (const rawLine of npmrc.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (line === '' || line.startsWith('#') || line.startsWith(';')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = stripNpmrcQuotes(line.slice(separatorIndex + 1).trim());
+
+    if (key === 'registry' || /^@[^:]+:registry$/.test(key)) {
+      config.set(key, value);
+    }
+  }
+}
+
+function stripNpmrcQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
+function getScopedRegistry(packageName: string, config: ReadonlyMap<string, string>): string | undefined {
+  if (!packageName.startsWith('@')) {
+    return undefined;
+  }
+
+  const scopeEndIndex = packageName.indexOf('/');
+
+  if (scopeEndIndex === -1) {
+    return undefined;
+  }
+
+  return config.get(`${packageName.slice(0, scopeEndIndex)}:registry`);
+}
+
+function buildRegistryPackageUrl(registryUrl: string, encodedName: string): string {
+  const baseUrl = registryUrl.endsWith('/') ? registryUrl : `${registryUrl}/`;
+
+  return new URL(encodedName, baseUrl).toString();
 }
 
 export function selectVersionsForPicker(
