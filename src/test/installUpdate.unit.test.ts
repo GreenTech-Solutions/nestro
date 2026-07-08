@@ -11,6 +11,7 @@ let taskExecutionCount = 0;
 describe('installUpdateCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetWorkspaceFolders();
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
@@ -207,6 +208,7 @@ describe('installUpdateCommand()', () => {
 describe('runInstallCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetWorkspaceFolders();
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ fsPath: '/workspace/package.json', path: '/workspace/package.json' }] as vscode.Uri[]);
@@ -251,11 +253,43 @@ describe('runInstallCommand()', () => {
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.options).toEqual({ cwd: '/workspace/apps/web' });
   });
+
+  it('formats sibling workspace package labels by path segment', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/workspace/app' } },
+        { uri: { fsPath: '/workspace/app-mobile' } },
+      ],
+    });
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/workspace/app/package.json', path: '/workspace/app/package.json' },
+      { fsPath: '/workspace/app-mobile/package.json', path: '/workspace/app-mobile/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: '(root)',
+      packageFilePath: '/workspace/app-mobile/package.json',
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: '(root)', packageFilePath: '/workspace/app/package.json' },
+      { label: '(root)', packageFilePath: '/workspace/app-mobile/package.json' },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    const shellExecution = task.execution as vscode.ShellExecution;
+    expect(shellExecution.options).toEqual({ cwd: '/workspace/app-mobile' });
+  });
 });
 
 describe('updateAllVisibleCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetWorkspaceFolders();
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ path: '/workspace/package.json' }] as vscode.Uri[]);
@@ -414,6 +448,13 @@ function mockTaskListeners(): void {
   vi.mocked(vscode.tasks.onDidEndTask).mockImplementation((listener) => {
     taskEndListener = listener;
     return { dispose: vi.fn() } as vscode.Disposable;
+  });
+}
+
+function resetWorkspaceFolders(): void {
+  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+    configurable: true,
+    value: [{ uri: { fsPath: '/workspace' } }],
   });
 }
 

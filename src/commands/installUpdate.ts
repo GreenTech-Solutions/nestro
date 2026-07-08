@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PackageItem, PackagesProvider, toRelativeLabel } from '../providers';
 import {
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -248,12 +248,8 @@ function formatPackageFileLabel(packageFilePath: string): string {
 
   for (const folder of folders) {
     const folderPath = folder.uri.fsPath.replace(/\\/g, '/');
-    if (normalized.startsWith(folderPath)) {
-      const relative = normalized.slice(folderPath.length).replace(/^\//, '');
-      const withoutFile = relative.endsWith('/package.json')
-        ? relative.slice(0, -'/package.json'.length)
-        : relative;
-      return withoutFile || '(root)';
+    if (normalized === `${folderPath}/package.json` || normalized.startsWith(`${folderPath}/`)) {
+      return toRelativeLabel(packageFilePath, folder.uri.fsPath);
     }
   }
 
