@@ -15,6 +15,8 @@ import {
 
 const clientManager = new ClientManager();
 
+type PackageUpdate = { item: PackageItem; version: string };
+
 export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
   if (item.latest !== undefined && !item.installing) {
     const latest = item.latest;
@@ -148,7 +150,7 @@ function isBulkUpdateConfirmationEnabled(): boolean {
 }
 
 async function runPackageUpdateTask(
-  updates: readonly { item: PackageItem; version: string }[],
+  updates: readonly PackageUpdate[],
   command: ShellTaskCommand,
   taskName: string,
   provider: PackagesProvider,
@@ -186,30 +188,30 @@ function getPackageFilePath(item: PackageItem): string {
 }
 
 function groupDeferredUpdatesByPackageFile(
-  updates: readonly { item: PackageItem; version: string }[],
-): { packageFilePath: string; updates: { item: PackageItem; version: string }[] }[] {
-  const byFile = new Map<string, { item: PackageItem; version: string }[]>();
-  for (const update of updates) {
-    const packageFilePath = getPackageFilePath(update.item);
-    byFile.set(packageFilePath, [...(byFile.get(packageFilePath) ?? []), update]);
-  }
-  return [...byFile.entries()].map(([packageFilePath, groupUpdates]) => ({
-    packageFilePath,
-    updates: groupUpdates,
-  }));
+  updates: readonly PackageUpdate[],
+): { packageFilePath: string; updates: PackageUpdate[] }[] {
+  return groupUpdatesByPackageFile(updates, update => getPackageFilePath(update.item));
 }
 
 function groupImmediateUpdatesByPackageFile(
-  updates: readonly { item: PackageItem; version: string }[],
-): { packageFilePath: string; updates: { item: PackageItem; version: string }[] }[] {
-  const byFile = new Map<string, { item: PackageItem; version: string }[]>();
-  for (const update of updates) {
+  updates: readonly PackageUpdate[],
+): { packageFilePath: string; updates: PackageUpdate[] }[] {
+  return groupUpdatesByPackageFile(updates, (update) => {
     const packageFilePath = getPackageFilePath(update.item);
-    const section = getPackageSection(update.item);
-    const groupKey = `${packageFilePath}\0${section}`;
-    byFile.set(groupKey, [...(byFile.get(groupKey) ?? []), update]);
+    return `${packageFilePath}\0${getPackageSection(update.item)}`;
+  });
+}
+
+function groupUpdatesByPackageFile(
+  updates: readonly PackageUpdate[],
+  getGroupKey: (update: PackageUpdate) => string,
+): { packageFilePath: string; updates: PackageUpdate[] }[] {
+  const byKey = new Map<string, PackageUpdate[]>();
+  for (const update of updates) {
+    const groupKey = getGroupKey(update);
+    byKey.set(groupKey, [...(byKey.get(groupKey) ?? []), update]);
   }
-  return [...byFile.values()].map(groupUpdates => ({
+  return [...byKey.values()].map(groupUpdates => ({
     packageFilePath: getPackageFilePath(groupUpdates[0].item),
     updates: groupUpdates,
   }));
