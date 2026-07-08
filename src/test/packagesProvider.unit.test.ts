@@ -205,6 +205,63 @@ describe('PackagesProvider', () => {
     expect(react?.contextValue).toBe('installing');
   });
 
+  it('keeps write suppression active for overlapping suppressed writes', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishFirst: () => void = () => {};
+      let finishSecond: () => void = () => {};
+      const provider = new PackagesProvider(new FilterManager('all'));
+      const firstWrite = provider.withWriteSuppressed(async () => {
+        await new Promise<void>(resolve => {
+          finishFirst = resolve;
+        });
+      });
+      const secondWrite = provider.withWriteSuppressed(async () => {
+        await new Promise<void>(resolve => {
+          finishSecond = resolve;
+        });
+      });
+
+      finishFirst();
+      await firstWrite;
+      vi.advanceTimersByTime(600);
+
+      expect(provider.suppressingWrites).toBe(true);
+
+      finishSecond();
+      await secondWrite;
+      vi.advanceTimersByTime(599);
+      expect(provider.suppressingWrites).toBe(true);
+
+      vi.advanceTimersByTime(1);
+      expect(provider.suppressingWrites).toBe(false);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears pending write suppression timers on dispose', async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.withWriteSuppressed(async () => {});
+      expect(provider.suppressingWrites).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+
+      provider.dispose();
+      expect(provider.suppressingWrites).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+
+      vi.advanceTimersByTime(600);
+      expect(provider.suppressingWrites).toBe(false);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('expires update check cache after five minutes', async () => {
     vi.useFakeTimers();
     try {

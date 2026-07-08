@@ -30,7 +30,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly filterChangeDisposable: vscode.Disposable;
   private allEntries: PackageTreeEntry[] = [];
   private loading = true;
-  private isWriting = false;
+  private writeSuppressionDepth = 0;
+  private readonly writeSuppressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
   private checkState: 'idle' | 'running' | 'done' = 'idle';
@@ -96,20 +97,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   get suppressingWrites(): boolean {
-    return this.isWriting;
+    return this.writeSuppressionDepth > 0;
   }
 
   async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
-    this.isWriting = true;
+    this.writeSuppressionDepth += 1;
     try {
       const result = await fn();
       this.invalidateUpdateCache();
       return result;
     }
     finally {
-      setTimeout(() => {
-        this.isWriting = false;
+      const timer = setTimeout(() => {
+        this.writeSuppressionTimers.delete(timer);
+        this.writeSuppressionDepth = Math.max(0, this.writeSuppressionDepth - 1);
       }, 600);
+      this.writeSuppressionTimers.add(timer);
     }
   }
 
@@ -337,6 +340,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   dispose(): void {
+    for (const timer of this.writeSuppressionTimers) {
+      clearTimeout(timer);
+    }
+    this.writeSuppressionTimers.clear();
+    this.writeSuppressionDepth = 0;
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
   }
