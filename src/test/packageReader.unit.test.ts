@@ -121,6 +121,8 @@ describe('updateWorkspaceDependencyVersions()', () => {
     expect(JSON.parse(written)).toEqual({
       dependencies: { react: '^18.0.0' },
     });
+    expect(written).toContain('\n  "dependencies":');
+    expect(written).toContain('\n    "react": "^18.0.0"');
   });
 
   it('updates dependencies in a specific package file', async () => {
@@ -140,6 +142,43 @@ describe('updateWorkspaceDependencyVersions()', () => {
     expect(JSON.parse(written)).toEqual({
       dependencies: { react: '^18.0.0' },
     });
+    expect(written).toContain('\n  "dependencies":');
+    expect(written).toContain('\n    "react": "^18.0.0"');
+  });
+
+  it('preserves tab indentation when updating package.json', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^17.0.0' },
+    }, undefined, '\t')));
+
+    await updateDependencyVersionsInFile('/workspace/package.json', [
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
+    ]);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: { react: '^18.0.0' },
+    });
+    expect(written).toContain('\n\t"dependencies":');
+    expect(written).toContain('\n\t\t"react": "^18.0.0"');
+    expect(written).not.toContain('\n "dependencies":');
+  });
+
+  it('preserves 4-space indentation when updating package.json', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^17.0.0' },
+    }, undefined, 4)));
+
+    await updateDependencyVersionsInFile('/workspace/package.json', [
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
+    ]);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: { react: '^18.0.0' },
+    });
+    expect(written).toContain('\n    "dependencies":');
+    expect(written).toContain('\n        "react": "^18.0.0"');
   });
 
   it('updates only the requested section when a package exists in dependencies and devDependencies', async () => {

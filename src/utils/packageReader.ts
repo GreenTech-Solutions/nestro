@@ -221,12 +221,12 @@ async function findWorkspacePackageJsonFiles(glob?: string): Promise<vscode.Uri[
   return await vscode.workspace.findFiles(configuredGlob, '**/node_modules/**');
 }
 
-function detectJsonIndent(raw: string): number {
+function detectJsonIndent(raw: string): string {
   const match = raw.match(/^[ \t]+"[^"]+":/m);
   if (match === null) {
-    return 2;
+    return '  ';
   }
-  return match[0].match(/^[ \t]+/)?.[0].length ?? 2;
+  return match[0].match(/^[ \t]+/)?.[0] ?? '  ';
 }
 
 async function readPackageJson(packageFilePath: string): Promise<{
