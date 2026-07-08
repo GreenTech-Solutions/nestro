@@ -4,7 +4,7 @@ import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
 import { PackageItem, PackagesProvider } from '../providers';
-import { setVersionPin, switchDependencyType } from '../utils';
+import { setVersionPin, showError, switchDependencyType } from '../utils';
 
 const executeTaskMock = vi.mocked(vscode.tasks.executeTask);
 const onDidEndTaskProcessMock = vi.mocked(vscode.tasks.onDidEndTaskProcess);
@@ -164,6 +164,36 @@ describe('removePackageCommand()', () => {
     );
 
     expect(executeTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('shows an error and reloads packages when remove exits with a non-zero code', async () => {
+    const provider = makeProvider();
+    mockNextTaskExit(1);
+
+    await removePackageCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(showError).toHaveBeenCalledWith('task "Remove react" failed with exit code 1.');
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('react', false, '/workspace/package.json');
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an error and reloads packages when remove ends without an exit code', async () => {
+    const provider = makeProvider();
+    mockNextTaskExit(undefined);
+
+    await removePackageCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(showError).toHaveBeenCalledWith('task "Remove react" ended without an exit code.');
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('react', false, '/workspace/package.json');
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 });
 

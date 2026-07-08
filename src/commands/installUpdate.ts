@@ -2,10 +2,11 @@ import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
 import { PackageItem, PackagesProvider } from '../providers';
 import {
+  formatShellTaskCommandForLog,
+  formatShellTaskFailureMessage,
   getPackageDirectory,
   getWorkspacePackageFilePaths,
   logger,
-  formatShellTaskCommandForLog,
   runShellTaskAndWait,
   showError,
   ShellTaskCommand,
@@ -54,7 +55,11 @@ export async function runInstallCommand(): Promise<void> {
     const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
     const command = client.buildInstallCommand();
     logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
-    await runShellTaskAndWait(command, 'Install Dependencies', getPackageDirectory(packageFilePath));
+    const taskName = 'Install Dependencies';
+    const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
+    if (exitCode !== 0) {
+      showError(formatShellTaskFailureMessage(taskName, exitCode));
+    }
   }
   catch (err) {
     showError(`failed to run install — ${err instanceof Error ? err.message : String(err)}`, err);
@@ -170,6 +175,7 @@ async function runPackageUpdateTask(
     false,
     getPackageFilePath(update.item),
   ));
+  showError(formatShellTaskFailureMessage(taskName, exitCode));
 }
 
 function getPackageFilePath(item: PackageItem): string {

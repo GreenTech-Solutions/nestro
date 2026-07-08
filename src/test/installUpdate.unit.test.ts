@@ -95,6 +95,40 @@ describe('installUpdateCommand()', () => {
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
   });
 
+  it('shows an error when an update task exits with a non-zero code', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+    mockNextTaskExit(1);
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: task "Update typescript" failed with exit code 1.',
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
+  });
+
+  it('shows an error when an update task ends without an exit code', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+    mockNextTaskExit(undefined);
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: task "Update typescript" ended without an exit code.',
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
+  });
+
   it('updates package.json without running a task when deferred install is enabled', async () => {
     mockDeferredInstall(true);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from([

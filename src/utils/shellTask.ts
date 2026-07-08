@@ -61,3 +61,11 @@ export function formatShellTaskCommandForLog(shellCommand: ShellTaskCommand): st
     .map(part => typeof part === 'string' ? part : part.value)
     .join(' ');
 }
+
+export function formatShellTaskFailureMessage(taskName: string, exitCode: number | undefined): string {
+  if (exitCode === undefined) {
+    return `task "${taskName}" ended without an exit code.`;
+  }
+
+  return `task "${taskName}" failed with exit code ${exitCode}.`;
+}

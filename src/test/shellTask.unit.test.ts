@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { runShellTaskAndWait } from '../utils';
+import { formatShellTaskFailureMessage, runShellTaskAndWait } from '../utils';
 
 describe('runShellTaskAndWait()', () => {
   beforeEach(() => {
@@ -59,5 +59,16 @@ describe('runShellTaskAndWait()', () => {
     await expect(runShellTaskAndWait({ command: 'pnpm', args: ['install'] }, 'Install Dependencies')).rejects.toThrow(error);
     expect(vscode.tasks.onDidEndTaskProcess).not.toHaveBeenCalled();
     expect(vscode.tasks.onDidEndTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('formatShellTaskFailureMessage()', () => {
+  it('formats non-zero and missing exit codes', () => {
+    expect(formatShellTaskFailureMessage('Update react', 1)).toBe(
+      'task "Update react" failed with exit code 1.',
+    );
+    expect(formatShellTaskFailureMessage('Remove react', undefined)).toBe(
+      'task "Remove react" ended without an exit code.',
+    );
   });
 });

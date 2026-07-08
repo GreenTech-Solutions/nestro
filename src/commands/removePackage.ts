@@ -2,7 +2,13 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
 import { PackageItem, PackagesProvider } from '../providers';
-import { formatShellTaskCommandForLog, logger, runShellTaskAndWait, showError } from '../utils';
+import {
+  formatShellTaskCommandForLog,
+  formatShellTaskFailureMessage,
+  logger,
+  runShellTaskAndWait,
+  showError,
+} from '../utils';
 
 const clientManager = new ClientManager();
 
@@ -22,13 +28,16 @@ export async function removePackageCommand(item: PackageItem, provider: Packages
     const client = await clientManager.getClient(cwd);
     const command = client.buildRemoveCommand([item.packageName]);
     logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
-    const exitCode = await runShellTaskAndWait(command, `Remove ${item.packageName}`, cwd);
+    const taskName = `Remove ${item.packageName}`;
+    const exitCode = await runShellTaskAndWait(command, taskName, cwd);
     provider.invalidateUpdateCache();
     if (exitCode === 0) {
-      void provider.loadPackages();
+      await provider.loadPackages();
       return;
     }
     provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+    showError(formatShellTaskFailureMessage(taskName, exitCode));
+    await provider.loadPackages();
   }
   catch (err) {
     if (item.packageFilePath !== '') {
