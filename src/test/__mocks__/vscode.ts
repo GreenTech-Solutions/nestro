@@ -54,6 +54,7 @@ export const window = {
 export const tasks = {
   executeTask: vi.fn().mockResolvedValue({ id: 'task-execution' }),
   onDidEndTaskProcess: vi.fn(() => ({ dispose: vi.fn() })),
+  onDidEndTask: vi.fn(() => ({ dispose: vi.fn() })),
 };
 
 export const workspace = {

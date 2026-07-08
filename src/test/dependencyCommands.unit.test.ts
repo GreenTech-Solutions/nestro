@@ -8,16 +8,24 @@ import { setVersionPin, switchDependencyType } from '../utils';
 
 const executeTaskMock = vi.mocked(vscode.tasks.executeTask);
 const onDidEndTaskProcessMock = vi.mocked(vscode.tasks.onDidEndTaskProcess);
+const onDidEndTaskMock = vi.mocked(vscode.tasks.onDidEndTask);
+let taskProcessEndListener: ((event: vscode.TaskProcessEndEvent) => unknown) | undefined;
+let taskEndListener: ((event: vscode.TaskEndEvent) => unknown) | undefined;
+let taskExecutionCount = 0;
 
-vi.mock('../utils', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-  },
-  setVersionPin: vi.fn(),
-  showError: vi.fn(),
-  switchDependencyType: vi.fn(),
-}));
+vi.mock('../utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils')>();
+  return {
+    ...actual,
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+    },
+    setVersionPin: vi.fn(),
+    showError: vi.fn(),
+    switchDependencyType: vi.fn(),
+  };
+});
 
 vi.mock('../clients', async () => {
   const actual = await vi.importActual<typeof import('../clients')>('../clients');
@@ -105,12 +113,9 @@ describe('pinVersionCommand()', () => {
 describe('removePackageCommand()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    executeTaskMock.mockResolvedValue({} as vscode.TaskExecution);
+    mockTaskListeners();
+    mockNextTaskExit(0);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove Package' as never);
-    onDidEndTaskProcessMock.mockImplementation((listener) => {
-      listener({ execution: {} as vscode.TaskExecution, exitCode: 0 } as vscode.TaskProcessEndEvent);
-      return { dispose: vi.fn() } as vscode.Disposable;
-    });
   });
 
   it('runs the package manager remove command and reloads packages after success', async () => {
@@ -127,10 +132,11 @@ describe('removePackageCommand()', () => {
       '^',
     );
     const execution = {} as vscode.TaskExecution;
-    executeTaskMock.mockResolvedValueOnce(execution);
-    onDidEndTaskProcessMock.mockImplementationOnce((listener) => {
-      listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
-      return { dispose: vi.fn() } as vscode.Disposable;
+    executeTaskMock.mockImplementationOnce(() => {
+      setTimeout(() => {
+        taskProcessEndListener?.({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+      }, 0);
+      return Promise.resolve(execution);
     });
 
     await removePackageCommand(item, provider);
@@ -168,4 +174,33 @@ function makeProvider(): PackagesProvider {
     invalidateUpdateCache: vi.fn(),
     markPackageUpdating: vi.fn(),
   } as unknown as PackagesProvider;
+}
+
+function mockTaskListeners(): void {
+  taskProcessEndListener = undefined;
+  taskEndListener = undefined;
+  taskExecutionCount = 0;
+  onDidEndTaskProcessMock.mockImplementation((listener) => {
+    taskProcessEndListener = listener;
+    return { dispose: vi.fn() } as vscode.Disposable;
+  });
+  onDidEndTaskMock.mockImplementation((listener) => {
+    taskEndListener = listener;
+    return { dispose: vi.fn() } as vscode.Disposable;
+  });
+}
+
+function mockNextTaskExit(exitCode: number | undefined): void {
+  executeTaskMock.mockImplementation(() => {
+    taskExecutionCount += 1;
+    const execution = { id: `task-execution-${taskExecutionCount}` } as unknown as vscode.TaskExecution;
+    setTimeout(() => {
+      if (exitCode === undefined) {
+        taskEndListener?.({ execution } as vscode.TaskEndEvent);
+        return;
+      }
+      taskProcessEndListener?.({ execution, exitCode } as vscode.TaskProcessEndEvent);
+    }, 0);
+    return Promise.resolve(execution);
+  });
 }

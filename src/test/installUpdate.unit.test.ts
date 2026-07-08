@@ -4,14 +4,19 @@ import { installUpdateCommand, runInstallCommand, updateAllVisibleCommand } from
 import { PackageItem } from '../providers/PackageItem';
 import { PackagesProvider } from '../providers';
 
+let taskProcessEndListener: ((event: vscode.TaskProcessEndEvent) => unknown) | undefined;
+let taskEndListener: ((event: vscode.TaskEndEvent) => unknown) | undefined;
+let taskExecutionCount = 0;
+
 describe('installUpdateCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
     vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
-    vi.mocked(vscode.tasks.executeTask).mockResolvedValue({ id: 'task-execution' } as unknown as vscode.TaskExecution);
+    mockNextTaskExit(0);
   });
 
   it('uses the detected package manager in the update task command', async () => {
@@ -44,13 +49,7 @@ describe('installUpdateCommand()', () => {
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
     } as unknown as PackagesProvider;
-    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
-    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
-
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
-
-    const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
-    listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
 
     expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
@@ -63,16 +62,11 @@ describe('installUpdateCommand()', () => {
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
     } as unknown as PackagesProvider;
-    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
-    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
+    mockNextTaskExit(1);
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
     expect(provider.markPackageUpdating).toHaveBeenCalledWith('typescript', true, '/workspace/package.json');
-
-    const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
-    listener({ execution, exitCode: 1 } as vscode.TaskProcessEndEvent);
-
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
   });
 
@@ -154,9 +148,10 @@ describe('installUpdateCommand()', () => {
 describe('runInstallCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ fsPath: '/workspace/package.json', path: '/workspace/package.json' }] as vscode.Uri[]);
-    vi.mocked(vscode.tasks.executeTask).mockResolvedValue({ id: 'task-execution' } as unknown as vscode.TaskExecution);
+    mockNextTaskExit(0);
   });
 
   it.each([
@@ -202,11 +197,12 @@ describe('runInstallCommand()', () => {
 describe('updateAllVisibleCommand()', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ path: '/workspace/package.json' }] as vscode.Uri[]);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{"packageManager":"pnpm@11.0.8"}'));
     vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
-    vi.mocked(vscode.tasks.executeTask).mockResolvedValue({ id: 'task-execution' } as unknown as vscode.TaskExecution);
+    mockNextTaskExit(0);
   });
 
   it('runs one batch task for visible outdated packages in immediate mode', async () => {
@@ -322,7 +318,60 @@ describe('updateAllVisibleCommand()', () => {
       'pnpm add vitest@4.1.0 --save-dev',
     ]);
   });
+
+  it('waits for each immediate bulk update task before starting the next one', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const firstExecution = { id: 'first-task' } as unknown as vscode.TaskExecution;
+    const secondExecution = { id: 'second-task' } as unknown as vscode.TaskExecution;
+    vi.mocked(vscode.tasks.executeTask)
+      .mockResolvedValueOnce(firstExecution)
+      .mockResolvedValueOnce(secondExecution);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vitest', '^4.0.0', '4.1.0', 'minor', false, undefined, '/workspace/package.json', true, '^'),
+    ]);
+
+    const result = updateAllVisibleCommand(provider);
+    await vi.waitFor(() => expect(vscode.tasks.onDidEndTaskProcess).toHaveBeenCalledTimes(1));
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    taskProcessEndListener?.({ execution: firstExecution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+    await vi.waitFor(() => expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(2));
+    taskProcessEndListener?.({ execution: secondExecution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+    await result;
+
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith('react', '19.0.0', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith('vitest', '4.1.0', '/workspace/package.json');
+  });
 });
+
+function mockTaskListeners(): void {
+  taskProcessEndListener = undefined;
+  taskEndListener = undefined;
+  taskExecutionCount = 0;
+  vi.mocked(vscode.tasks.onDidEndTaskProcess).mockImplementation((listener) => {
+    taskProcessEndListener = listener;
+    return { dispose: vi.fn() } as vscode.Disposable;
+  });
+  vi.mocked(vscode.tasks.onDidEndTask).mockImplementation((listener) => {
+    taskEndListener = listener;
+    return { dispose: vi.fn() } as vscode.Disposable;
+  });
+}
+
+function mockNextTaskExit(exitCode: number | undefined): void {
+  vi.mocked(vscode.tasks.executeTask).mockImplementation(() => {
+    taskExecutionCount += 1;
+    const execution = { id: `task-execution-${taskExecutionCount}` } as unknown as vscode.TaskExecution;
+    setTimeout(() => {
+      if (exitCode === undefined) {
+        taskEndListener?.({ execution } as vscode.TaskEndEvent);
+        return;
+      }
+      taskProcessEndListener?.({ execution, exitCode } as vscode.TaskProcessEndEvent);
+    }, 0);
+    return Promise.resolve(execution);
+  });
+}
 
 function mockDeferredInstall(enabled: boolean): void {
   mockNestroConfiguration({ deferInstallAfterUpdate: enabled });

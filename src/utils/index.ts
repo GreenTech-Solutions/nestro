@@ -6,3 +6,4 @@ export * from './registryClient';
 export * from './notify';
 export * from './logger';
 export * from './auditClient';
+export * from './shellTask';

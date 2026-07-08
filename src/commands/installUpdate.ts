@@ -5,6 +5,7 @@ import {
   getPackageDirectory,
   getWorkspacePackageFilePaths,
   logger,
+  runShellTaskAndWait,
   showError,
   updateDependencyVersionsInFile,
 } from '../utils';
@@ -51,7 +52,7 @@ export async function runInstallCommand(): Promise<void> {
     const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
     const command = client.buildInstallCommand();
     logger.info(`Running install command: ${command}`);
-    await executeShellTask(command, 'Install Dependencies', getPackageDirectory(packageFilePath));
+    await runShellTaskAndWait(command, 'Install Dependencies', getPackageDirectory(packageFilePath));
   }
   catch (err) {
     showError(`failed to run install — ${err instanceof Error ? err.message : String(err)}`, err);
@@ -152,45 +153,21 @@ async function runPackageUpdateTask(
     getPackageFilePath(update.item),
   ));
   logger.info(`Running update command: ${command}`);
-  const execution = await executeShellTask(command, taskName, cwd);
-  let listener: vscode.Disposable | undefined;
-  listener = vscode.tasks.onDidEndTaskProcess((e) => {
-    if (e.execution !== execution) {
-      return;
-    }
-
-    listener?.dispose();
-    if (e.exitCode === 0) {
-      provider.invalidateUpdateCache();
-      updates.forEach(update => provider.markPackageUpdated(
-        update.item.packageName,
-        update.version,
-        getPackageFilePath(update.item),
-      ));
-      return;
-    }
-    updates.forEach(update => provider.markPackageUpdating(
+  const exitCode = await runShellTaskAndWait(command, taskName, cwd);
+  if (exitCode === 0) {
+    provider.invalidateUpdateCache();
+    updates.forEach(update => provider.markPackageUpdated(
       update.item.packageName,
-      false,
+      update.version,
       getPackageFilePath(update.item),
     ));
-  });
-}
-
-async function executeShellTask(command: string, taskName: string, cwd?: string): Promise<vscode.TaskExecution> {
-  const task = new vscode.Task(
-    { type: 'shell' },
-    vscode.TaskScope.Workspace,
-    taskName,
-    'Nestro',
-    new vscode.ShellExecution(command, cwd === undefined ? undefined : { cwd }),
-  );
-  task.presentationOptions = {
-    reveal: vscode.TaskRevealKind.Always,
-    panel: vscode.TaskPanelKind.New,
-  };
-
-  return await vscode.tasks.executeTask(task);
+    return;
+  }
+  updates.forEach(update => provider.markPackageUpdating(
+    update.item.packageName,
+    false,
+    getPackageFilePath(update.item),
+  ));
 }
 
 function getPackageFilePath(item: PackageItem): string {
