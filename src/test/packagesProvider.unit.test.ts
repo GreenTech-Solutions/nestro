@@ -382,12 +382,77 @@ describe('PackagesProvider', () => {
       }],
     });
 
-    provider.markPackageUpdated('react', '19.0.0');
+    provider.markPackageUpdated('react', '19.0.0', '/workspace/package.json');
 
     const entry = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries[0];
     expect(entry.item.currentVersion).toBe('^19.0.0');
     expect(entry.item.versionPrefix).toBe('^');
     expect(entry.item.updateType).toBe('none');
+  });
+
+  it('targets package mutations by exact package file path', () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    setProviderState(provider, {
+      allEntries: [
+        {
+          item: new PackageItem(
+            'react',
+            '^18.0.0',
+            '19.0.0',
+            'breaking',
+            false,
+            undefined,
+            '/workspace/apps/web/package.json',
+            false,
+            '^',
+          ),
+          dev: false,
+          packageFilePath: '/workspace/apps/web/package.json',
+        },
+        {
+          item: new PackageItem(
+            'react',
+            '~18.0.0',
+            '18.3.1',
+            'minor',
+            false,
+            undefined,
+            '/workspace/packages/ui/package.json',
+            false,
+            '~',
+          ),
+          dev: false,
+          packageFilePath: '/workspace/packages/ui/package.json',
+        },
+      ],
+    });
+
+    provider.markPackageUpdated('react', '18.3.1', '/workspace/packages/ui/package.json');
+    provider.markPackageUpdating('react', true, '/workspace/packages/ui/package.json');
+    provider.markPackageUpdated('react', '20.0.0', '');
+    provider.markPackageUpdating('react', false, '');
+
+    const entries = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries;
+
+    expect(entries.map(entry => ({
+      currentVersion: entry.item.currentVersion,
+      installing: entry.item.installing,
+      packageFilePath: entry.item.packageFilePath,
+      updateType: entry.item.updateType,
+    }))).toEqual([
+      {
+        currentVersion: '^18.0.0',
+        installing: false,
+        packageFilePath: '/workspace/apps/web/package.json',
+        updateType: 'breaking',
+      },
+      {
+        currentVersion: '~18.3.1',
+        installing: true,
+        packageFilePath: '/workspace/packages/ui/package.json',
+        updateType: 'none',
+      },
+    ]);
   });
 
   it('runs audits per package file and keeps vulnerability badges scoped to that file', async () => {

@@ -16,10 +16,9 @@ export async function removePackageCommand(item: PackageItem, provider: Packages
     return;
   }
 
-  provider.markPackageUpdating(item.packageName, true, item.packageFilePath || undefined);
-
   try {
     const cwd = getPackageCwd(item);
+    provider.markPackageUpdating(item.packageName, true, item.packageFilePath);
     const client = await clientManager.getClient(cwd);
     const command = client.buildRemoveCommand([item.packageName]);
     logger.info(`Running remove command: ${command}`);
@@ -36,11 +35,13 @@ export async function removePackageCommand(item: PackageItem, provider: Packages
         void provider.loadPackages();
         return;
       }
-      provider.markPackageUpdating(item.packageName, false, item.packageFilePath || undefined);
+      provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
     });
   }
   catch (err) {
-    provider.markPackageUpdating(item.packageName, false, item.packageFilePath || undefined);
+    if (item.packageFilePath !== '') {
+      provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+    }
     showError(`failed to remove package — ${err instanceof Error ? err.message : String(err)}`, err);
   }
 }

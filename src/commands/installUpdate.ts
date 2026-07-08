@@ -18,11 +18,11 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
       logger.info(`Preparing update for ${item.packageName} to ${latest}.`);
       const packageFilePath = getPackageFilePath(item);
       if (isDeferredInstallEnabled()) {
-        markUpdating(provider, item.packageName, true, item.packageFilePath || undefined);
+        provider.markPackageUpdating(item.packageName, true, packageFilePath);
         await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(packageFilePath, [
           { name: item.packageName, version: latest, section: getPackageSection(item) },
         ]));
-        markUpdated(provider, item.packageName, latest, item.packageFilePath || undefined);
+        provider.markPackageUpdated(item.packageName, latest, packageFilePath);
         return;
       }
 
@@ -37,7 +37,9 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
       );
     }
     catch (err) {
-      markUpdating(provider, item.packageName, false, item.packageFilePath || undefined);
+      if (item.packageFilePath !== '') {
+        provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+      }
       showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   }
@@ -79,11 +81,10 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
 
   try {
     if (isDeferredInstallEnabled()) {
-      updates.forEach(update => markUpdating(
-        provider,
+      updates.forEach(update => provider.markPackageUpdating(
         update.item.packageName,
         true,
-        update.item.packageFilePath || undefined,
+        getPackageFilePath(update.item),
       ));
       await provider.withWriteSuppressed(async () => {
         for (const group of groupDeferredUpdatesByPackageFile(updates)) {
@@ -97,11 +98,10 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
           );
         }
       });
-      updates.forEach(update => markUpdated(
-        provider,
+      updates.forEach(update => provider.markPackageUpdated(
         update.item.packageName,
         update.version,
-        update.item.packageFilePath || undefined,
+        getPackageFilePath(update.item),
       ));
       return;
     }
@@ -120,7 +120,9 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
     }
   }
   catch (err) {
-    updates.forEach(update => markUpdating(provider, update.item.packageName, false, update.item.packageFilePath || undefined));
+    updates
+      .filter(update => update.item.packageFilePath !== '')
+      .forEach(update => provider.markPackageUpdating(update.item.packageName, false, update.item.packageFilePath));
     showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
   }
 }
@@ -144,7 +146,11 @@ async function runPackageUpdateTask(
   provider: PackagesProvider,
   cwd?: string,
 ): Promise<void> {
-  updates.forEach(update => markUpdating(provider, update.item.packageName, true, update.item.packageFilePath || undefined));
+  updates.forEach(update => provider.markPackageUpdating(
+    update.item.packageName,
+    true,
+    getPackageFilePath(update.item),
+  ));
   logger.info(`Running update command: ${command}`);
   const execution = await executeShellTask(command, taskName, cwd);
   let listener: vscode.Disposable | undefined;
@@ -156,15 +162,18 @@ async function runPackageUpdateTask(
     listener?.dispose();
     if (e.exitCode === 0) {
       provider.invalidateUpdateCache();
-      updates.forEach(update => markUpdated(
-        provider,
+      updates.forEach(update => provider.markPackageUpdated(
         update.item.packageName,
         update.version,
-        update.item.packageFilePath || undefined,
+        getPackageFilePath(update.item),
       ));
       return;
     }
-    updates.forEach(update => markUpdating(provider, update.item.packageName, false, update.item.packageFilePath || undefined));
+    updates.forEach(update => provider.markPackageUpdating(
+      update.item.packageName,
+      false,
+      getPackageFilePath(update.item),
+    ));
   });
 }
 
@@ -189,32 +198,6 @@ function getPackageFilePath(item: PackageItem): string {
     throw new Error('No workspace package.json found.');
   }
   return item.packageFilePath;
-}
-
-function markUpdated(
-  provider: PackagesProvider,
-  packageName: string,
-  version: string,
-  packageFilePath: string | undefined,
-): void {
-  if (packageFilePath === undefined) {
-    provider.markPackageUpdated(packageName, version);
-    return;
-  }
-  provider.markPackageUpdated(packageName, version, packageFilePath);
-}
-
-function markUpdating(
-  provider: PackagesProvider,
-  packageName: string,
-  installing: boolean,
-  packageFilePath: string | undefined,
-): void {
-  if (packageFilePath === undefined) {
-    provider.markPackageUpdating(packageName, installing);
-    return;
-  }
-  provider.markPackageUpdating(packageName, installing, packageFilePath);
 }
 
 function groupDeferredUpdatesByPackageFile(

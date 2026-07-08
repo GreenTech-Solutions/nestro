@@ -125,7 +125,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
   }
 
-  markPackageUpdated(packageName: string, newVersion: string, packageFilePath?: string): void {
+  markPackageUpdated(packageName: string, newVersion: string, packageFilePath: string): void {
     const index = this.findEntryIndex(packageName, packageFilePath);
     if (index === -1) {
       return;
@@ -174,7 +174,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     logger.info('Update cache invalidated.');
   }
 
-  markPackageUpdating(packageName: string, installing: boolean, packageFilePath?: string): void {
+  markPackageUpdating(packageName: string, installing: boolean, packageFilePath: string): void {
     const index = this.findEntryIndex(packageName, packageFilePath);
     if (index === -1) {
       return;
@@ -518,10 +518,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return [...packageFiles].sort((a, b) => a.localeCompare(b)).join('\0');
   }
 
-  private findEntryIndex(packageName: string, packageFilePath: string | undefined): number {
+  private findEntryIndex(packageName: string, packageFilePath: string): number {
     return this.allEntries.findIndex(e => (
       e.item.packageName === packageName
-      && (packageFilePath === undefined || e.packageFilePath === packageFilePath)
+      && e.packageFilePath === packageFilePath
     ));
   }
 
