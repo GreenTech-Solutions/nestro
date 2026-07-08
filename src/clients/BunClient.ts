@@ -2,16 +2,19 @@ import { AuditSeverity, runPackageAudit } from '../utils/auditClient';
 import { Client, PackageTarget } from './Client';
 
 export class BunClient extends Client {
-  buildUpdateCommand(packages: readonly PackageTarget[]): string {
-    return `bun add ${this.formatPackageTargets(packages)}${this.getSectionFlag(packages, '--dev')}`;
+  buildUpdateCommand(packages: readonly PackageTarget[]) {
+    return {
+      command: 'bun',
+      args: ['add', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--dev')],
+    };
   }
 
-  buildInstallCommand(): string {
-    return 'bun install';
+  buildInstallCommand() {
+    return { command: 'bun', args: ['install'] };
   }
 
-  buildRemoveCommand(packages: readonly string[]): string {
-    return `bun remove ${packages.join(' ')}`;
+  buildRemoveCommand(packages: readonly string[]) {
+    return { command: 'bun', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
   async runAudit(): Promise<Map<string, AuditSeverity>> {

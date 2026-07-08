@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 
+export interface ShellTaskCommand {
+  command: string | vscode.ShellQuotedString;
+  args: (string | vscode.ShellQuotedString)[];
+}
+
 export async function runShellTaskAndWait(
-  command: string,
+  shellCommand: ShellTaskCommand,
   taskName: string,
   cwd?: string,
 ): Promise<number | undefined> {
@@ -10,7 +15,11 @@ export async function runShellTaskAndWait(
     vscode.TaskScope.Workspace,
     taskName,
     'Nestro',
-    new vscode.ShellExecution(command, cwd === undefined ? undefined : { cwd }),
+    new vscode.ShellExecution(
+      shellCommand.command,
+      shellCommand.args,
+      cwd === undefined ? undefined : { cwd },
+    ),
   );
   task.presentationOptions = {
     reveal: vscode.TaskRevealKind.Always,
@@ -45,4 +54,10 @@ export async function runShellTaskAndWait(
       finish(undefined);
     });
   });
+}
+
+export function formatShellTaskCommandForLog(shellCommand: ShellTaskCommand): string {
+  return [shellCommand.command, ...shellCommand.args]
+    .map(part => typeof part === 'string' ? part : part.value)
+    .join(' ');
 }

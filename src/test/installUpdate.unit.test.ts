@@ -42,6 +42,31 @@ describe('installUpdateCommand()', () => {
     });
   });
 
+  it('passes package targets as strongly quoted shell args', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+    vi.mocked(vscode.workspace.findFiles)
+      .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
+      .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
+
+    await installUpdateCommand(
+      new PackageItem('evil; touch /tmp/pwned', '^1.0.0', '1.0.1', 'patch', false, undefined, '/workspace/package.json', false, '^'),
+      provider,
+    );
+
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    const shellExecution = task.execution as vscode.ShellExecution;
+    expect(shellExecution.command).toBe('pnpm');
+    expect(shellExecution.args).toEqual([
+      'add',
+      { value: 'evil; touch /tmp/pwned@1.0.1', quoting: vscode.ShellQuoting.Strong },
+    ]);
+  });
+
   it('marks the package updated after the task exits successfully', async () => {
     const provider = {
       invalidateUpdateCache: vi.fn(),

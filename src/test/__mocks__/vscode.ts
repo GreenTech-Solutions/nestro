@@ -131,11 +131,36 @@ export class ThemeColor {
   constructor(public readonly id: string) {}
 }
 
+export const ShellQuoting = {
+  Escape: 1,
+  Strong: 2,
+  Weak: 3,
+} as const;
+
 export class ShellExecution {
+  public readonly commandLine: string;
+  public readonly command?: string | { value: string; quoting: number };
+  public readonly args?: (string | { value: string; quoting: number })[];
+  public readonly options?: unknown;
+
   constructor(
-    public readonly commandLine: string,
-    public readonly options?: unknown,
-  ) {}
+    commandOrLine: string | { value: string; quoting: number },
+    argsOrOptions?: (string | { value: string; quoting: number })[] | unknown,
+    maybeOptions?: unknown,
+  ) {
+    if (Array.isArray(argsOrOptions)) {
+      this.command = commandOrLine;
+      this.args = argsOrOptions;
+      this.options = maybeOptions;
+      this.commandLine = [commandOrLine, ...argsOrOptions]
+        .map(part => typeof part === 'string' ? part : part.value)
+        .join(' ');
+      return;
+    }
+
+    this.commandLine = String(commandOrLine);
+    this.options = argsOrOptions;
+  }
 }
 
 export class Task {

@@ -5,8 +5,10 @@ import {
   getPackageDirectory,
   getWorkspacePackageFilePaths,
   logger,
+  formatShellTaskCommandForLog,
   runShellTaskAndWait,
   showError,
+  ShellTaskCommand,
   updateDependencyVersionsInFile,
 } from '../utils';
 
@@ -51,7 +53,7 @@ export async function runInstallCommand(): Promise<void> {
     const packageFilePath = await resolveInstallPackageFilePath();
     const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
     const command = client.buildInstallCommand();
-    logger.info(`Running install command: ${command}`);
+    logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
     await runShellTaskAndWait(command, 'Install Dependencies', getPackageDirectory(packageFilePath));
   }
   catch (err) {
@@ -142,7 +144,7 @@ function isBulkUpdateConfirmationEnabled(): boolean {
 
 async function runPackageUpdateTask(
   updates: readonly { item: PackageItem; version: string }[],
-  command: string,
+  command: ShellTaskCommand,
   taskName: string,
   provider: PackagesProvider,
   cwd?: string,
@@ -152,7 +154,7 @@ async function runPackageUpdateTask(
     true,
     getPackageFilePath(update.item),
   ));
-  logger.info(`Running update command: ${command}`);
+  logger.info(`Running update command: ${formatShellTaskCommandForLog(command)}`);
   const exitCode = await runShellTaskAndWait(command, taskName, cwd);
   if (exitCode === 0) {
     provider.invalidateUpdateCache();
