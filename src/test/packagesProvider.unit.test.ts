@@ -431,6 +431,63 @@ describe('PackagesProvider', () => {
       ['/workspace/packages/ui/package.json', undefined],
     ]);
   });
+
+  it('ignores concurrent audits while allowing a later manual audit', async () => {
+    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    const runAuditMock = vi.fn()
+      .mockReturnValueOnce(new Promise<Map<string, 'high'>>(resolve => {
+        resolveAudit = resolve;
+      }))
+      .mockResolvedValueOnce(new Map([['react', 'moderate']]));
+    getClientMock.mockResolvedValue({
+      runAudit: runAuditMock,
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    const firstAudit = provider.runAudit();
+    const secondAudit = provider.runAudit();
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getClientMock).toHaveBeenCalledTimes(1);
+    expect(runAuditMock).toHaveBeenCalledTimes(1);
+
+    resolveAudit(new Map([['react', 'high']]));
+    await Promise.all([firstAudit, secondAudit]);
+
+    await provider.runAudit();
+
+    const packages = provider.getChildren()
+      .filter((item): item is GroupItem => item instanceof GroupItem)
+      .flatMap(group => group.children)
+      .filter((item): item is PackageItem => item instanceof PackageItem);
+    const react = packages.find(item => item.packageName === 'react');
+
+    expect(getClientMock).toHaveBeenCalledTimes(2);
+    expect(runAuditMock).toHaveBeenCalledTimes(2);
+    expect(react?.vulnerabilitySeverity).toBe('moderate');
+  });
+
+  it('allows a later manual audit when package file discovery fails', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([]);
+    vi.mocked(getWorkspacePackageFilePaths)
+      .mockRejectedValueOnce(new Error('workspace scan failed'))
+      .mockResolvedValueOnce(['/workspace/package.json']);
+    const runAuditMock = vi.fn().mockResolvedValue(new Map([['react', 'high']]));
+    getClientMock.mockResolvedValue({
+      runAudit: runAuditMock,
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+    await provider.runAudit();
+
+    expect(getClientMock).toHaveBeenCalledTimes(1);
+    expect(runAuditMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 function mockNestroConfiguration(values: Record<string, unknown>): void {

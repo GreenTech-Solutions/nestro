@@ -350,14 +350,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async runAudit(): Promise<void> {
-    const packageFilePaths = await this.getKnownPackageFilePaths();
-    if (packageFilePaths.length === 0) {
+    if (this.auditState === 'running') {
       return;
     }
 
     this.auditState = 'running';
     this.emitTreeChanged();
+
     try {
+      const packageFilePaths = await this.getKnownPackageFilePaths();
+      if (packageFilePaths.length === 0) {
+        this.auditState = 'idle';
+        return;
+      }
+
       const auditResults = new Map<string, AuditSeverity>();
       for (const packageFilePath of packageFilePaths) {
         const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
@@ -371,11 +377,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.lastAuditCount = this.auditResults.size;
       logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
       this.rebuildPackageItems();
-      this.emitTreeChanged();
     }
     catch (err) {
       this.auditState = 'idle';
       showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+    finally {
+      this.emitTreeChanged();
     }
   }
 
