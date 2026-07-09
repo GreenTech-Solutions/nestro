@@ -35,9 +35,7 @@ jobs:
       - name: 4. Check for errors
         run: |
           pnpm typecheck
-          if [ $? -ne 0 ]; then
-            exit 1
-          fi
+          pnpm check:vsce
 
       - name: 5. Build
         run: pnpm run build

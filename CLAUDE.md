@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
-**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn/bun packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode ^1.120.0`). Update detection uses `npm-check-updates` (dynamically imported in `src/utils/ncuClient.ts`).
+**Nestro** — VS Code extension (`src/extension.ts`) managing npm/pnpm/yarn/bun packages from the sidebar with update status and version switching. Built on the VS Code Extension API (`@types/vscode 1.125.0`). Update detection uses `npm-check-updates` (dynamically imported in `src/utils/ncuClient.ts`).
 
 ## Commands
 ```bash

@@ -28,7 +28,7 @@
     "theme": "dark"
   },
   "engines": {
-    "vscode": "^1.120.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Other",
@@ -339,6 +339,7 @@
     "dev": "tsdown --watch",
     "vscode:prepublish": "pnpm run build",
     "pretest": "tsc -p tsconfig.test.json && pnpm run lint",
+    "check:vsce": "vsce ls --no-dependencies",
     "typecheck": "tsc --noEmit",
     "lint:eslint": "eslint --fix --cache src",
     "lint": "pnpm run lint:eslint",

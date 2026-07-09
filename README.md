@@ -64,7 +64,7 @@ Automatically discovers multiple `package.json` files across your workspace, org
 
 ## Requirements
 
-- VS Code `^1.120.0` or higher.
+- VS Code `^1.125.0` or higher.
 - `npm`, `pnpm`, `yarn`, or `bun` installed on your system.
 
 ## Limitations
