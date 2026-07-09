@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, updateAllVisibleCommand } from '../commands';
 import { PackageItem } from '../providers/PackageItem';
-import { PackagesProvider } from '../providers';
+import { FilterManager, GroupItem, PackagesProvider } from '../providers';
 
 let taskProcessEndListener: ((event: vscode.TaskProcessEndEvent) => unknown) | undefined;
 let taskEndListener: ((event: vscode.TaskEndEvent) => unknown) | undefined;
@@ -77,7 +77,11 @@ describe('installUpdateCommand()', () => {
     } as unknown as PackagesProvider;
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '5.9.3');
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
   });
 
@@ -92,8 +96,16 @@ describe('installUpdateCommand()', () => {
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(provider.markPackageUpdating).toHaveBeenCalledWith('typescript', true, '/workspace/package.json');
-    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
   });
 
   it('shows an error when an update task exits with a non-zero code', async () => {
@@ -110,7 +122,11 @@ describe('installUpdateCommand()', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: task "Update typescript" failed with exit code 1.',
     );
-    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
   });
 
   it('shows an error when an update task ends without an exit code', async () => {
@@ -127,7 +143,11 @@ describe('installUpdateCommand()', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: task "Update typescript" ended without an exit code.',
     );
-    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('typescript', false, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
   });
 
   it('updates package.json without running a task when deferred install is enabled', async () => {
@@ -153,7 +173,11 @@ describe('installUpdateCommand()', () => {
     expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(1);
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({ dependencies: { typescript: '^5.9.3' } });
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '5.9.3');
   });
 
   it('updates the clicked devDependencies row when deferred install is enabled', async () => {
@@ -180,7 +204,55 @@ describe('installUpdateCommand()', () => {
       dependencies: { typescript: '^4.0.0' },
       devDependencies: { typescript: '~5.9.3' },
     });
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, '5.9.3');
+  });
+
+  it('keeps duplicate dependency rows independent during a deferred update', async () => {
+    mockDeferredInstall(true);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { typescript: '^4.0.0' },
+      devDependencies: { typescript: '~5.0.0' },
+    }, undefined, 2)));
+    const dependency = new PackageItem(
+      'typescript',
+      '^4.0.0',
+      '4.9.5',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+    const devDependency = new PackageItem(
+      'typescript',
+      '~5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      true,
+      '~',
+    );
+    const provider = makeRealProvider([dependency, devDependency]);
+
+    await installUpdateCommand(devDependency, provider);
+
+    expect(getRealProviderPackages(provider).map(item => ({
+      currentVersion: item.currentVersion,
+      dev: item.dev,
+      installing: item.installing,
+      updateType: item.updateType,
+    }))).toEqual([
+      { currentVersion: '^4.0.0', dev: false, installing: false, updateType: 'minor' },
+      { currentVersion: '~5.9.3', dev: true, installing: false, updateType: 'none' },
+    ]);
+    provider.dispose();
   });
 
   it('preserves devDependencies when updating through the package manager', async () => {
@@ -331,8 +403,41 @@ describe('updateAllVisibleCommand()', () => {
       dependencies: { react: '^19.0.0' },
       devDependencies: { typescript: '^5.9.3' },
     });
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('react', '19.0.0', '/workspace/package.json');
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('typescript', '5.9.3', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '19.0.0');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, '5.9.3');
+  });
+
+  it('updates duplicate dependency rows independently in a deferred bulk update', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^18.0.0' },
+      devDependencies: { react: '~18.1.0' },
+    }, undefined, 2)));
+    const provider = makeRealProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('react', '~18.1.0', '18.3.1', 'minor', false, undefined, '/workspace/package.json', true, '~'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(getRealProviderPackages(provider).map(item => ({
+      currentVersion: item.currentVersion,
+      dev: item.dev,
+      installing: item.installing,
+      updateType: item.updateType,
+    }))).toEqual([
+      { currentVersion: '^19.0.0', dev: false, installing: false, updateType: 'none' },
+      { currentVersion: '~18.3.1', dev: true, installing: false, updateType: 'none' },
+    ]);
+    provider.dispose();
   });
 
   it('does nothing when there are no visible outdated packages', async () => {
@@ -432,8 +537,16 @@ describe('updateAllVisibleCommand()', () => {
     taskProcessEndListener?.({ execution: secondExecution, exitCode: 0 } as vscode.TaskProcessEndEvent);
     await result;
 
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('react', '19.0.0', '/workspace/package.json');
-    expect(provider.markPackageUpdated).toHaveBeenCalledWith('vitest', '4.1.0', '/workspace/package.json');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '19.0.0');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'vitest',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, '4.1.0');
   });
 });
 
@@ -493,4 +606,24 @@ function makeProvider(packages: PackageItem[]): PackagesProvider {
     markPackageUpdating: vi.fn(),
     withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
   } as unknown as PackagesProvider;
+}
+
+function makeRealProvider(packages: PackageItem[]): PackagesProvider {
+  const provider = new PackagesProvider(new FilterManager('all'));
+  Object.assign(provider as unknown as Record<string, unknown>, {
+    allEntries: packages.map(item => ({
+      item,
+      dev: item.dev,
+      packageFilePath: item.packageFilePath,
+    })),
+    loading: false,
+  });
+  return provider;
+}
+
+function getRealProviderPackages(provider: PackagesProvider): PackageItem[] {
+  return provider.getChildren()
+    .filter((item): item is GroupItem => item instanceof GroupItem)
+    .flatMap(group => group.children)
+    .filter((item): item is PackageItem => item instanceof PackageItem);
 }

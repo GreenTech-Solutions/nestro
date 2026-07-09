@@ -190,7 +190,11 @@ describe('PackagesProvider', () => {
 
     await provider.loadPackages();
     const updateCheck = provider.checkUpdates();
-    provider.markPackageUpdating('react', true, '/workspace/package.json');
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
     resolveFetch(new Map([['react', '19.0.0']]));
     await updateCheck;
 
@@ -382,7 +386,11 @@ describe('PackagesProvider', () => {
       }],
     });
 
-    provider.markPackageUpdated('react', '19.0.0', '/workspace/package.json');
+    provider.markPackageUpdated({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '19.0.0');
 
     const entry = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries[0];
     expect(entry.item.currentVersion).toBe('^19.0.0');
@@ -427,10 +435,26 @@ describe('PackagesProvider', () => {
       ],
     });
 
-    provider.markPackageUpdated('react', '18.3.1', '/workspace/packages/ui/package.json');
-    provider.markPackageUpdating('react', true, '/workspace/packages/ui/package.json');
-    provider.markPackageUpdated('react', '20.0.0', '');
-    provider.markPackageUpdating('react', false, '');
+    provider.markPackageUpdated({
+      packageName: 'react',
+      packageFilePath: '/workspace/packages/ui/package.json',
+      section: 'dependencies',
+    }, '18.3.1');
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/packages/ui/package.json',
+      section: 'dependencies',
+    }, true);
+    provider.markPackageUpdated({
+      packageName: 'react',
+      packageFilePath: '',
+      section: 'dependencies',
+    }, '20.0.0');
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '',
+      section: 'dependencies',
+    }, false);
 
     const entries = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries;
 
@@ -452,6 +476,71 @@ describe('PackagesProvider', () => {
         packageFilePath: '/workspace/packages/ui/package.json',
         updateType: 'none',
       },
+    ]);
+  });
+
+  it('targets package state mutations by dependency section', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      {
+        name: 'react',
+        current: '^18.0.0',
+        dev: false,
+        versionPrefix: '^',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'react',
+        current: '~18.1.0',
+        dev: true,
+        versionPrefix: '~',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, true);
+
+    let packages = getPackageItems(provider);
+    expect(packages.map(item => ({
+      currentVersion: item.currentVersion,
+      dev: item.dev,
+      installing: item.installing,
+    }))).toEqual([
+      { currentVersion: '^18.0.0', dev: false, installing: false },
+      { currentVersion: '~18.1.0', dev: true, installing: true },
+    ]);
+
+    await provider.loadPackages();
+    packages = getPackageItems(provider);
+    expect(packages.map(item => ({
+      dev: item.dev,
+      installing: item.installing,
+    }))).toEqual([
+      { dev: false, installing: false },
+      { dev: true, installing: true },
+    ]);
+
+    provider.markPackageUpdated({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, '19.0.0');
+
+    packages = getPackageItems(provider);
+    expect(packages.map(item => ({
+      currentVersion: item.currentVersion,
+      dev: item.dev,
+      installing: item.installing,
+      updateType: item.updateType,
+    }))).toEqual([
+      { currentVersion: '^18.0.0', dev: false, installing: false, updateType: 'breaking' },
+      { currentVersion: '~19.0.0', dev: true, installing: false, updateType: 'none' },
     ]);
   });
 
@@ -561,6 +650,13 @@ function mockNestroConfiguration(values: Record<string, unknown>): void {
       Object.hasOwn(values, key) ? values[key] : defaultValue
     )),
   } as unknown as vscode.WorkspaceConfiguration);
+}
+
+function getPackageItems(provider: PackagesProvider): PackageItem[] {
+  return provider.getChildren()
+    .filter((item): item is GroupItem => item instanceof GroupItem)
+    .flatMap(group => group.children)
+    .filter((item): item is PackageItem => item instanceof PackageItem);
 }
 
 function setProviderState(

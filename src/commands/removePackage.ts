@@ -24,7 +24,11 @@ export async function removePackageCommand(item: PackageItem, provider: Packages
 
   try {
     const cwd = getPackageCwd(item);
-    provider.markPackageUpdating(item.packageName, true, item.packageFilePath);
+    provider.markPackageUpdating({
+      packageName: item.packageName,
+      packageFilePath: item.packageFilePath,
+      section: item.dev ? 'devDependencies' : 'dependencies',
+    }, true);
     const client = await clientManager.getClient(cwd);
     const command = client.buildRemoveCommand([item.packageName]);
     logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
@@ -35,13 +39,21 @@ export async function removePackageCommand(item: PackageItem, provider: Packages
       await provider.loadPackages();
       return;
     }
-    provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+    provider.markPackageUpdating({
+      packageName: item.packageName,
+      packageFilePath: item.packageFilePath,
+      section: item.dev ? 'devDependencies' : 'dependencies',
+    }, false);
     showError(formatShellTaskFailureMessage(taskName, exitCode));
     await provider.loadPackages();
   }
   catch (err) {
     if (item.packageFilePath !== '') {
-      provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+      provider.markPackageUpdating({
+        packageName: item.packageName,
+        packageFilePath: item.packageFilePath,
+        section: item.dev ? 'devDependencies' : 'dependencies',
+      }, false);
     }
     showError(`failed to remove package — ${err instanceof Error ? err.message : String(err)}`, err);
   }

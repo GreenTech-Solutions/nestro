@@ -150,7 +150,11 @@ describe('removePackageCommand()', () => {
     const task = executeTaskMock.mock.calls[0][0];
     expect(task.definition).toEqual({ type: 'shell' });
     expect(task.name).toBe('Remove react');
-    expect(provider.markPackageUpdating).toHaveBeenCalledWith('react', true, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -177,7 +181,11 @@ describe('removePackageCommand()', () => {
 
     expect(showError).toHaveBeenCalledWith('task "Remove react" failed with exit code 1.');
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
-    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('react', false, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
@@ -192,7 +200,11 @@ describe('removePackageCommand()', () => {
 
     expect(showError).toHaveBeenCalledWith('task "Remove react" ended without an exit code.');
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
-    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith('react', false, '/workspace/package.json');
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 });

@@ -21,6 +21,12 @@ import { FilterManager, FilterType } from './FilterManager';
 import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 
+export interface PackageStateIdentity {
+  packageName: string;
+  packageFilePath: string;
+  section: 'dependencies' | 'devDependencies';
+}
+
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -125,8 +131,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
   }
 
-  markPackageUpdated(packageName: string, newVersion: string, packageFilePath: string): void {
-    const index = this.findEntryIndex(packageName, packageFilePath);
+  markPackageUpdated(identity: PackageStateIdentity, newVersion: string): void {
+    const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
@@ -134,7 +140,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const { dev, packageFilePath: entryPackageFilePath, item } = this.allEntries[index];
     this.allEntries[index] = {
       item: this.createPackageItem(
-        packageName,
+        identity.packageName,
         item.versionPrefix + newVersion,
         undefined,
         'none',
@@ -174,8 +180,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     logger.info('Update cache invalidated.');
   }
 
-  markPackageUpdating(packageName: string, installing: boolean, packageFilePath: string): void {
-    const index = this.findEntryIndex(packageName, packageFilePath);
+  markPackageUpdating(identity: PackageStateIdentity, installing: boolean): void {
+    const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
@@ -287,9 +293,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
       }
       logger.info('Checking package updates.');
-      this.invalidateUpdateCache();
       logger.info(`Checking updates for ${source.length} package(s).`);
-      const upgrades = this.isCacheValid(target, includePreReleases, packageFilesKey)
+      const upgrades = !forceAlways && cacheValid
         ? this.updateCache?.data ?? new Map<string, string>()
         : await this.fetchAndCacheUpdates(target, includePreReleases, packageFiles, packageFilesKey);
       const liveEntries = this.allEntries.length > 0
@@ -518,11 +523,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return [...packageFiles].sort((a, b) => a.localeCompare(b)).join('\0');
   }
 
-  private findEntryIndex(packageName: string, packageFilePath: string): number {
-    return this.allEntries.findIndex(e => (
-      e.item.packageName === packageName
-      && e.packageFilePath === packageFilePath
-    ));
+  private packageStateKey(identity: PackageStateIdentity): string {
+    return `${identity.packageFilePath}\0${identity.packageName}\0${identity.section}`;
+  }
+
+  private findEntryIndex(identity: PackageStateIdentity): number {
+    const key = this.packageStateKey(identity);
+    return this.allEntries.findIndex(e => this.packageStateKey({
+      packageName: e.item.packageName,
+      packageFilePath: e.packageFilePath,
+      section: e.dev ? 'devDependencies' : 'dependencies',
+    }) === key);
   }
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {

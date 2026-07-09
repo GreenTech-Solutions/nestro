@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
-import { PackageItem, PackagesProvider, toRelativeLabel } from '../providers';
+import { PackageItem, PackagesProvider, PackageStateIdentity, toRelativeLabel } from '../providers';
 import {
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -24,11 +24,11 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
       logger.info(`Preparing update for ${item.packageName} to ${latest}.`);
       const packageFilePath = getPackageFilePath(item);
       if (isDeferredInstallEnabled()) {
-        provider.markPackageUpdating(item.packageName, true, packageFilePath);
+        provider.markPackageUpdating(getPackageIdentity(item), true);
         await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(packageFilePath, [
           { name: item.packageName, version: latest, section: getPackageSection(item) },
         ]));
-        provider.markPackageUpdated(item.packageName, latest, packageFilePath);
+        provider.markPackageUpdated(getPackageIdentity(item), latest);
         return;
       }
 
@@ -44,7 +44,7 @@ export async function installUpdateCommand(item: PackageItem, provider: Packages
     }
     catch (err) {
       if (item.packageFilePath !== '') {
-        provider.markPackageUpdating(item.packageName, false, item.packageFilePath);
+        provider.markPackageUpdating(getPackageIdentity(item), false);
       }
       showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
@@ -92,9 +92,8 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
   try {
     if (isDeferredInstallEnabled()) {
       updates.forEach(update => provider.markPackageUpdating(
-        update.item.packageName,
+        getPackageIdentity(update.item),
         true,
-        getPackageFilePath(update.item),
       ));
       await provider.withWriteSuppressed(async () => {
         for (const group of groupDeferredUpdatesByPackageFile(updates)) {
@@ -109,9 +108,8 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         }
       });
       updates.forEach(update => provider.markPackageUpdated(
-        update.item.packageName,
+        getPackageIdentity(update.item),
         update.version,
-        getPackageFilePath(update.item),
       ));
       return;
     }
@@ -132,7 +130,7 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
   catch (err) {
     updates
       .filter(update => update.item.packageFilePath !== '')
-      .forEach(update => provider.markPackageUpdating(update.item.packageName, false, update.item.packageFilePath));
+      .forEach(update => provider.markPackageUpdating(getPackageIdentity(update.item), false));
     showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
   }
 }
@@ -157,25 +155,22 @@ async function runPackageUpdateTask(
   cwd?: string,
 ): Promise<void> {
   updates.forEach(update => provider.markPackageUpdating(
-    update.item.packageName,
+    getPackageIdentity(update.item),
     true,
-    getPackageFilePath(update.item),
   ));
   logger.info(`Running update command: ${formatShellTaskCommandForLog(command)}`);
   const exitCode = await runShellTaskAndWait(command, taskName, cwd);
   if (exitCode === 0) {
     provider.invalidateUpdateCache();
     updates.forEach(update => provider.markPackageUpdated(
-      update.item.packageName,
+      getPackageIdentity(update.item),
       update.version,
-      getPackageFilePath(update.item),
     ));
     return;
   }
   updates.forEach(update => provider.markPackageUpdating(
-    update.item.packageName,
+    getPackageIdentity(update.item),
     false,
-    getPackageFilePath(update.item),
   ));
   showError(formatShellTaskFailureMessage(taskName, exitCode));
 }
@@ -219,6 +214,14 @@ function groupUpdatesByPackageFile(
 
 function getPackageSection(item: PackageItem): 'dependencies' | 'devDependencies' {
   return item.dev ? 'devDependencies' : 'dependencies';
+}
+
+function getPackageIdentity(item: PackageItem): PackageStateIdentity {
+  return {
+    packageName: item.packageName,
+    packageFilePath: getPackageFilePath(item),
+    section: getPackageSection(item),
+  };
 }
 
 async function resolveInstallPackageFilePath(): Promise<string> {
