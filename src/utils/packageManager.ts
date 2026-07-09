@@ -1,4 +1,5 @@
 import { ClientManager, PackageManager } from '../clients';
+import { formatShellTaskCommandForLog } from './shellTask';
 
 const clientManager = new ClientManager();
 
@@ -20,15 +21,17 @@ export function buildPackageUpdateCommand(
   packageManager: PackageManager,
   updates: readonly { packageName: string; version: string; section: 'dependencies' | 'devDependencies' }[],
 ): string {
-  return clientManager
+  const command = clientManager
     .createClient(packageManager, '')
     .buildUpdateCommand(updates.map(update => ({
       name: update.packageName,
       version: update.version,
       section: update.section,
     })));
+
+  return formatShellTaskCommandForLog(command);
 }
 
 export function buildRunInstallCommand(packageManager: PackageManager): string {
-  return clientManager.createClient(packageManager, '').buildInstallCommand();
+  return formatShellTaskCommandForLog(clientManager.createClient(packageManager, '').buildInstallCommand());
 }

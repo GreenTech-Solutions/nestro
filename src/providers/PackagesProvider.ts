@@ -21,6 +21,12 @@ import { FilterManager, FilterType } from './FilterManager';
 import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 
+export interface PackageStateIdentity {
+  packageName: string;
+  packageFilePath: string;
+  section: 'dependencies' | 'devDependencies';
+}
+
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -30,7 +36,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly filterChangeDisposable: vscode.Disposable;
   private allEntries: PackageTreeEntry[] = [];
   private loading = true;
-  private isWriting = false;
+  private writeSuppressionDepth = 0;
+  private readonly writeSuppressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
   private checkState: 'idle' | 'running' | 'done' = 'idle';
@@ -96,20 +103,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   get suppressingWrites(): boolean {
-    return this.isWriting;
+    return this.writeSuppressionDepth > 0;
   }
 
   async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
-    this.isWriting = true;
+    this.writeSuppressionDepth += 1;
     try {
       const result = await fn();
       this.invalidateUpdateCache();
       return result;
     }
     finally {
-      setTimeout(() => {
-        this.isWriting = false;
+      const timer = setTimeout(() => {
+        this.writeSuppressionTimers.delete(timer);
+        this.writeSuppressionDepth = Math.max(0, this.writeSuppressionDepth - 1);
       }, 600);
+      this.writeSuppressionTimers.add(timer);
     }
   }
 
@@ -122,8 +131,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
   }
 
-  markPackageUpdated(packageName: string, newVersion: string, packageFilePath?: string): void {
-    const index = this.findEntryIndex(packageName, packageFilePath);
+  markPackageUpdated(identity: PackageStateIdentity, newVersion: string): void {
+    const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
@@ -131,7 +140,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const { dev, packageFilePath: entryPackageFilePath, item } = this.allEntries[index];
     this.allEntries[index] = {
       item: this.createPackageItem(
-        packageName,
+        identity.packageName,
         item.versionPrefix + newVersion,
         undefined,
         'none',
@@ -167,11 +176,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   invalidateUpdateCache(): void {
     this.updateCache = undefined;
+    this.lastCheckTime = undefined;
     logger.info('Update cache invalidated.');
   }
 
-  markPackageUpdating(packageName: string, installing: boolean, packageFilePath?: string): void {
-    const index = this.findEntryIndex(packageName, packageFilePath);
+  markPackageUpdating(identity: PackageStateIdentity, installing: boolean): void {
+    const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
@@ -211,9 +221,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     try {
       const entries = await readAllWorkspaceDependencies();
       logger.info(`Loaded ${entries.length} workspace package(s).`);
-      const existingMap = new Map(this.allEntries.map(e => [this.entryKey(e.item.packageName, e.packageFilePath), e]));
+      const existingMap = new Map(this.allEntries.map(e => [
+        this.packageStateKey({
+          packageName: e.item.packageName,
+          packageFilePath: e.packageFilePath,
+          section: e.dev ? 'devDependencies' : 'dependencies',
+        }),
+        e,
+      ]));
       this.allEntries = entries.map((e) => {
-        const existing = existingMap.get(this.entryKey(e.name, e.packageFilePath));
+        const existing = existingMap.get(this.packageStateKey({
+          packageName: e.name,
+          packageFilePath: e.packageFilePath,
+          section: e.dev ? 'devDependencies' : 'dependencies',
+        }));
         // Compare bare semver (strip prefix) so that a pin operation (^1.2.3 → 1.2.3)
         // preserves existing update data rather than resetting it to 'none'.
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
@@ -251,26 +272,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async checkUpdates(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('nestro');
-    const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-    if (!forceAlways && this.lastCheckTime !== undefined) {
-      const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
-      if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
-        logger.info('Check for updates skipped — debounce interval has not elapsed.');
-        return;
-      }
+    if (this.checkState === 'running') {
+      return;
     }
-    logger.info('Checking package updates.');
-    this.invalidateUpdateCache();
+
     this.checkState = 'running';
     this.emitTreeChanged();
     try {
-      const includePreReleases = vscode.workspace
-        .getConfiguration('nestro')
-        .get<boolean>('includePreReleases', true);
-      const target = vscode.workspace
-        .getConfiguration('nestro')
-        .get<NcuUpdateTarget>('updateTarget', 'latest');
+      const config = vscode.workspace.getConfiguration('nestro');
+      const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
+      const includePreReleases = config.get<boolean>('includePreReleases', true);
+      const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
       const source = this.allEntries.length > 0
         ? this.allEntries.map(e => ({
             name: e.item.packageName,
@@ -280,28 +292,54 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             packageFilePath: e.packageFilePath,
           }))
         : await readAllWorkspaceDependencies();
-      logger.info(`Checking updates for ${source.length} package(s).`);
       const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
       const packageFilesKey = this.packageFilesKey(packageFiles);
-      const upgrades = this.isCacheValid(target, includePreReleases, packageFilesKey)
+      const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
+      if (!forceAlways && cacheValid && this.lastCheckTime !== undefined) {
+        const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
+        if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
+          logger.info('Check for updates skipped — debounce interval has not elapsed.');
+          this.checkState = 'done';
+          return;
+        }
+      }
+      logger.info('Checking package updates.');
+      logger.info(`Checking updates for ${source.length} package(s).`);
+      const upgrades = !forceAlways && cacheValid
         ? this.updateCache?.data ?? new Map<string, string>()
         : await this.fetchAndCacheUpdates(target, includePreReleases, packageFiles, packageFilesKey);
-      this.allEntries = source.map((entry) => {
-        const latest = upgrades.get(this.entryKey(entry.name, entry.packageFilePath));
-        const updateType = latest === undefined ? 'none' : getUpdateType(entry.current, latest);
+      const liveEntries = this.allEntries.length > 0
+        ? this.allEntries
+        : source.map(entry => ({
+            item: this.createPackageItem(
+              entry.name,
+              entry.current,
+              undefined,
+              'none',
+              false,
+              entry.packageFilePath,
+              entry.dev,
+              entry.versionPrefix,
+            ),
+            dev: entry.dev,
+            packageFilePath: entry.packageFilePath,
+          }));
+      this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
+        const latest = upgrades.get(this.entryKey(item.packageName, packageFilePath));
+        const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
         return {
           item: this.createPackageItem(
-            entry.name,
-            entry.current,
+            item.packageName,
+            item.currentVersion,
             latest,
             updateType,
-            false,
-            entry.packageFilePath,
-            entry.dev,
-            entry.versionPrefix,
+            item.installing,
+            packageFilePath,
+            dev,
+            item.versionPrefix,
           ),
-          dev: entry.dev,
-          packageFilePath: entry.packageFilePath,
+          dev,
+          packageFilePath,
         };
       });
       logger.info(`Checked updates for ${source.length} package(s).`);
@@ -318,19 +356,30 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   dispose(): void {
+    for (const timer of this.writeSuppressionTimers) {
+      clearTimeout(timer);
+    }
+    this.writeSuppressionTimers.clear();
+    this.writeSuppressionDepth = 0;
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
   }
 
   async runAudit(): Promise<void> {
-    const packageFilePaths = await this.getKnownPackageFilePaths();
-    if (packageFilePaths.length === 0) {
+    if (this.auditState === 'running') {
       return;
     }
 
     this.auditState = 'running';
     this.emitTreeChanged();
+
     try {
+      const packageFilePaths = await this.getKnownPackageFilePaths();
+      if (packageFilePaths.length === 0) {
+        this.auditState = 'idle';
+        return;
+      }
+
       const auditResults = new Map<string, AuditSeverity>();
       for (const packageFilePath of packageFilePaths) {
         const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
@@ -344,11 +393,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.lastAuditCount = this.auditResults.size;
       logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
       this.rebuildPackageItems();
-      this.emitTreeChanged();
     }
     catch (err) {
       this.auditState = 'idle';
       showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+    finally {
+      this.emitTreeChanged();
     }
   }
 
@@ -483,11 +534,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return [...packageFiles].sort((a, b) => a.localeCompare(b)).join('\0');
   }
 
-  private findEntryIndex(packageName: string, packageFilePath: string | undefined): number {
-    return this.allEntries.findIndex(e => (
-      e.item.packageName === packageName
-      && (packageFilePath === undefined || e.packageFilePath === packageFilePath)
-    ));
+  private packageStateKey(identity: PackageStateIdentity): string {
+    return `${identity.packageFilePath}\0${identity.packageName}\0${identity.section}`;
+  }
+
+  private findEntryIndex(identity: PackageStateIdentity): number {
+    const key = this.packageStateKey(identity);
+    return this.allEntries.findIndex(e => this.packageStateKey({
+      packageName: e.item.packageName,
+      packageFilePath: e.packageFilePath,
+      section: e.dev ? 'devDependencies' : 'dependencies',
+    }) === key);
   }
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {

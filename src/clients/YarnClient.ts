@@ -7,16 +7,19 @@ import { Client, PackageTarget } from './Client';
 const execFileAsync = promisify(execFile);
 
 export class YarnClient extends Client {
-  buildUpdateCommand(packages: readonly PackageTarget[]): string {
-    return `yarn add ${this.formatPackageTargets(packages)}${this.getSectionFlag(packages, '--dev')}`;
+  buildUpdateCommand(packages: readonly PackageTarget[]) {
+    return {
+      command: 'yarn',
+      args: ['add', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--dev')],
+    };
   }
 
-  buildInstallCommand(): string {
-    return 'yarn install';
+  buildInstallCommand() {
+    return { command: 'yarn', args: ['install'] };
   }
 
-  buildRemoveCommand(packages: readonly string[]): string {
-    return `yarn remove ${packages.join(' ')}`;
+  buildRemoveCommand(packages: readonly string[]) {
+    return { command: 'yarn', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
   async runAudit(): Promise<Map<string, AuditSeverity>> {

@@ -51,14 +51,29 @@ describe('registerPackageJsonWatcher()', () => {
     expect(provider.invalidateUpdateCache).not.toHaveBeenCalled();
   });
 
-  it('refreshes immediately when package.json is deleted', () => {
+  it('refreshes packages 500ms after package.json is deleted', () => {
     const provider = makeProvider(false);
 
     registerPackageJsonWatcher(makeContext(), provider);
     getWatcherHandler('onDidDelete')();
+    vi.advanceTimersByTime(499);
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh after delete events while provider writes are suppressed', () => {
+    const provider = makeProvider(true);
+
+    registerPackageJsonWatcher(makeContext(), provider);
+    getWatcherHandler('onDidDelete')();
+    vi.advanceTimersByTime(500);
+
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(provider.invalidateUpdateCache).not.toHaveBeenCalled();
   });
 
   it('recreates watchers when refresh is called', () => {

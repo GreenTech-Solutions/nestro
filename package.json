@@ -194,6 +194,14 @@
         "icon": "$(copy)"
       },
       {
+        "command": "nestro.setFilter",
+        "title": "Set Filter"
+      },
+      {
+        "command": "nestro.showFilterPicker",
+        "title": "Select Filter"
+      },
+      {
         "command": "nestro.searchPackages",
         "title": "Search Packages",
         "icon": "$(search)"
@@ -215,6 +223,16 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "nestro.setFilter",
+          "when": "false"
+        },
+        {
+          "command": "nestro.showFilterPicker",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "nestro.refresh",

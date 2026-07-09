@@ -14,10 +14,28 @@ export async function pickVersionCommand(item: PackageItem, provider: PackagesPr
   quickPick.title = `Select version for ${item.packageName}`;
   quickPick.placeholder = 'Loading versions...';
   quickPick.busy = true;
+  const disposables: vscode.Disposable[] = [];
+  let disposed = false;
+  const cleanup = (): void => {
+    if (disposed) {
+      return;
+    }
+
+    disposed = true;
+    while (disposables.length > 0) {
+      disposables.pop()?.dispose();
+    }
+    quickPick.dispose();
+  };
+  disposables.push(quickPick.onDidHide(cleanup));
   quickPick.show();
 
   try {
-    const { tags, versions } = await fetchPackageVersions(item.packageName);
+    const { tags, versions } = await fetchPackageVersions(item.packageName, item.packageFilePath);
+    if (disposed) {
+      return;
+    }
+
     const includePreReleases = vscode.workspace
       .getConfiguration('nestro')
       .get<boolean>('includePreReleases', true);
@@ -37,11 +55,16 @@ export async function pickVersionCommand(item: PackageItem, provider: PackagesPr
     }));
     quickPick.busy = false;
     quickPick.placeholder = 'Type to filter versions...';
-    quickPick.onDidAccept(() => {
+    const acceptListener = quickPick.onDidAccept(() => {
       void handleVersionSelection(quickPick, item, provider, normalizedCurrent);
     });
+    disposables.push(acceptListener);
   }
   catch (err) {
+    if (disposed) {
+      return;
+    }
+
     quickPick.hide();
     showVersionPickerError(item.packageName, err);
   }

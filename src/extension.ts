@@ -62,6 +62,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const packageJsonWatcher = registerPackageJsonWatcher(context, provider);
   registerConfigurationWatcher(context, provider, () => packageJsonWatcher.refresh());
+  registerWorkspaceFoldersWatcher(context, provider, () => packageJsonWatcher.refresh());
 
   void provider.loadPackages().then(() => {
     if (checkUpdatesOnStartup) {
@@ -74,6 +75,19 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+export function registerWorkspaceFoldersWatcher(
+  context: vscode.ExtensionContext,
+  provider: Pick<PackagesProvider, 'loadPackages'>,
+  refreshPackageJsonWatcher: () => void,
+): void {
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      refreshPackageJsonWatcher();
+      void provider.loadPackages();
+    }),
+  );
+}
 
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,
@@ -104,11 +118,7 @@ export function registerPackageJsonWatcher(
         watcher,
         watcher.onDidChange(scheduleRefresh),
         watcher.onDidCreate(scheduleRefresh),
-        watcher.onDidDelete(() => {
-          clearTimeout(debounceTimer);
-          provider.invalidateUpdateCache();
-          void provider.loadPackages();
-        }),
+        watcher.onDidDelete(scheduleRefresh),
       ];
     });
   };

@@ -21,3 +21,6 @@ dist/
 
 # OS generated
 .DS_Store
+
+# Workflow
+workflow/

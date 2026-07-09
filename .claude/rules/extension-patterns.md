@@ -21,6 +21,7 @@ Push all resources to `context.subscriptions`:
 - `vscode.commands.registerCommand(...)`
 - `vscode.window.registerTreeDataProvider(...)`
 - `vscode.workspace.onDidChangeTextDocument(...)`
+- `vscode.workspace.onDidChangeWorkspaceFolders(...)`
 
 ## TypeScript
 - `import * as vscode from 'vscode'` — namespace import, not default
@@ -42,3 +43,4 @@ Push all resources to `context.subscriptions`:
 - Logger: use `logger` singleton from `src/utils/logger.ts` — do not use `console.log`
 - Errors: use `showError()` from `src/utils/notify.ts` — do not call `vscode.window.showErrorMessage` directly
 - State mutations go through `markPackage*()` / `invalidateUpdateCache()` on `PackagesProvider`, then fire `_onDidChangeTreeData`
+- Shell commands: use `runShellTaskAndWait()` from `src/utils/shellTask.ts` — do not call `vscode.tasks.executeTask()` directly and hand-roll `onDidEndTaskProcess` listeners in command handlers
