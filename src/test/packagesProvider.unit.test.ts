@@ -212,12 +212,12 @@ describe('PackagesProvider', () => {
       let finishSecond: () => void = () => {};
       const provider = new PackagesProvider(new FilterManager('all'));
       const firstWrite = provider.withWriteSuppressed(async () => {
-        await new Promise<void>(resolve => {
+        await new Promise<void>((resolve) => {
           finishFirst = resolve;
         });
       });
       const secondWrite = provider.withWriteSuppressed(async () => {
-        await new Promise<void>(resolve => {
+        await new Promise<void>((resolve) => {
           finishSecond = resolve;
         });
       });
@@ -500,7 +500,7 @@ describe('PackagesProvider', () => {
   it('ignores concurrent audits while allowing a later manual audit', async () => {
     let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
     const runAuditMock = vi.fn()
-      .mockReturnValueOnce(new Promise<Map<string, 'high'>>(resolve => {
+      .mockReturnValueOnce(new Promise<Map<string, 'high'>>((resolve) => {
         resolveAudit = resolve;
       }))
       .mockResolvedValueOnce(new Map([['react', 'moderate']]));

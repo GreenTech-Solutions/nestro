@@ -287,14 +287,14 @@ function mockRegistryResponse(body: string, statusCode = 200): void {
 }
 
 function mockNpmrcFiles(files: Record<string, string>): void {
-  vi.mocked(readFile).mockImplementation(async (filePath) => {
+  vi.mocked(readFile).mockImplementation((filePath) => {
     const value = files[String(filePath)];
 
     if (value === undefined) {
-      throw new Error(`File not found: ${String(filePath)}`);
+      return Promise.reject(new Error(`File not found: ${String(filePath)}`));
     }
 
-    return value;
+    return Promise.resolve(value);
   });
 }
 

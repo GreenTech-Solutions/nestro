@@ -146,13 +146,13 @@ describe('ClientManager', () => {
 });
 
 function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation(async (uri: vscode.Uri) => {
+  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
     const value = files[uri.fsPath];
     if (value === undefined) {
-      throw new Error(`File not found: ${uri.fsPath}`);
+      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
     }
 
-    return Buffer.from(value);
+    return Promise.resolve(Buffer.from(value));
   });
 }
 

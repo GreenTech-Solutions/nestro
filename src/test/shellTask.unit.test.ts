@@ -58,10 +58,10 @@ describe('runShellTaskAndWait()', () => {
     const taskDispose = vi.fn();
     vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
     vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
-    vi.mocked(vscode.tasks.executeTask).mockImplementationOnce(async () => {
+    vi.mocked(vscode.tasks.executeTask).mockImplementationOnce(() => {
       const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
       listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
-      return execution;
+      return Promise.resolve(execution);
     });
 
     await expect(

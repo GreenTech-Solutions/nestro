@@ -141,7 +141,7 @@ async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
   let count = 0;
   for (const section of ['dependencies', 'devDependencies'] as const) {
     const deps = json[section];
-    if (deps === undefined) continue;
+    if (deps === undefined) { continue; }
     for (const [name, version] of Object.entries(deps)) {
       const prefix = extractVersionPrefix(version);
       if (prefix === '^' || prefix === '~') {

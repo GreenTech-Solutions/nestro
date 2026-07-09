@@ -111,7 +111,7 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     let resolveFetch: (value: { tags: Record<string, string>; versions: string[] }) => void = () => {};
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
-    vi.mocked(fetchPackageVersions).mockReturnValueOnce(new Promise(resolve => {
+    vi.mocked(fetchPackageVersions).mockReturnValueOnce(new Promise((resolve) => {
       resolveFetch = resolve;
     }));
 

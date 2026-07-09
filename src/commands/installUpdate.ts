@@ -8,8 +8,8 @@ import {
   getWorkspacePackageFilePaths,
   logger,
   runShellTaskAndWait,
-  showError,
   ShellTaskCommand,
+  showError,
   updateDependencyVersionsInFile,
 } from '../utils';
 
