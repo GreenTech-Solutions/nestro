@@ -52,13 +52,38 @@ describe('runShellTaskAndWait()', () => {
     expect(taskDispose).toHaveBeenCalledTimes(1);
   });
 
+  it('resolves when the process ends before task startup resolves', async () => {
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
+    vi.mocked(vscode.tasks.executeTask).mockImplementationOnce(async () => {
+      const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
+      listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+      return execution;
+    });
+
+    await expect(
+      runShellTaskAndWait({ command: 'pnpm', args: ['install'] }, 'Install Dependencies'),
+    ).resolves.toBe(0);
+    expect(processDispose).toHaveBeenCalledTimes(1);
+    expect(taskDispose).toHaveBeenCalledTimes(1);
+  });
+
   it('disposes listeners and rethrows when task start fails', async () => {
     const error = new Error('task start failed');
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
     vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce(error);
 
     await expect(runShellTaskAndWait({ command: 'pnpm', args: ['install'] }, 'Install Dependencies')).rejects.toThrow(error);
-    expect(vscode.tasks.onDidEndTaskProcess).not.toHaveBeenCalled();
-    expect(vscode.tasks.onDidEndTask).not.toHaveBeenCalled();
+    expect(vscode.tasks.onDidEndTaskProcess).toHaveBeenCalledTimes(1);
+    expect(vscode.tasks.onDidEndTask).toHaveBeenCalledTimes(1);
+    expect(processDispose).toHaveBeenCalledTimes(1);
+    expect(taskDispose).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -26,19 +26,32 @@ export async function runShellTaskAndWait(
     panel: vscode.TaskPanelKind.New,
   };
 
-  const execution = await vscode.tasks.executeTask(task);
+  let execution: vscode.TaskExecution | undefined;
+  const bufferedProcessEvents: vscode.TaskProcessEndEvent[] = [];
+  const bufferedTaskEvents: vscode.TaskEndEvent[] = [];
 
-  return await new Promise((resolve) => {
-    let processListener: vscode.Disposable | undefined;
-    let taskListener: vscode.Disposable | undefined;
+  const completion = new Promise<number | undefined>((resolve, reject) => {
+    let settled = false;
+    let processListener: vscode.Disposable;
+    let taskListener: vscode.Disposable;
 
     const finish = (exitCode: number | undefined): void => {
-      processListener?.dispose();
-      taskListener?.dispose();
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      processListener.dispose();
+      taskListener.dispose();
       resolve(exitCode);
     };
 
     processListener = vscode.tasks.onDidEndTaskProcess((event) => {
+      if (execution === undefined) {
+        bufferedProcessEvents.push(event);
+        return;
+      }
+
       if (event.execution !== execution) {
         return;
       }
@@ -47,13 +60,41 @@ export async function runShellTaskAndWait(
     });
 
     taskListener = vscode.tasks.onDidEndTask((event) => {
+      if (execution === undefined) {
+        bufferedTaskEvents.push(event);
+        return;
+      }
+
       if (event.execution !== execution) {
         return;
       }
 
       finish(undefined);
     });
+
+    void (async (): Promise<void> => {
+      try {
+        execution = await vscode.tasks.executeTask(task);
+      }
+      catch (error) {
+        processListener.dispose();
+        taskListener.dispose();
+        throw error;
+      }
+
+      const processEvent = bufferedProcessEvents.find(event => event.execution === execution);
+      if (processEvent !== undefined) {
+        finish(processEvent.exitCode);
+        return;
+      }
+
+      if (bufferedTaskEvents.some(event => event.execution === execution)) {
+        finish(undefined);
+      }
+    })().catch(reject);
   });
+
+  return await completion;
 }
 
 export function formatShellTaskCommandForLog(shellCommand: ShellTaskCommand): string {
