@@ -29,6 +29,9 @@ describe('fetchPackageVersions()', () => {
       configurable: true,
       value: [{ uri: { fsPath: '/workspace' } }],
     });
+    vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {
+      return vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(`${folder.uri.fsPath}/`));
+    });
   });
 
   it('parses dist-tags and versions from the npm registry response', async () => {
@@ -56,7 +59,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await expect(fetchPackageVersions('react')).resolves.toEqual({
+    await expect(fetchPackageVersions('react', '/workspace/package.json')).resolves.toEqual({
       tags: {},
       versions: ['1.0.0'],
     });
@@ -72,7 +75,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('react');
+    await fetchPackageVersions('react', '/workspace/package.json');
 
     expectRegistryUrl('https://user-registry.example.com/react');
   });
@@ -87,7 +90,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('react');
+    await fetchPackageVersions('react', '/workspace/package.json');
 
     expectRegistryUrl('https://project-registry.example.com/react');
   });
@@ -104,9 +107,60 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('@private/pkg');
+    await fetchPackageVersions('@private/pkg', '/workspace/package.json');
 
     expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
+  });
+
+  it('uses the owning workspace .npmrc in a multi-root workspace', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/workspace/app-one' } },
+        { uri: { fsPath: '/workspace/app-two' } },
+      ],
+    });
+    mockNpmrcFiles({
+      '/workspace/app-one/.npmrc': 'registry=https://one.example.com',
+      '/workspace/app-two/.npmrc': 'registry=https://two.example.com',
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '2.0.0': {} },
+    }));
+
+    await fetchPackageVersions('first-package', '/workspace/app-one/package.json');
+    await fetchPackageVersions('second-package', '/workspace/app-two/packages/web/package.json');
+
+    expect(vi.mocked(https.get).mock.calls[0][0]).toBe('https://one.example.com/first-package');
+    expect(vi.mocked(https.get).mock.calls[1][0]).toBe('https://two.example.com/second-package');
+  });
+
+  it('uses a scoped registry from the owning workspace in multi-root mode', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/workspace/public-app' } },
+        { uri: { fsPath: '/workspace/private-app' } },
+      ],
+    });
+    mockNpmrcFiles({
+      '/workspace/public-app/.npmrc': '@private:registry=https://wrong.example.com',
+      '/workspace/private-app/.npmrc': '@private:registry=https://private.example.com/npm/',
+    });
+    mockRegistryResponse(JSON.stringify({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    }));
+
+    await fetchPackageVersions('@private/pkg', '/workspace/private-app/package.json');
+
+    expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
+    expect(readFile).not.toHaveBeenCalledWith('/workspace/public-app/.npmrc', 'utf8');
   });
 
   it('rejects on network errors', async () => {

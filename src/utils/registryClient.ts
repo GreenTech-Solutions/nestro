@@ -20,9 +20,12 @@ export interface PackageVersions {
   versions: string[];
 }
 
-export async function fetchPackageVersions(packageName: string): Promise<PackageVersions> {
+export async function fetchPackageVersions(
+  packageName: string,
+  packageFilePath?: string,
+): Promise<PackageVersions> {
   const encodedName = encodeURIComponent(packageName).replace('%40', '@');
-  const registryUrl = await resolveRegistryUrl(packageName);
+  const registryUrl = await resolveRegistryUrl(packageName, packageFilePath);
   const url = buildRegistryPackageUrl(registryUrl, encodedName);
 
   return await new Promise<PackageVersions>((resolve, reject) => {
@@ -104,10 +107,10 @@ export async function fetchPackageVersions(packageName: string): Promise<Package
   });
 }
 
-async function resolveRegistryUrl(packageName: string): Promise<string> {
+async function resolveRegistryUrl(packageName: string, packageFilePath: string | undefined): Promise<string> {
   const config = new Map<string, string>();
 
-  for (const npmrcPath of getNpmrcPaths()) {
+  for (const npmrcPath of getNpmrcPaths(packageFilePath)) {
     const npmrc = await readNpmrcFile(npmrcPath);
     mergeNpmrcConfig(config, npmrc);
   }
@@ -117,9 +120,11 @@ async function resolveRegistryUrl(packageName: string): Promise<string> {
   return scopedRegistry ?? config.get('registry') ?? DEFAULT_REGISTRY_URL;
 }
 
-function getNpmrcPaths(): string[] {
+function getNpmrcPaths(packageFilePath: string | undefined): string[] {
   const paths = [path.join(homedir(), '.npmrc')];
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const workspaceRoot = packageFilePath === undefined
+    ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    : vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath))?.uri.fsPath;
 
   if (workspaceRoot !== undefined) {
     paths.push(path.join(workspaceRoot, '.npmrc'));

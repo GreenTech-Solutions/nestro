@@ -51,6 +51,7 @@ describe('pickVersionCommand()', () => {
       new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
       makeProvider(),
     );
+    expect(fetchPackageVersions).toHaveBeenCalledWith('react', '/workspace/package.json');
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();

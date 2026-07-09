@@ -31,7 +31,7 @@ export async function pickVersionCommand(item: PackageItem, provider: PackagesPr
   quickPick.show();
 
   try {
-    const { tags, versions } = await fetchPackageVersions(item.packageName);
+    const { tags, versions } = await fetchPackageVersions(item.packageName, item.packageFilePath);
     if (disposed) {
       return;
     }
