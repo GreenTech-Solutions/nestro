@@ -123,6 +123,70 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
   });
 
+  it('reuses update cache after debounce but before cache expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.checkUpdates();
+      vi.advanceTimersByTime(61_000);
+      await provider.checkUpdates();
+
+      expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fetches fresh updates when force-always mode is enabled', async () => {
+    mockNestroConfiguration({ checkUpdatesForceAlways: true });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse update cache when the package-file set changes', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    const existingEntries = (provider as unknown as { allEntries: unknown[] }).allEntries;
+    setProviderState(provider, {
+      allEntries: [
+        ...existingEntries,
+        {
+          item: new PackageItem(
+            'typescript',
+            '5.0.0',
+            undefined,
+            'none',
+            false,
+            undefined,
+            '/workspace/tools/package.json',
+            true,
+          ),
+          dev: true,
+          packageFilePath: '/workspace/tools/package.json',
+        },
+      ],
+    });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(3);
+    expect(fetchAllLatestVersions).toHaveBeenLastCalledWith(
+      '/workspace/tools/package.json',
+      'latest',
+      true,
+    );
+  });
+
   it('fetches updates again after cache invalidation', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 

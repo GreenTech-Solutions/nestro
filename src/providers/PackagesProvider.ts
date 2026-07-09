@@ -221,9 +221,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     try {
       const entries = await readAllWorkspaceDependencies();
       logger.info(`Loaded ${entries.length} workspace package(s).`);
-      const existingMap = new Map(this.allEntries.map(e => [this.entryKey(e.item.packageName, e.packageFilePath), e]));
+      const existingMap = new Map(this.allEntries.map(e => [
+        this.packageStateKey({
+          packageName: e.item.packageName,
+          packageFilePath: e.packageFilePath,
+          section: e.dev ? 'devDependencies' : 'dependencies',
+        }),
+        e,
+      ]));
       this.allEntries = entries.map((e) => {
-        const existing = existingMap.get(this.entryKey(e.name, e.packageFilePath));
+        const existing = existingMap.get(this.packageStateKey({
+          packageName: e.name,
+          packageFilePath: e.packageFilePath,
+          section: e.dev ? 'devDependencies' : 'dependencies',
+        }));
         // Compare bare semver (strip prefix) so that a pin operation (^1.2.3 → 1.2.3)
         // preserves existing update data rather than resetting it to 'none'.
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
