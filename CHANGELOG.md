@@ -1,3 +1,38 @@
+## [0.4.1](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.0...v0.4.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **audit:** ignore concurrent audit runs ([b463fc8](https://github.com/GreenTech-Solutions/nestro/commit/b463fc8a442ff09397756136f7611cd2f6a08908))
+* **clients:** detect package manager from workspace ancestors ([8081d4c](https://github.com/GreenTech-Solutions/nestro/commit/8081d4cb11dee28c3852092c428d05d2d0423812))
+* **deps:** update dependency version in selected section ([6184fbb](https://github.com/GreenTech-Solutions/nestro/commit/6184fbbade0f394bdbc2eb6095f1a34d043f6ce5))
+* **docs:** update extension patterns and agents documentation for workspace folder handling and task execution ([82abd9a](https://github.com/GreenTech-Solutions/nestro/commit/82abd9a56e450545076fbdf9fbd342985bb9cf55))
+* ensure consistent newline at end of files across multiple source and test files ([da030bc](https://github.com/GreenTech-Solutions/nestro/commit/da030bc7e2ed2d942ef62cc6744ea38d55b25df2))
+* **manifest:** declare filter commands ([9d3d59a](https://github.com/GreenTech-Solutions/nestro/commit/9d3d59a9604fb856ce3b60816d0b3a7289f6725d))
+* **package-json:** preserve tab indentation ([9e70535](https://github.com/GreenTech-Solutions/nestro/commit/9e705359a8907640c7f7d1961357cc7a65dae674))
+* **package-manager:** respect nearest marker precedence ([6c5b946](https://github.com/GreenTech-Solutions/nestro/commit/6c5b946534c0ab31662e0a360c6ffda765563e24))
+* **package:** audit fixes ([746bd03](https://github.com/GreenTech-Solutions/nestro/commit/746bd03a87a13d8e337e0c08ad58abaca16cbc7a))
+* **picker:** dispose version quick pick ([c838343](https://github.com/GreenTech-Solutions/nestro/commit/c838343fe30ce5c5432b74c124160ac05a1fffb7))
+* **picker:** format workspace package labels by path segment ([ea17118](https://github.com/GreenTech-Solutions/nestro/commit/ea171188a23575b7c1b0814f5011160fb766196d))
+* **pnpm:** remove unused tmp dependency from overrides ([c92d3b5](https://github.com/GreenTech-Solutions/nestro/commit/c92d3b5884421f9cf2047b0cc83111a89fd517e8))
+* **provider:** ignore concurrent update checks ([6fef779](https://github.com/GreenTech-Solutions/nestro/commit/6fef779c27c20c1fa53d5f73b6c9eed8145191af))
+* **provider:** include dependency section in package identity ([8e8c0d4](https://github.com/GreenTech-Solutions/nestro/commit/8e8c0d415913491ae9daab822a5d96dac80c9e65))
+* **provider:** preserve live package state during update checks ([115e8fe](https://github.com/GreenTech-Solutions/nestro/commit/115e8fe4fd22381e3c02d82a2fee4e411124eb84))
+* **provider:** refcount write suppression timers ([cd9537f](https://github.com/GreenTech-Solutions/nestro/commit/cd9537fdb6793d49c884b1fe31762517373783c5))
+* **provider:** reset update debounce on cache invalidation ([1dd82d9](https://github.com/GreenTech-Solutions/nestro/commit/1dd82d9cc011042963aecd0b2a4b0ac8528b3a83))
+* **provider:** target package mutations by file path ([239a801](https://github.com/GreenTech-Solutions/nestro/commit/239a801485a4e74b3b72aa91469e62e3a2e694c7))
+* **registry:** reject non-success package metadata responses ([fb3acaf](https://github.com/GreenTech-Solutions/nestro/commit/fb3acaf4c3708c082a789e176f14ab144301a85e))
+* **registry:** resolve npmrc from owning workspace ([210a10c](https://github.com/GreenTech-Solutions/nestro/commit/210a10cd5fcfac28802cca898f1771ecfd103207))
+* **registry:** resolve package metadata registry from npmrc ([3352c69](https://github.com/GreenTech-Solutions/nestro/commit/3352c696f8d0d1026d4ef69033d0e51c89d072b1))
+* **registry:** timeout and cap package metadata responses ([33437ce](https://github.com/GreenTech-Solutions/nestro/commit/33437ce81038172428838bd70ef6c9d672748c15))
+* **tasks:** handle shell task completion during startup ([22c27df](https://github.com/GreenTech-Solutions/nestro/commit/22c27df7191e51e1afe5f61594c5059706d5aca6))
+* **tasks:** quote package manager task arguments ([e3f1793](https://github.com/GreenTech-Solutions/nestro/commit/e3f1793780e4b076f5e8ee2db63d7eae6cd61309))
+* **tasks:** surface failed install and remove tasks ([0f73a18](https://github.com/GreenTech-Solutions/nestro/commit/0f73a184a8beaf16782a04c077959b671b621230))
+* update VS Code engine version to ^1.125.0 and add check:vsce script ([4ade89b](https://github.com/GreenTech-Solutions/nestro/commit/4ade89b351a6383b0d36d80b988e2d10242b71cc))
+* **updates:** preserve valid update cache ([2d2dd2d](https://github.com/GreenTech-Solutions/nestro/commit/2d2dd2d276ca365bbc5ae2448a8bb6567ca4008c))
+* **watcher:** route package deletes through debounced refresh ([ed4ffb9](https://github.com/GreenTech-Solutions/nestro/commit/ed4ffb90c2a400bbdc517fbb42c1d468a0916c42))
+* **workspace:** refresh packages when folders change ([35cda83](https://github.com/GreenTech-Solutions/nestro/commit/35cda833f49de5d113fd58457774742834288401))
+
 # [0.4.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.3.0...v0.4.0) (2026-06-12)
 
 
