@@ -112,14 +112,23 @@ describe('ClientManager', () => {
     await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('yarn');
   });
 
-  it('prefers ancestor packageManager metadata over nested stray lockfiles', async () => {
+  it('prefers a child lockfile over parent packageManager metadata', async () => {
     mockWorkspaceFiles({
       '/workspace/package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0' }),
       '/workspace/packages/app/package.json': '{}',
-      '/workspace/packages/app/package-lock.json': '',
+      '/workspace/packages/app/yarn.lock': '',
     });
 
-    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('pnpm');
+    await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('yarn');
+  });
+
+  it('prefers packageManager metadata over lockfiles in the same directory', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0' }),
+      '/workspace/yarn.lock': '',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/workspace')).resolves.toBe('pnpm');
   });
 
   it('does not read above the owning workspace folder when walking ancestors', async () => {

@@ -62,9 +62,7 @@ export class ClientManager {
       if (fromManifest !== undefined) {
         return fromManifest;
       }
-    }
 
-    for (const directory of directories) {
       const fromLockfile = await this.detectPackageManagerFromLockfile(directory);
       if (fromLockfile !== undefined) {
         return fromLockfile;
