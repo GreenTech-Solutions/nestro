@@ -45,6 +45,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastAuditCount: number | undefined;
   private failedAuditPaths: string[] = [];
+  private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private updateCache: {
     data: Map<string, string>;
@@ -219,9 +220,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditState = 'idle';
     this.lastAuditCount = undefined;
     this.failedAuditPaths = [];
+    this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
       const entries = await readAllWorkspaceDependencies();
+      this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -295,7 +298,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             versionPrefix: e.item.versionPrefix,
             packageFilePath: e.packageFilePath,
           }))
-        : await readAllWorkspaceDependencies();
+        : await this.readPackagesForUpdateCheck();
       const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
       const packageFilesKey = this.packageFilesKey(packageFiles);
       const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
@@ -431,7 +434,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.noWorkspace',
-      !this.loading && this.allEntries.length === 0,
+      !this.loading && this.allEntries.length === 0 && this.failedPackageReadPaths.length === 0,
     );
     this._onDidChangeTreeData.fire();
   }
@@ -544,6 +547,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return await getWorkspacePackageFilePaths();
   }
 
+  private async readPackagesForUpdateCheck(): Promise<Awaited<ReturnType<typeof readAllWorkspaceDependencies>>> {
+    const entries = await readAllWorkspaceDependencies();
+    this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+    return entries;
+  }
+
   private entryKey(packageName: string, packageFilePath: string): string {
     return `${packageFilePath}\0${packageName}`;
   }
@@ -587,6 +596,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private buildStatusItems(): StatusItem[] {
     const items: StatusItem[] = [];
+
+    if (this.failedPackageReadPaths.length > 0) {
+      items.push(new StatusItem(
+        'Package read incomplete',
+        `Fix invalid or unreadable package.json: ${this.failedPackageReadPaths.join(', ')}`,
+        'warning',
+        'charts.yellow',
+      ));
+    }
 
     if (this.checkState === 'running') {
       items.push(new StatusItem('Checking updates…', '', 'loading~spin'));

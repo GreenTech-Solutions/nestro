@@ -13,6 +13,15 @@ export interface PackageFileEntry extends PackageEntry {
   packageFilePath: string;
 }
 
+export interface SkippedPackageFile {
+  packageFilePath: string;
+  error: string;
+}
+
+export type PackageFileEntries = PackageFileEntry[] & {
+  readonly skippedFiles?: readonly SkippedPackageFile[];
+};
+
 export type DependencySection = 'dependencies' | 'devDependencies';
 
 export interface PackageVersionUpdate {
@@ -231,14 +240,15 @@ export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
   return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
 }
 
-export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntry[]> {
+export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntries> {
   const files = await findWorkspacePackageJsonFiles(glob);
   if (files.length === 0) {
     logger.info('No workspace package.json found.');
-    return [];
+    return createPackageFileEntries([], []);
   }
 
   const results: PackageFileEntry[] = [];
+  const skippedFiles: SkippedPackageFile[] = [];
   for (const uri of files) {
     try {
       const raw = await vscode.workspace.fs.readFile(uri);
@@ -263,10 +273,25 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
       );
     }
     catch (err) {
+      skippedFiles.push({
+        packageFilePath: uri.fsPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
       logger.error(`Failed to read workspace package.json at ${uri.toString()}; skipping.`, err);
     }
   }
-  return results;
+  return createPackageFileEntries(results, skippedFiles);
+}
+
+function createPackageFileEntries(
+  entries: PackageFileEntry[],
+  skippedFiles: readonly SkippedPackageFile[],
+): PackageFileEntries {
+  Object.defineProperty(entries, 'skippedFiles', {
+    value: skippedFiles,
+    enumerable: false,
+  });
+  return entries as PackageFileEntries;
 }
 
 export async function getWorkspacePackageFilePaths(glob?: string): Promise<string[]> {

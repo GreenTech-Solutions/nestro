@@ -93,7 +93,9 @@ describe('readAllWorkspaceDependencies()', () => {
       .mockResolvedValueOnce(Buffer.from('{'))
       .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { react: '^18.0.0' } })));
 
-    await expect(readAllWorkspaceDependencies()).resolves.toEqual([
+    const result = await readAllWorkspaceDependencies();
+
+    expect(result).toEqual([
       {
         name: 'react',
         current: '^18.0.0',
@@ -101,6 +103,30 @@ describe('readAllWorkspaceDependencies()', () => {
         versionPrefix: '^',
         packageFilePath: '/workspace/good/package.json',
       },
+    ]);
+    expect(result.skippedFiles).toEqual([
+      {
+        packageFilePath: '/workspace/bad/package.json',
+        error: expect.any(String),
+      },
+    ]);
+  });
+
+  it('returns every skipped path when all package.json files are invalid', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/bad/package.json'),
+      vscode.Uri.file('/workspace/unreadable/package.json'),
+    ]);
+    vi.mocked(vscode.workspace.fs.readFile)
+      .mockRejectedValueOnce(new Error('malformed package.json'))
+      .mockRejectedValueOnce(new Error('permission denied'));
+
+    const result = await readAllWorkspaceDependencies();
+
+    expect(result).toEqual([]);
+    expect(result.skippedFiles).toEqual([
+      { packageFilePath: '/workspace/bad/package.json', error: 'malformed package.json' },
+      { packageFilePath: '/workspace/unreadable/package.json', error: 'permission denied' },
     ]);
   });
 });

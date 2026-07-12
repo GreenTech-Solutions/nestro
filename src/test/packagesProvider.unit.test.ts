@@ -436,6 +436,64 @@ describe('PackagesProvider', () => {
     ]);
   });
 
+  it('shows one actionable status for skipped package files while keeping valid entries', async () => {
+    const entries = [{
+      name: 'react',
+      current: '18.0.0',
+      dev: false,
+      versionPrefix: '',
+      packageFilePath: '/workspace/good/package.json',
+    }];
+    Object.defineProperty(entries, 'skippedFiles', {
+      value: [{
+        packageFilePath: '/workspace/bad/package.json',
+        error: 'Unexpected end of JSON input',
+      }],
+    });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(entries);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+
+    const tree = provider.getChildren();
+    const readStatus = tree.find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
+    expect(readStatus).toBeInstanceOf(StatusItem);
+    expect(readStatus?.description).toContain('/workspace/bad/package.json');
+    expect(getPackageItems(provider).map(item => item.packageFilePath)).toEqual(['/workspace/good/package.json']);
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('shows all skipped paths without claiming there is no workspace', async () => {
+    const entries: Array<{
+      name: string;
+      current: string;
+      dev: boolean;
+      versionPrefix: string;
+      packageFilePath: string;
+    }> = [];
+    Object.defineProperty(entries, 'skippedFiles', {
+      value: [
+        { packageFilePath: '/workspace/bad/package.json', error: 'malformed' },
+        { packageFilePath: '/workspace/unreadable/package.json', error: 'permission denied' },
+      ],
+    });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(entries);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+
+    const readStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
+    expect(readStatus).toBeInstanceOf(StatusItem);
+    expect(readStatus?.description).toContain('/workspace/bad/package.json');
+    expect(readStatus?.description).toContain('/workspace/unreadable/package.json');
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'setContext',
+      'nestro.noWorkspace',
+      false,
+    );
+    expect(showError).not.toHaveBeenCalled();
+  });
+
   it('shows status rows above the filter bar', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([]);
