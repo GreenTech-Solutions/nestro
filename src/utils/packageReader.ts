@@ -95,7 +95,11 @@ export async function updateDependencyVersionsInFilesAtomically(
     }
   }
   catch (err) {
-    await rollbackPreparedPackageFiles(written);
+    const rollbackFailures = await rollbackPreparedPackageFiles(written);
+    if (rollbackFailures.length > 0) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`${message}; failed to roll back: ${rollbackFailures.join(', ')}`);
+    }
     throw err;
   }
 }
@@ -144,15 +148,18 @@ async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void
   await vscode.workspace.fs.writeFile(file.uri, file.updated);
 }
 
-async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<void> {
+async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<string[]> {
+  const failures: string[] = [];
   for (const file of [...files].reverse()) {
     try {
       await vscode.workspace.fs.writeFile(file.uri, file.original);
     }
     catch (err) {
+      failures.push(file.uri.fsPath);
       logger.error(`Failed to roll back package.json at ${file.uri.toString()}.`, err);
     }
   }
+  return failures;
 }
 
 export async function switchDependencyType(

@@ -484,6 +484,34 @@ describe('updateAllVisibleCommand()', () => {
     );
   });
 
+  it('surfaces rollback failures after a deferred bulk write failure', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    vi.mocked(vscode.workspace.fs.readFile)
+      .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { react: '^18.0.0' } }, undefined, 2)))
+      .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { vite: '^5.0.0' } }, undefined, 2)));
+    let writeCount = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation(() => {
+      writeCount++;
+      if (writeCount === 2) {
+        return Promise.reject(new Error('second write failed'));
+      }
+      if (writeCount === 3) {
+        return Promise.reject(new Error('rollback failed'));
+      }
+      return Promise.resolve();
+    });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — second write failed; failed to roll back: /workspace/apps/web/package.json',
+    );
+  });
+
   it('does nothing when there are no visible outdated packages', async () => {
     const provider = makeProvider([]);
 
