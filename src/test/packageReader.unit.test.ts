@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   extractVersionPrefix,
+  pinAllWorkspaceDependencyVersions,
   readAllWorkspaceDependencies,
   setVersionPin,
   switchDependencyType,
@@ -195,6 +196,40 @@ describe('updateWorkspaceDependencyVersions()', () => {
     expect(JSON.parse(written)).toEqual({
       dependencies: { typescript: '^4.0.0' },
       devDependencies: { typescript: '~5.9.3' },
+    });
+  });
+});
+
+describe('pinAllWorkspaceDependencyVersions()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
+    vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
+  });
+
+  it('pins concrete workspace ranges while preserving the workspace protocol', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/package.json'),
+    ]);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: {
+        react: 'workspace:^1.2.3',
+        vue: 'workspace:~2.3.4',
+        internal: 'workspace:*',
+        pending: 'workspace:^',
+      },
+    }, undefined, 2)));
+
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toBe(2);
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(JSON.parse(written)).toEqual({
+      dependencies: {
+        react: 'workspace:1.2.3',
+        vue: 'workspace:2.3.4',
+        internal: 'workspace:*',
+        pending: 'workspace:^',
+      },
     });
   });
 });

@@ -144,7 +144,13 @@ async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
     if (deps === undefined) { continue; }
     for (const [name, version] of Object.entries(deps)) {
       const prefix = extractVersionPrefix(version);
-      if (prefix === '^' || prefix === '~') {
+      const remainder = version.startsWith('workspace:')
+        ? version.slice('workspace:'.length)
+        : version;
+      const remainderPrefix = extractVersionPrefix(remainder);
+      const isConcreteWorkspaceRange = version.startsWith('workspace:')
+        && isConcreteVersion(remainder.slice(remainderPrefix.length));
+      if ((prefix === '^' || prefix === '~') || (isConcreteWorkspaceRange && (remainderPrefix === '^' || remainderPrefix === '~'))) {
         deps[name] = setPinnedVersion(version, true);
         count++;
       }
@@ -272,6 +278,10 @@ function setPinnedVersion(version: string, pin: boolean): string {
   const versionPrefix = extractVersionPrefix(remainder);
   const normalized = remainder.slice(versionPrefix.length);
   return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
+}
+
+function isConcreteVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
 }
 
 function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {
