@@ -15,6 +15,8 @@ dist/
 
 # AI
 .caliber/
+.claude/settings.json
+.claude/hooks
 
 # Secrets
 .env
