@@ -150,6 +150,28 @@ describe('installUpdateCommand()', () => {
     }, false);
   });
 
+  it('clears package update progress when starting the task throws', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+    const error = new Error('task launch failed');
+    vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce(error);
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to install update — task launch failed',
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+  });
+
   it('updates package.json without running a task when deferred install is enabled', async () => {
     mockDeferredInstall(true);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from([

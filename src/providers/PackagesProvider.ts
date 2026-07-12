@@ -189,12 +189,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
+    const updateType = installing || item.latest === undefined
+      ? item.updateType
+      : getUpdateType(item.currentVersion, item.latest);
     this.allEntries[index] = {
       item: this.createPackageItem(
         item.packageName,
         item.currentVersion,
         item.latest,
-        item.updateType,
+        updateType,
         installing,
         entryPackageFilePath,
         dev,

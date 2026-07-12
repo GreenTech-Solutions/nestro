@@ -17,8 +17,10 @@ import {
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
+import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
 const getClientMock = vi.fn();
+const getUpdateTypeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../clients', () => ({
   ClientManager: vi.fn(function (this: { getClient: typeof getClientMock }) {
@@ -30,9 +32,7 @@ vi.mock('../utils', () => ({
   fetchAllLatestVersions: vi.fn(),
   getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
   getWorkspacePackageFilePaths: vi.fn(),
-  getUpdateType: vi.fn((current: string, latest: string) => (
-    current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
-  )),
+  getUpdateType: getUpdateTypeMock,
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -48,6 +48,7 @@ vi.mock('../utils', () => ({
 describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getUpdateTypeMock.mockImplementation(realGetUpdateType);
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
       {
         name: 'react',
@@ -688,7 +689,7 @@ describe('PackagesProvider', () => {
     ]);
   });
 
-  it('preserves active update state when a reload sees a changed current version', async () => {
+  it('reconciles a failed update after reload sees the target current version', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
     await provider.loadPackages();
@@ -729,10 +730,10 @@ describe('PackagesProvider', () => {
     expect(react).toMatchObject({
       currentVersion: '19.0.0',
       latest: '19.0.0',
-      updateType: 'breaking',
+      updateType: 'none',
       installing: false,
     });
-    expect(provider.getVisibleOutdatedPackages()).toEqual([react]);
+    expect(provider.getVisibleOutdatedPackages()).toEqual([]);
   });
 
   it('clears active update state after successful completion following a changed-version reload', async () => {
