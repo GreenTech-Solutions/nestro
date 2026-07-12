@@ -634,7 +634,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       items.push(new StatusItem(
         'Audit incomplete',
         `${count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`}; `
-          + `failed: ${this.failedAuditPaths.join(', ')}`,
+        + `failed: ${this.failedAuditPaths.join(', ')}`,
         'warning',
         'charts.yellow',
       ));
