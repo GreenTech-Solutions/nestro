@@ -15,6 +15,7 @@ import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
+  showError,
 } from '../utils';
 
 const getClientMock = vi.fn();
@@ -243,6 +244,26 @@ describe('PackagesProvider', () => {
     await Promise.all([firstCheck, secondCheck]);
 
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a later manual update check after a timeout rejection', async () => {
+    const timeoutError = new Error('npm-check-updates timed out');
+    vi.mocked(fetchAllLatestVersions)
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce(new Map([['react', '19.0.0']]));
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    expect(showError).toHaveBeenCalledWith(
+      'failed to check updates — npm-check-updates timed out',
+      timeoutError,
+    );
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('19.0.0');
   });
 
   it('preserves live installing state when update checks finish', async () => {
