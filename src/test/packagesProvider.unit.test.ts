@@ -815,7 +815,9 @@ describe('PackagesProvider', () => {
 
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
-    expect(auditStatus?.description).toContain('/workspace/packages/ui/package.json');
+    expect(auditStatus?.description).toBe(
+      '1 vulnerable package(s) from successful audit roots; failed: /workspace/packages/ui/package.json',
+    );
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
   });
 
@@ -855,9 +857,24 @@ describe('PackagesProvider', () => {
 
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
-    expect(auditStatus?.description).toContain('/workspace/apps/web/package.json');
-    expect(auditStatus?.description).toContain('/workspace/packages/ui/package.json');
+    expect(auditStatus?.description).toBe(
+      'No successful audit results; failed: /workspace/apps/web/package.json, /workspace/packages/ui/package.json',
+    );
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
+  });
+
+  it('preserves complete audit wording when all roots succeed', async () => {
+    getClientMock.mockResolvedValue({
+      runAudit: vi.fn().mockResolvedValue(new Map()),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit complete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toBe('No vulnerabilities');
   });
 
   it('ignores concurrent audits while allowing a later manual audit', async () => {
