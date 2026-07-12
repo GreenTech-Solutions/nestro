@@ -11,6 +11,7 @@ import {
   ShellTaskCommand,
   showError,
   updateDependencyVersionsInFile,
+  updateDependencyVersionsInFilesAtomically,
 } from '../utils';
 
 const clientManager = new ClientManager();
@@ -96,16 +97,16 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         true,
       ));
       await provider.withWriteSuppressed(async () => {
-        for (const group of groupDeferredUpdatesByPackageFile(updates)) {
-          await updateDependencyVersionsInFile(
-            group.packageFilePath,
-            group.updates.map(update => ({
+        await updateDependencyVersionsInFilesAtomically(
+          groupDeferredUpdatesByPackageFile(updates).map(group => ({
+            packageFilePath: group.packageFilePath,
+            updates: group.updates.map(update => ({
               name: update.item.packageName,
               version: update.version,
               section: getPackageSection(update.item),
             })),
-          );
-        }
+          })),
+        );
       });
       updates.forEach(update => provider.markPackageUpdated(
         getPackageIdentity(update.item),

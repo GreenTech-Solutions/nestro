@@ -13,12 +13,26 @@ export interface PackageFileEntry extends PackageEntry {
   packageFilePath: string;
 }
 
+export interface SkippedPackageFile {
+  packageFilePath: string;
+  error: string;
+}
+
+export type PackageFileEntries = PackageFileEntry[] & {
+  readonly skippedFiles?: readonly SkippedPackageFile[];
+};
+
 export type DependencySection = 'dependencies' | 'devDependencies';
 
 export interface PackageVersionUpdate {
   name: string;
   version: string;
   section: DependencySection;
+}
+
+export interface PackageFileDependencyUpdates {
+  packageFilePath: string;
+  updates: readonly PackageVersionUpdate[];
 }
 
 interface WorkspacePackageJson {
@@ -57,8 +71,52 @@ export async function updateDependencyVersionsInFile(
   packageFilePath: string,
   updates: readonly PackageVersionUpdate[],
 ): Promise<void> {
+  const prepared = await prepareDependencyVersionsInFile(packageFilePath, updates);
+  await writePreparedPackageFile(prepared);
+}
+
+export async function updateDependencyVersionsInFilesAtomically(
+  files: readonly PackageFileDependencyUpdates[],
+): Promise<void> {
+  const prepared = [] as PreparedPackageFile[];
+  for (const file of files) {
+    prepared.push(await prepareDependencyVersionsInFile(file.packageFilePath, file.updates));
+  }
+
+  const written: PreparedPackageFile[] = [];
+  try {
+    for (const file of prepared) {
+      try {
+        await writePreparedPackageFile(file);
+      }
+      finally {
+        written.push(file);
+      }
+    }
+  }
+  catch (err) {
+    const rollbackFailures = await rollbackPreparedPackageFiles(written);
+    if (rollbackFailures.length > 0) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`${message}; failed to roll back: ${rollbackFailures.join(', ')}`);
+    }
+    throw err;
+  }
+}
+
+interface PreparedPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  updated: Uint8Array;
+}
+
+async function prepareDependencyVersionsInFile(
+  packageFilePath: string,
+  updates: readonly PackageVersionUpdate[],
+): Promise<PreparedPackageFile> {
   const uri = vscode.Uri.file(packageFilePath);
-  const raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  const original = await vscode.workspace.fs.readFile(uri);
+  const raw = Buffer.from(original).toString('utf8');
   const json = JSON.parse(raw) as WorkspacePackageJson;
   const missing: string[] = [];
 
@@ -79,7 +137,29 @@ export async function updateDependencyVersionsInFile(
 
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+  return {
+    uri,
+    original,
+    updated: Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`),
+  };
+}
+
+async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
+  await vscode.workspace.fs.writeFile(file.uri, file.updated);
+}
+
+async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<string[]> {
+  const failures: string[] = [];
+  for (const file of [...files].reverse()) {
+    try {
+      await vscode.workspace.fs.writeFile(file.uri, file.original);
+    }
+    catch (err) {
+      failures.push(file.uri.fsPath);
+      logger.error(`Failed to roll back package.json at ${file.uri.toString()}.`, err);
+    }
+  }
+  return failures;
 }
 
 export async function switchDependencyType(
@@ -144,7 +224,13 @@ async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
     if (deps === undefined) { continue; }
     for (const [name, version] of Object.entries(deps)) {
       const prefix = extractVersionPrefix(version);
-      if (prefix === '^' || prefix === '~') {
+      const remainder = version.startsWith('workspace:')
+        ? version.slice('workspace:'.length)
+        : version;
+      const remainderPrefix = extractVersionPrefix(remainder);
+      const isConcreteWorkspaceRange = version.startsWith('workspace:')
+        && isConcreteVersion(remainder.slice(remainderPrefix.length));
+      if ((prefix === '^' || prefix === '~') || (isConcreteWorkspaceRange && (remainderPrefix === '^' || remainderPrefix === '~'))) {
         deps[name] = setPinnedVersion(version, true);
         count++;
       }
@@ -161,14 +247,15 @@ export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
   return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
 }
 
-export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntry[]> {
+export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntries> {
   const files = await findWorkspacePackageJsonFiles(glob);
   if (files.length === 0) {
     logger.info('No workspace package.json found.');
-    return [];
+    return createPackageFileEntries([], []);
   }
 
   const results: PackageFileEntry[] = [];
+  const skippedFiles: SkippedPackageFile[] = [];
   for (const uri of files) {
     try {
       const raw = await vscode.workspace.fs.readFile(uri);
@@ -193,10 +280,25 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
       );
     }
     catch (err) {
+      skippedFiles.push({
+        packageFilePath: uri.fsPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
       logger.error(`Failed to read workspace package.json at ${uri.toString()}; skipping.`, err);
     }
   }
-  return results;
+  return createPackageFileEntries(results, skippedFiles);
+}
+
+function createPackageFileEntries(
+  entries: PackageFileEntry[],
+  skippedFiles: readonly SkippedPackageFile[],
+): PackageFileEntries {
+  Object.defineProperty(entries, 'skippedFiles', {
+    value: skippedFiles,
+    enumerable: false,
+  });
+  return entries as PackageFileEntries;
 }
 
 export async function getWorkspacePackageFilePaths(glob?: string): Promise<string[]> {
@@ -272,6 +374,10 @@ function setPinnedVersion(version: string, pin: boolean): string {
   const versionPrefix = extractVersionPrefix(remainder);
   const normalized = remainder.slice(versionPrefix.length);
   return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
+}
+
+function isConcreteVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
 }
 
 function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {

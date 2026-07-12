@@ -154,6 +154,30 @@ describe('PackagesProvider.resetUpdateData()', () => {
       ['typescript', '5.0.0', undefined, 'none'],
     ]);
   });
+
+  it('preserves active installing state when update data is reset', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    provider.markPackageUpdating(identity, true);
+    provider.resetUpdateData();
+
+    const packages = provider.getChildren()
+      .filter((item): item is GroupItem => item instanceof GroupItem)
+      .flatMap(group => group.children)
+      .filter((item): item is PackageItem => item instanceof PackageItem);
+    expect(packages.find(item => item.packageName === 'react')).toMatchObject({
+      latest: undefined,
+      updateType: 'none',
+      installing: true,
+    });
+  });
 });
 
 function makeContext(): vscode.ExtensionContext {

@@ -42,8 +42,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditResults: Map<string, AuditSeverity> = new Map();
   private checkState: 'idle' | 'running' | 'done' = 'idle';
   private lastCheckTime: Date | undefined;
-  private auditState: 'idle' | 'running' | 'done' = 'idle';
+  private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastAuditCount: number | undefined;
+  private lastAuditSuccessfulRootCount: number | undefined;
+  private failedAuditPaths: string[] = [];
+  private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private updateCache: {
     data: Map<string, string>;
@@ -163,7 +166,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         undefined,
         'none',
-        false,
+        item.installing,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -187,12 +190,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
+    const updateType = installing || item.latest === undefined
+      ? item.updateType
+      : getUpdateType(item.currentVersion, item.latest);
     this.allEntries[index] = {
       item: this.createPackageItem(
         item.packageName,
         item.currentVersion,
         item.latest,
-        item.updateType,
+        updateType,
         installing,
         entryPackageFilePath,
         dev,
@@ -217,9 +223,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditResults = new Map();
     this.auditState = 'idle';
     this.lastAuditCount = undefined;
+    this.lastAuditSuccessfulRootCount = undefined;
+    this.failedAuditPaths = [];
+    this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
       const entries = await readAllWorkspaceDependencies();
+      this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -239,7 +249,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         // preserves existing update data rather than resetting it to 'none'.
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
         const newSemver = e.current.slice(e.versionPrefix.length);
-        if (existing && existingSemver === newSemver) {
+        const preserveExistingUpdateState = existing !== undefined
+          && (existing.item.installing || existingSemver === newSemver);
+        if (preserveExistingUpdateState) {
           return {
             item: this.createPackageItem(
               e.name,
@@ -291,7 +303,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             versionPrefix: e.item.versionPrefix,
             packageFilePath: e.packageFilePath,
           }))
-        : await readAllWorkspaceDependencies();
+        : await this.readPackagesForUpdateCheck();
       const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
       const packageFilesKey = this.packageFilesKey(packageFiles);
       const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
@@ -371,6 +383,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     this.auditState = 'running';
+    this.lastAuditSuccessfulRootCount = undefined;
+    this.failedAuditPaths = [];
     this.emitTreeChanged();
 
     try {
@@ -381,17 +395,33 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }
 
       const auditResults = new Map<string, AuditSeverity>();
+      const failedAuditPaths: string[] = [];
+      let successfulAuditRootCount = 0;
       for (const packageFilePath of packageFilePaths) {
-        const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
-        const fileResults = await client.runAudit();
-        for (const [packageName, severity] of fileResults) {
-          auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+        try {
+          const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
+          const fileResults = await client.runAudit();
+          successfulAuditRootCount += 1;
+          for (const [packageName, severity] of fileResults) {
+            auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+          }
+        }
+        catch (err) {
+          failedAuditPaths.push(packageFilePath);
+          logger.error(`Audit failed for ${packageFilePath}.`, err);
         }
       }
       this.auditResults = auditResults;
-      this.auditState = 'done';
+      this.failedAuditPaths = failedAuditPaths;
+      this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
       this.lastAuditCount = this.auditResults.size;
-      logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
+      this.lastAuditSuccessfulRootCount = successfulAuditRootCount;
+      logger.info(
+        failedAuditPaths.length === 0
+          ? `Audit: ${this.auditResults.size} vulnerable package(s).`
+          : `Audit incomplete: ${this.auditResults.size} vulnerable package(s); `
+            + `failed ${failedAuditPaths.length} package root(s).`,
+      );
       this.rebuildPackageItems();
     }
     catch (err) {
@@ -413,7 +443,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.noWorkspace',
-      !this.loading && this.allEntries.length === 0,
+      !this.loading && this.allEntries.length === 0 && this.failedPackageReadPaths.length === 0,
     );
     this._onDidChangeTreeData.fire();
   }
@@ -526,6 +556,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return await getWorkspacePackageFilePaths();
   }
 
+  private async readPackagesForUpdateCheck(): Promise<Awaited<ReturnType<typeof readAllWorkspaceDependencies>>> {
+    const entries = await readAllWorkspaceDependencies();
+    this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+    return entries;
+  }
+
   private entryKey(packageName: string, packageFilePath: string): string {
     return `${packageFilePath}\0${packageName}`;
   }
@@ -570,6 +606,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private buildStatusItems(): StatusItem[] {
     const items: StatusItem[] = [];
 
+    if (this.failedPackageReadPaths.length > 0) {
+      items.push(new StatusItem(
+        'Package read incomplete',
+        `Fix invalid or unreadable package.json: ${this.failedPackageReadPaths.join(', ')}`,
+        'warning',
+        'charts.yellow',
+      ));
+    }
+
     if (this.checkState === 'running') {
       items.push(new StatusItem('Checking updates…', '', 'loading~spin'));
     }
@@ -591,6 +636,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`,
         count === 0 ? 'shield-check' : 'warning',
         count === 0 ? 'charts.green' : 'charts.red',
+      ));
+    }
+    else if (this.auditState === 'incomplete') {
+      const count = this.lastAuditCount ?? 0;
+      const resultDescription = this.lastAuditSuccessfulRootCount === 0
+        ? 'No successful audit results'
+        : `${count} vulnerable package(s) from successful audit roots`;
+      items.push(new StatusItem(
+        'Audit incomplete',
+        `${resultDescription}; `
+        + `failed: ${this.failedAuditPaths.join(', ')}`,
+        'warning',
+        'charts.yellow',
       ));
     }
 

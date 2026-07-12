@@ -15,9 +15,12 @@ import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
+  showError,
 } from '../utils';
+import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
 const getClientMock = vi.fn();
+const getUpdateTypeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../clients', () => ({
   ClientManager: vi.fn(function (this: { getClient: typeof getClientMock }) {
@@ -29,12 +32,11 @@ vi.mock('../utils', () => ({
   fetchAllLatestVersions: vi.fn(),
   getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
   getWorkspacePackageFilePaths: vi.fn(),
-  getUpdateType: vi.fn((current: string, latest: string) => (
-    current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
-  )),
+  getUpdateType: getUpdateTypeMock,
   logger: {
     info: vi.fn(),
     error: vi.fn(),
+    warn: vi.fn(),
     dispose: vi.fn(),
   },
   readAllWorkspaceDependencies: vi.fn(),
@@ -46,6 +48,7 @@ vi.mock('../utils', () => ({
 describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getUpdateTypeMock.mockImplementation(realGetUpdateType);
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
       {
         name: 'react',
@@ -245,6 +248,26 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
   });
 
+  it('allows a later manual update check after a timeout rejection', async () => {
+    const timeoutError = new Error('npm-check-updates timed out');
+    vi.mocked(fetchAllLatestVersions)
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce(new Map([['react', '19.0.0']]));
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    expect(showError).toHaveBeenCalledWith(
+      'failed to check updates — npm-check-updates timed out',
+      timeoutError,
+    );
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('19.0.0');
+  });
+
   it('preserves live installing state when update checks finish', async () => {
     let resolveFetch: (value: Map<string, string>) => void = () => {};
     vi.mocked(fetchAllLatestVersions).mockReturnValueOnce(new Promise((resolve) => {
@@ -412,6 +435,64 @@ describe('PackagesProvider', () => {
       expect.objectContaining({ label: 'Update: 18.0.0 → 19.0.0 (breaking)' }),
       expect.objectContaining({ label: 'File: apps/frontend/package.json' }),
     ]);
+  });
+
+  it('shows one actionable status for skipped package files while keeping valid entries', async () => {
+    const entries = [{
+      name: 'react',
+      current: '18.0.0',
+      dev: false,
+      versionPrefix: '',
+      packageFilePath: '/workspace/good/package.json',
+    }];
+    Object.defineProperty(entries, 'skippedFiles', {
+      value: [{
+        packageFilePath: '/workspace/bad/package.json',
+        error: 'Unexpected end of JSON input',
+      }],
+    });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(entries);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+
+    const tree = provider.getChildren();
+    const readStatus = tree.find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
+    expect(readStatus).toBeInstanceOf(StatusItem);
+    expect(readStatus?.description).toContain('/workspace/bad/package.json');
+    expect(getPackageItems(provider).map(item => item.packageFilePath)).toEqual(['/workspace/good/package.json']);
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('shows all skipped paths without claiming there is no workspace', async () => {
+    const entries: Array<{
+      name: string;
+      current: string;
+      dev: boolean;
+      versionPrefix: string;
+      packageFilePath: string;
+    }> = [];
+    Object.defineProperty(entries, 'skippedFiles', {
+      value: [
+        { packageFilePath: '/workspace/bad/package.json', error: 'malformed' },
+        { packageFilePath: '/workspace/unreadable/package.json', error: 'permission denied' },
+      ],
+    });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(entries);
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+
+    const readStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
+    expect(readStatus).toBeInstanceOf(StatusItem);
+    expect(readStatus?.description).toContain('/workspace/bad/package.json');
+    expect(readStatus?.description).toContain('/workspace/unreadable/package.json');
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'setContext',
+      'nestro.noWorkspace',
+      false,
+    );
+    expect(showError).not.toHaveBeenCalled();
   });
 
   it('shows status rows above the filter bar', () => {
@@ -608,7 +689,89 @@ describe('PackagesProvider', () => {
     ]);
   });
 
-  it('runs audits per package file and keeps vulnerability badges scoped to that file', async () => {
+  it('reconciles a failed update after reload sees the target current version', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '19.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    let react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      currentVersion: '19.0.0',
+      latest: '19.0.0',
+      updateType: 'breaking',
+      installing: true,
+    });
+    expect(provider.getVisibleOutdatedPackages()).toEqual([]);
+
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+
+    react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      currentVersion: '19.0.0',
+      latest: '19.0.0',
+      updateType: 'none',
+      installing: false,
+    });
+    expect(provider.getVisibleOutdatedPackages()).toEqual([]);
+  });
+
+  it('clears active update state after successful completion following a changed-version reload', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.markPackageUpdating(identity, true);
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '19.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    provider.markPackageUpdated(identity, '19.0.0');
+
+    expect(getPackageItems(provider).map(item => ({
+      currentVersion: item.currentVersion,
+      latest: item.latest,
+      updateType: item.updateType,
+      installing: item.installing,
+    }))).toEqual([
+      { currentVersion: '19.0.0', latest: undefined, updateType: 'none', installing: false },
+    ]);
+  });
+
+  it('keeps successful audit results and shows failed package paths', async () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
         name: 'react',
@@ -630,7 +793,7 @@ describe('PackagesProvider', () => {
         runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
       })
       .mockResolvedValueOnce({
-        runAudit: vi.fn().mockResolvedValue(new Map()),
+        runAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')),
       });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -644,10 +807,74 @@ describe('PackagesProvider', () => {
 
     expect(getClientMock).toHaveBeenCalledWith('/workspace/apps/web');
     expect(getClientMock).toHaveBeenCalledWith('/workspace/packages/ui');
+    expect(showError).not.toHaveBeenCalled();
     expect(packages.map(item => [item.packageFilePath, item.vulnerabilitySeverity])).toEqual([
       ['/workspace/apps/web/package.json', 'high'],
       ['/workspace/packages/ui/package.json', undefined],
     ]);
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toBe(
+      '1 vulnerable package(s) from successful audit roots; failed: /workspace/packages/ui/package.json',
+    );
+    expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
+  });
+
+  it('shows every failed package path when all audits fail', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/apps/web/package.json',
+      },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/packages/ui/package.json',
+      },
+    ]);
+    getClientMock
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockRejectedValue(new Error('web audit unavailable')),
+      })
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockRejectedValue(new Error('ui audit unavailable')),
+      });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getClientMock).toHaveBeenCalledTimes(2);
+    expect(showError).not.toHaveBeenCalled();
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toBe(
+      'No successful audit results; failed: /workspace/apps/web/package.json, /workspace/packages/ui/package.json',
+    );
+    expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
+  });
+
+  it('preserves complete audit wording when all roots succeed', async () => {
+    getClientMock.mockResolvedValue({
+      runAudit: vi.fn().mockResolvedValue(new Map()),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit complete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toBe('No vulnerabilities');
   });
 
   it('ignores concurrent audits while allowing a later manual audit', async () => {

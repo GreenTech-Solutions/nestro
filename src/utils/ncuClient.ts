@@ -1,5 +1,7 @@
 export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
 
+const NCU_TIMEOUT_MS = 60_000;
+
 type Run = (options: {
   packageFile: string;
   target: NcuUpdateTarget;
@@ -7,6 +9,7 @@ type Run = (options: {
   jsonUpgraded: true;
   removeRange: true;
   silent: true;
+  timeout: number;
 }) => Promise<unknown>;
 
 let cachedRun: Run | undefined;
@@ -24,6 +27,7 @@ export async function fetchAllLatestVersions(
     jsonUpgraded: true,
     removeRange: true,
     silent: true,
+    timeout: NCU_TIMEOUT_MS,
   });
 
   if (!isStringRecord(result)) {
