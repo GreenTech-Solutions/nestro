@@ -163,7 +163,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         undefined,
         'none',
-        false,
+        item.installing,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -239,7 +239,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         // preserves existing update data rather than resetting it to 'none'.
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
         const newSemver = e.current.slice(e.versionPrefix.length);
-        if (existing && existingSemver === newSemver) {
+        const preserveExistingUpdateState = existing !== undefined
+          && (existing.item.installing || existingSemver === newSemver);
+        if (preserveExistingUpdateState) {
           return {
             item: this.createPackageItem(
               e.name,

@@ -608,6 +608,88 @@ describe('PackagesProvider', () => {
     ]);
   });
 
+  it('preserves active update state when a reload sees a changed current version', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '19.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    let react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      currentVersion: '19.0.0',
+      latest: '19.0.0',
+      updateType: 'breaking',
+      installing: true,
+    });
+    expect(provider.getVisibleOutdatedPackages()).toEqual([]);
+
+    provider.markPackageUpdating({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+
+    react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      currentVersion: '19.0.0',
+      latest: '19.0.0',
+      updateType: 'breaking',
+      installing: false,
+    });
+    expect(provider.getVisibleOutdatedPackages()).toEqual([react]);
+  });
+
+  it('clears active update state after successful completion following a changed-version reload', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.markPackageUpdating(identity, true);
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '19.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    provider.markPackageUpdated(identity, '19.0.0');
+
+    expect(getPackageItems(provider).map(item => ({
+      currentVersion: item.currentVersion,
+      latest: item.latest,
+      updateType: item.updateType,
+      installing: item.installing,
+    }))).toEqual([
+      { currentVersion: '19.0.0', latest: undefined, updateType: 'none', installing: false },
+    ]);
+  });
+
   it('runs audits per package file and keeps vulnerability badges scoped to that file', async () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
