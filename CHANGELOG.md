@@ -1,3 +1,21 @@
+## [0.4.2](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.1...v0.4.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **audit:** clarify incomplete audit status ([5311557](https://github.com/GreenTech-Solutions/nestro/commit/531155755cc3e82e92e89ed7dafdbc03029a91df))
+* bound npm-check-updates runtime ([65ad990](https://github.com/GreenTech-Solutions/nestro/commit/65ad990f5c186e7644be023b8ee4523c23a3ba5b))
+* **ci:** use portable package check ([0b33d8b](https://github.com/GreenTech-Solutions/nestro/commit/0b33d8b0075b558edfb1d1f421e8f1b1d9c6186e))
+* **ci:** validate built extension package ([6916477](https://github.com/GreenTech-Solutions/nestro/commit/6916477507cffc6e70f852c0605009c7a42eea7e))
+* keep partial multi-root audit results ([2765eef](https://github.com/GreenTech-Solutions/nestro/commit/2765eefd9a226fcf50fc9d36ccaea8299251f8f0))
+* make deferred bulk updates atomic ([b1db636](https://github.com/GreenTech-Solutions/nestro/commit/b1db63636da1e9c79e61575e74034db4ed19c197))
+* pin concrete workspace ranges ([afebddd](https://github.com/GreenTech-Solutions/nestro/commit/afebddd382ff5b20fae56af780d31cfaf0ef7773))
+* preserve installing state across reloads ([e8aa93e](https://github.com/GreenTech-Solutions/nestro/commit/e8aa93ea2d831b369b667289eb9f715263a5d40d))
+* **provider:** reconcile failed update state ([445b035](https://github.com/GreenTech-Solutions/nestro/commit/445b03590961a7fb87dc50e2ace987dbe5dbae41))
+* report deferred rollback failures ([529b191](https://github.com/GreenTech-Solutions/nestro/commit/529b1917bfaa60407da5cba668ad07e661122c4a))
+* surface package read failures ([7dc8498](https://github.com/GreenTech-Solutions/nestro/commit/7dc849813f15aba6ff15346fac7dade7eb5d6a05))
+* update agent configuration synchronization instructions ([858d12d](https://github.com/GreenTech-Solutions/nestro/commit/858d12d8cbeb35376d2d39e793277670714b8d5b))
+
 ## [0.4.1](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.0...v0.4.1) (2026-07-09)
 
 
