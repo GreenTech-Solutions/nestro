@@ -21,6 +21,11 @@ export interface PackageVersionUpdate {
   section: DependencySection;
 }
 
+export interface PackageFileDependencyUpdates {
+  packageFilePath: string;
+  updates: readonly PackageVersionUpdate[];
+}
+
 interface WorkspacePackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -57,8 +62,48 @@ export async function updateDependencyVersionsInFile(
   packageFilePath: string,
   updates: readonly PackageVersionUpdate[],
 ): Promise<void> {
+  const prepared = await prepareDependencyVersionsInFile(packageFilePath, updates);
+  await writePreparedPackageFile(prepared);
+}
+
+export async function updateDependencyVersionsInFilesAtomically(
+  files: readonly PackageFileDependencyUpdates[],
+): Promise<void> {
+  const prepared = [] as PreparedPackageFile[];
+  for (const file of files) {
+    prepared.push(await prepareDependencyVersionsInFile(file.packageFilePath, file.updates));
+  }
+
+  const written: PreparedPackageFile[] = [];
+  try {
+    for (const file of prepared) {
+      try {
+        await writePreparedPackageFile(file);
+      }
+      finally {
+        written.push(file);
+      }
+    }
+  }
+  catch (err) {
+    await rollbackPreparedPackageFiles(written);
+    throw err;
+  }
+}
+
+interface PreparedPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  updated: Uint8Array;
+}
+
+async function prepareDependencyVersionsInFile(
+  packageFilePath: string,
+  updates: readonly PackageVersionUpdate[],
+): Promise<PreparedPackageFile> {
   const uri = vscode.Uri.file(packageFilePath);
-  const raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+  const original = await vscode.workspace.fs.readFile(uri);
+  const raw = Buffer.from(original).toString('utf8');
   const json = JSON.parse(raw) as WorkspacePackageJson;
   const missing: string[] = [];
 
@@ -79,7 +124,26 @@ export async function updateDependencyVersionsInFile(
 
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+  return {
+    uri,
+    original,
+    updated: Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`),
+  };
+}
+
+async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
+  await vscode.workspace.fs.writeFile(file.uri, file.updated);
+}
+
+async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<void> {
+  for (const file of [...files].reverse()) {
+    try {
+      await vscode.workspace.fs.writeFile(file.uri, file.original);
+    }
+    catch (err) {
+      logger.error(`Failed to roll back package.json at ${file.uri.toString()}.`, err);
+    }
+  }
 }
 
 export async function switchDependencyType(

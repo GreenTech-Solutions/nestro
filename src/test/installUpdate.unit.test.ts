@@ -440,6 +440,50 @@ describe('updateAllVisibleCommand()', () => {
     provider.dispose();
   });
 
+  it('prevents partial writes when a deferred bulk update spans files and a write fails', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    vi.mocked(vscode.workspace.fs.readFile)
+      .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { react: '^18.0.0' } }, undefined, 2)))
+      .mockResolvedValueOnce(Buffer.from(JSON.stringify({ dependencies: { vite: '^5.0.0' } }, undefined, 2)));
+    let writeCount = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation((uri, content) => {
+      writeCount++;
+      if (writeCount === 2) {
+        return Promise.reject(new Error('second write failed'));
+      }
+      if (writeCount === 3) {
+        expect(uri.fsPath).toBe('/workspace/apps/web/package.json');
+        expect(Buffer.from(content).toString('utf8')).toContain('"vite": "^5.0.0"');
+      }
+      return Promise.resolve();
+    });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(writeCount).toBe(4);
+    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[2][1]).toString('utf8'))
+      .toContain('"vite": "^5.0.0"');
+    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[3][1]).toString('utf8'))
+      .toContain('"react": "^18.0.0"');
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'vite',
+      packageFilePath: '/workspace/apps/web/package.json',
+      section: 'dependencies',
+    }, false);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — second write failed',
+    );
+  });
+
   it('does nothing when there are no visible outdated packages', async () => {
     const provider = makeProvider([]);
 
