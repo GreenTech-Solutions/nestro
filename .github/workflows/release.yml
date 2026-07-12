@@ -33,14 +33,17 @@ jobs:
           pnpm audit signatures
 
       - name: 4. Check for errors
-        run: |
-          pnpm typecheck
-          pnpm check:vsce
+        run: pnpm typecheck
 
       - name: 5. Build
         run: pnpm run build
 
-      - name: 6. Release
+      - name: 6. Check extension package
+        run: |
+          test -f out/extension.cjs
+          pnpm check:vsce | rg -qx 'out/extension\.cjs'
+
+      - name: 7. Release
         run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
