@@ -41,7 +41,7 @@ jobs:
       - name: 6. Check extension package
         run: |
           test -f out/extension.cjs
-          pnpm check:vsce | rg -qx 'out/extension\.cjs'
+          pnpm check:vsce | grep -Fxq 'out/extension.cjs'
 
       - name: 7. Release
         run: pnpm exec semantic-release
