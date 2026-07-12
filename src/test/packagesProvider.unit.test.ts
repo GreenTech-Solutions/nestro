@@ -36,6 +36,7 @@ vi.mock('../utils', () => ({
   logger: {
     info: vi.fn(),
     error: vi.fn(),
+    warn: vi.fn(),
     dispose: vi.fn(),
   },
   readAllWorkspaceDependencies: vi.fn(),
@@ -711,7 +712,7 @@ describe('PackagesProvider', () => {
     ]);
   });
 
-  it('runs audits per package file and keeps vulnerability badges scoped to that file', async () => {
+  it('keeps successful audit results and shows failed package paths', async () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
         name: 'react',
@@ -733,7 +734,7 @@ describe('PackagesProvider', () => {
         runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
       })
       .mockResolvedValueOnce({
-        runAudit: vi.fn().mockResolvedValue(new Map()),
+        runAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')),
       });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -747,10 +748,57 @@ describe('PackagesProvider', () => {
 
     expect(getClientMock).toHaveBeenCalledWith('/workspace/apps/web');
     expect(getClientMock).toHaveBeenCalledWith('/workspace/packages/ui');
+    expect(showError).not.toHaveBeenCalled();
     expect(packages.map(item => [item.packageFilePath, item.vulnerabilitySeverity])).toEqual([
       ['/workspace/apps/web/package.json', 'high'],
       ['/workspace/packages/ui/package.json', undefined],
     ]);
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toContain('/workspace/packages/ui/package.json');
+    expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
+  });
+
+  it('shows every failed package path when all audits fail', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/apps/web/package.json',
+      },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/packages/ui/package.json',
+      },
+    ]);
+    getClientMock
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockRejectedValue(new Error('web audit unavailable')),
+      })
+      .mockResolvedValueOnce({
+        runAudit: vi.fn().mockRejectedValue(new Error('ui audit unavailable')),
+      });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getClientMock).toHaveBeenCalledTimes(2);
+    expect(showError).not.toHaveBeenCalled();
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toContain('/workspace/apps/web/package.json');
+    expect(auditStatus?.description).toContain('/workspace/packages/ui/package.json');
+    expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
   });
 
   it('ignores concurrent audits while allowing a later manual audit', async () => {

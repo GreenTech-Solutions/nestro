@@ -42,8 +42,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditResults: Map<string, AuditSeverity> = new Map();
   private checkState: 'idle' | 'running' | 'done' = 'idle';
   private lastCheckTime: Date | undefined;
-  private auditState: 'idle' | 'running' | 'done' = 'idle';
+  private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastAuditCount: number | undefined;
+  private failedAuditPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private updateCache: {
     data: Map<string, string>;
@@ -217,6 +218,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditResults = new Map();
     this.auditState = 'idle';
     this.lastAuditCount = undefined;
+    this.failedAuditPaths = [];
     this.emitTreeChanged();
     try {
       const entries = await readAllWorkspaceDependencies();
@@ -373,6 +375,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     this.auditState = 'running';
+    this.failedAuditPaths = [];
     this.emitTreeChanged();
 
     try {
@@ -383,17 +386,30 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }
 
       const auditResults = new Map<string, AuditSeverity>();
+      const failedAuditPaths: string[] = [];
       for (const packageFilePath of packageFilePaths) {
-        const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
-        const fileResults = await client.runAudit();
-        for (const [packageName, severity] of fileResults) {
-          auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+        try {
+          const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
+          const fileResults = await client.runAudit();
+          for (const [packageName, severity] of fileResults) {
+            auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+          }
+        }
+        catch (err) {
+          failedAuditPaths.push(packageFilePath);
+          logger.error(`Audit failed for ${packageFilePath}.`, err);
         }
       }
       this.auditResults = auditResults;
-      this.auditState = 'done';
+      this.failedAuditPaths = failedAuditPaths;
+      this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
       this.lastAuditCount = this.auditResults.size;
-      logger.info(`Audit: ${this.auditResults.size} vulnerable package(s).`);
+      logger.info(
+        failedAuditPaths.length === 0
+          ? `Audit: ${this.auditResults.size} vulnerable package(s).`
+          : `Audit incomplete: ${this.auditResults.size} vulnerable package(s); `
+            + `failed ${failedAuditPaths.length} package root(s).`,
+      );
       this.rebuildPackageItems();
     }
     catch (err) {
@@ -593,6 +609,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`,
         count === 0 ? 'shield-check' : 'warning',
         count === 0 ? 'charts.green' : 'charts.red',
+      ));
+    }
+    else if (this.auditState === 'incomplete') {
+      const count = this.lastAuditCount ?? 0;
+      items.push(new StatusItem(
+        'Audit incomplete',
+        `${count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`}; `
+          + `failed: ${this.failedAuditPaths.join(', ')}`,
+        'warning',
+        'charts.yellow',
       ));
     }
 
