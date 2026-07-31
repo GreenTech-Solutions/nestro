@@ -1,7 +1,6 @@
-# Caliber Learnings
+# Project Learnings
 
 Accumulated patterns and anti-patterns from development sessions.
-Auto-managed by [caliber](https://github.com/caliber-ai-org/ai-setup) — do not edit manually.
 
 - **[fix:project]** `tsdown.config.ts` (`.ts` extension) silently fails to load when the file uses ESM `import` syntax — rename to `tsdown.config.mts` so tsdown picks it up. First symptom is `pnpm exec tsdown` hanging or returning empty output.
 - **[gotcha:project]** tsdown with `format: 'cjs'` emits `out/extension.cjs`, but VS Code loads the file named in `package.json` `"main"`. If `main` still says `./out/extension.js`, activation fails with "Cannot find module". Always keep `main` in sync with tsdown's actual output extension.

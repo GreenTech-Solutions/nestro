@@ -13,7 +13,7 @@ pnpm-workspace.yaml
 pnpm-lock.yaml
 vitest.config.ts
 tsdown.config.mts
-CALIBER_LEARNINGS.md
+LEARNINGS.md
 AGENTS.md
 CLAUDE.md
 vsc-extension-quickstart.md
@@ -23,8 +23,6 @@ images/SCREENSHOTS.md
 node_modules/**
 .agents/**
 .claude/**
-.caliber/**
-.caliberignore
 .eslintcache
 tsconfig.test.json
 .env
