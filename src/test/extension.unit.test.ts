@@ -36,6 +36,22 @@ vi.mock('../providers', () => ({
   PackageItem: vi.fn(),
 }));
 
+// Every command id activate() is expected to register with VS Code.
+const REGISTERED_COMMAND_IDS = [
+  'nestro.refresh',
+  'nestro.installUpdate',
+  'nestro.switchDepType',
+  'nestro.pinVersion',
+  'nestro.removePackage',
+  'nestro.runAudit',
+  'nestro.runInstall',
+  'nestro.updateAllVisible',
+  'nestro.openOnNpm',
+  'nestro.copyPackageName',
+  'nestro.searchPackages',
+  'nestro.clearSearchQuery',
+];
+
 function makeContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
 }
@@ -54,98 +70,10 @@ describe('activate()', () => {
     mockNestroConfiguration({});
   });
 
-  it('registers nestro.refresh command', () => {
+  it.each(REGISTERED_COMMAND_IDS)('registers %s command', (commandId) => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.refresh',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.installUpdate command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.installUpdate',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.switchDepType command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.switchDepType',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.pinVersion command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.pinVersion',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.removePackage command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.removePackage',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.runAudit command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.runAudit',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.runInstall command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.runInstall',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.updateAllVisible command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.updateAllVisible',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.openOnNpm command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.openOnNpm',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.copyPackageName command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.copyPackageName',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.searchPackages command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.searchPackages',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.clearSearchQuery command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.clearSearchQuery',
+      commandId,
       expect.any(Function),
     );
   });

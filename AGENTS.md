@@ -7,10 +7,12 @@
 ```bash
 pnpm run build          # tsdown → out/extension.cjs
 pnpm run dev            # tsdown --watch
-pnpm run lint           # delegates to lint:eslint (eslint --fix --cache src) — mutating today
+pnpm run lint           # eslint src --max-warnings=0 — non-mutating validation gate
+pnpm run lint:fix       # eslint --fix src — the mutating pass, never run automatically
 pnpm run typecheck      # tsc --noEmit
+pnpm run test:compile   # tsc -p tsconfig.test.json → out/test/
 pnpm run check:vsce     # vsce ls --no-dependencies
-pnpm run test           # pretest (tsc -p tsconfig.test.json + lint) + vscode-test (Electron)
+pnpm run test           # pretest (test:compile + lint) + vscode-test (Electron)
 pnpm run test:unit      # vitest run — *.unit.test.ts without VS Code
 pnpm run test:unit:watch  # vitest (watch mode)
 ```
