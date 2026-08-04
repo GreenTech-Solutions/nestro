@@ -89,23 +89,6 @@
 * **search:** add clear search query command ([cd7e7fb](https://github.com/GreenTech-Solutions/nestro/commit/cd7e7fbe549f0e02dfb38d71f82774a16afc6e8a))
 * **search:** split search query into tree item ([9c5907c](https://github.com/GreenTech-Solutions/nestro/commit/9c5907ccd18b5662e02d3857ea96f9f2b20965fe))
 
-## [Unreleased]
-
-- Declare internal filter commands for keybinding metadata while keeping them hidden from the Command Palette.
-- Fix check-for-updates debounce so cache/config invalidation allows an immediate fresh update check.
-- Fix `npm-check-updates` loading so the full VS Code test suite compiles and runs again under the CommonJS test build.
-- Fix package-manager update commands so `devDependencies` stay in `devDependencies` for single updates, version picks, and bulk updates.
-- Fix monorepo watcher handling so `nestro.monorepoGlob` changes recreate file watchers immediately.
-- Fix `Run Install` and security audits to target the correct package root instead of always using the first workspace folder.
-- Fix audit badges so vulnerabilities are tracked per `package.json` instead of leaking across matching package names in different workspaces.
-- Fix filter counts so installing packages immediately disappear from update counters, preserve version prefixes after install, and invalidate cached update data when update tasks succeed.
-- Fix monorepo refresh ordering so the workspace root stays first and other package sources sort alphabetically.
-- Fix filter labels so update severities display as Patch, Minor, and Breaking.
-- Fix version picker ordering so it shows the full registry list in descending semver order and respects `nestro.includePreReleases`.
-- Add a package removal action to the package tree context menu.
-- Add package name search to the sidebar tree.
-- Keep dependency sections alphabetized when moving packages between `dependencies` and `devDependencies`.
-
 ## [0.1.1](https://github.com/GreenTech-Solutions/nestro/compare/v0.1.0...v0.1.1) (2026-05-29)
 
 # [0.1.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.0.1...v0.1.0) (2026-05-29)
@@ -144,42 +127,3 @@
 * support monorepo package files ([f397ab1](https://github.com/GreenTech-Solutions/nestro/commit/f397ab1ad97c155aa38f5a5eb02161cf1b3605b1))
 * update Caliber command paths and enhance documentation ([056de87](https://github.com/GreenTech-Solutions/nestro/commit/056de87074127ed6401ef50b70cac023189f0b15))
 * update documentation to include WorkspaceFolderItem and client structure ([622f0ce](https://github.com/GreenTech-Solutions/nestro/commit/622f0ce57e60412d240b483a5941f0ec3605d71a))
-
-# Change Log
-
-All notable changes to the "nestro" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
-
-## [0.0.1] - 2026-05-28
-
-- Initial release
-- Clean up release packaging to exclude internal tooling, config, and agent metadata.
-- Fix broken documentation asset reference in README.
-- Add inline package actions for opening npmjs.com, picking versions, switching dependency type, and toggling version pinning.
-- Add expandable package detail rows showing dependency type, current version, latest version, and package file path.
-- Add monorepo package discovery with folder grouping and per-package-file update commands.
-- Add package manager client classes for npm, pnpm, yarn, and bun command generation and audits.
-- Add `nestro.pickVersion` to install or roll back a package from a version picker.
-- Add `nestro.switchDepType` and `nestro.pinVersion` commands for editing package.json dependency metadata.
-- Add `npm audit` support with vulnerability severity indicators in the package tree.
-- Cache package update checks for five minutes and invalidate the cache when package data changes.
-- Add confirmation before updating all visible packages, configurable with `nestro.confirmBulkUpdate`.
-- Add package context actions to open npmjs.com pages and copy package names.
-- Refresh packages automatically when workspace `package.json` changes.
-- Apply `nestro.defaultFilter`, `nestro.updateTarget`, and `nestro.includePreReleases` changes without restarting the extension.
-- Preserve dependency version prefixes such as `^`, `~`, and `>=` during deferred package updates.
-- Use native TreeView controls, welcome state, and package update badges in the sidebar.
-- Add the `nestro.defaultFilter` setting for the initial package sidebar filter.
-- Add deferred package updates with `nestro.deferInstallAfterUpdate`, `Run Install`, and `Update All` sidebar actions.
-- Batch package update checks through npm-check-updates and add the `nestro.updateTarget` setting.
-- Fix update detection so older registry versions are not offered as downgrades.
-- Add pre-release version parsing for update checks, controlled by the enabled-by-default `nestro.includePreReleases` setting.
-- Detect the workspace package manager and use it for package update commands.
-- Refresh a package row automatically after a successful update command.
-- Show loading and empty-filter messages in the packages sidebar instead of blank states.
-- Show package filters as a single compact row and hide them when no packages are loaded.
-- Use colored upward arrows for package update indicators.
-- Show a spinner on the package row while its update command is running.
-- Add a Nestro Output channel for extension diagnostics.
-- Initial release
