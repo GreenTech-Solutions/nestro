@@ -129,6 +129,51 @@ describe('pickVersionCommand()', () => {
     expect(quickPick.placeholder).toBe('Loading versions...');
     expect(quickPick.onDidAccept).not.toHaveBeenCalled();
   });
+
+  it('does not show an error when the version fetch rejects after the picker was already cancelled', async () => {
+    const quickPick = makeQuickPick();
+    let rejectFetch: (err: Error) => void = () => {};
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    vi.mocked(fetchPackageVersions).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectFetch = reject;
+    }));
+
+    const command = pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    quickPick.onDidHide.mock.calls[0][0]();
+    rejectFetch(new Error('registry unavailable'));
+    await command;
+
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not install when the picker is accepted without a highlighted item', async () => {
+    const quickPick = makeQuickPick();
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+
+    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    quickPick.selectedItems = [];
+    quickPick.onDidAccept.mock.calls[0][0]();
+    await Promise.resolve();
+
+    expect(quickPick.hide).toHaveBeenCalledTimes(1);
+    expect(installUpdateCommand).not.toHaveBeenCalled();
+  });
+
+  it('re-enters cleanup idempotently when the underlying quick pick fires hide again on dispose', async () => {
+    const quickPick = makeQuickPick();
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+
+    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    // Simulate the user pressing Escape: fires the same onDidHide listener that a real
+    // QuickPick.dispose() also fires. Without the `disposed` guard in cleanup(), this would
+    // recurse forever since our mock's dispose() re-fires the hide listener, matching real vscode.
+    quickPick.onDidHide.mock.calls[0][0]();
+
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.acceptDisposable.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.hideDisposable.dispose).toHaveBeenCalledTimes(1);
+  });
 });
 
 function makeQuickPick(): QuickPickMock {
@@ -139,7 +184,11 @@ function makeQuickPick(): QuickPickMock {
   return {
     acceptDisposable,
     busy: false,
-    dispose: vi.fn(),
+    // Real vscode QuickPick.dispose() implicitly hides the picker and fires onDidHide;
+    // mirroring that here is what exercises cleanup()'s re-entrancy guard.
+    dispose: vi.fn(() => {
+      hideListener?.();
+    }),
     hide: vi.fn(() => {
       hideListener?.();
     }),

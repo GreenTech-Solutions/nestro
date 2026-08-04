@@ -351,6 +351,7 @@
     "pretest:stable": "pnpm run pretest",
     "test:stable": "vscode-test --label stable",
     "test:unit": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
     "test:unit:watch": "vitest"
   },
   "devDependencies": {
@@ -361,6 +362,7 @@
     "@types/mocha": "10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "1.125.0",
+    "@vitest/coverage-v8": "4.1.10",
     "@vscode/test-cli": "0.0.15",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",

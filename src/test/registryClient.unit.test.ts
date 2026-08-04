@@ -210,6 +210,42 @@ describe('fetchPackageVersions()', () => {
     }));
   });
 
+  it('rejects when the response stream itself errors', async () => {
+    const error = new Error('response stream reset');
+    vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {
+      const response = new EventEmitter() as IncomingMessage;
+      response.statusCode = 200;
+      process.nextTick(() => {
+        callback?.(response);
+        response.emit('error', error);
+      });
+      return toClientRequest(createMockRequest());
+    });
+
+    await expect(fetchPackageVersions('react')).rejects.toThrow('response stream reset');
+  });
+
+  it('rejects malformed JSON in an otherwise successful registry response', async () => {
+    mockRegistryResponse('not valid json');
+
+    await expect(fetchPackageVersions('react')).rejects.toThrow();
+  });
+
+  it('ignores a request error that arrives after the request already timed out', async () => {
+    const request = createMockRequest();
+    vi.mocked(https.get).mockImplementationOnce(() => {
+      process.nextTick(() => {
+        request.emit('timeout');
+        request.emit('error', new Error('stray network error'));
+      });
+      return toClientRequest(request);
+    });
+
+    await expect(fetchPackageVersions('react')).rejects.toThrow(
+      'npm registry request timed out after 15000ms for react',
+    );
+  });
+
   it('rejects oversized registry responses before unbounded buffering', async () => {
     const request = createMockRequest();
     vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {

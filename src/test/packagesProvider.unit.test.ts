@@ -11,6 +11,9 @@ import {
   StatusItem,
   WorkspaceFolderItem,
 } from '../providers';
+// LoadingItem is not part of the providers barrel's public surface (used only internally by
+// PackagesProvider), so it must be imported directly from its implementation file.
+import { LoadingItem } from '../providers/LoadingItem';
 import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,
@@ -70,6 +73,15 @@ describe('PackagesProvider', () => {
     ]));
     vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/package.json']);
     getClientMock.mockReset();
+  });
+
+  it('shows a loading indicator before packages finish loading', () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    const tree = provider.getChildren();
+
+    expect(tree.at(-1)).toBeInstanceOf(LoadingItem);
+    expect(provider.getChildren(new LoadingItem())).toEqual([]);
   });
 
   it('starts with the configured initial filter', async () => {
@@ -964,3 +976,11 @@ function setProviderState(
 ): void {
   Object.assign(provider as unknown as Record<string, unknown>, state);
 }
+
+describe('PackageDetailItem', () => {
+  it('leaves the icon unset when none is provided', () => {
+    const detail = new PackageDetailItem('Current: 1.0.0');
+
+    expect(detail.iconPath).toBeUndefined();
+  });
+});

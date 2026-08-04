@@ -62,6 +62,49 @@ describe('switchDepTypeCommand()', () => {
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
+
+  it('moves a devDependency back to dependencies', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'react',
+      '^18.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      true,
+      '^',
+    );
+
+    await switchDepTypeCommand(item, provider);
+
+    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+  });
+
+  it.each([
+    ['an Error', new Error('write failed'), 'write failed'],
+    ['a non-Error value', 'write boom', 'write boom'],
+  ] as const)('shows an error without reloading when switching fails with %s', async (_label, rejection, expectedMessage) => {
+    vi.mocked(switchDependencyType).mockRejectedValueOnce(rejection);
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'react',
+      '^18.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+
+    await switchDepTypeCommand(item, provider);
+
+    expect(showError).toHaveBeenCalledWith(`failed to switch dependency type — ${expectedMessage}`, rejection);
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
 });
 
 describe('pinVersionCommand()', () => {
@@ -107,6 +150,30 @@ describe('pinVersionCommand()', () => {
     await pinVersionCommand(item, provider);
 
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+  });
+
+  it.each([
+    ['an Error', new Error('pin write failed'), 'pin write failed'],
+    ['a non-Error value', 'pin boom', 'pin boom'],
+  ] as const)('shows an error without reloading when pinning fails with %s', async (_label, rejection, expectedMessage) => {
+    vi.mocked(setVersionPin).mockRejectedValueOnce(rejection);
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'react',
+      '^18.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(showError).toHaveBeenCalledWith(`failed to toggle version pin — ${expectedMessage}`, rejection);
+    expect(provider.loadPackages).not.toHaveBeenCalled();
   });
 });
 
@@ -206,6 +273,63 @@ describe('removePackageCommand()', () => {
       section: 'dependencies',
     }, false);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a devDependency and prompts with the matching confirmation wording', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem('eslint', '^8.0.0', undefined, 'none', false, undefined, '/workspace/package.json', true, '^');
+    const execution = {} as vscode.TaskExecution;
+    executeTaskMock.mockImplementationOnce(() => {
+      setTimeout(() => {
+        taskProcessEndListener?.({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+      }, 0);
+      return Promise.resolve(execution);
+    });
+
+    await removePackageCommand(item, provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      'Remove eslint from devDependencies?',
+      { modal: true },
+      'Remove Package',
+    );
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'eslint',
+      packageFilePath: '/workspace/package.json',
+      section: 'devDependencies',
+    }, true);
+  });
+
+  it('shows an error without touching update state when the package file path is unknown', async () => {
+    const provider = makeProvider();
+
+    await removePackageCommand(
+      new PackageItem('orphan', '^1.0.0', undefined, 'none', false, undefined, '', false, '^'),
+      provider,
+    );
+
+    expect(showError).toHaveBeenCalledWith(
+      'failed to remove package — No package.json path found for orphan.',
+      expect.any(Error),
+    );
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+  });
+
+  it('shows a fallback error message when removal fails with a non-Error value', async () => {
+    const provider = makeProvider();
+    executeTaskMock.mockRejectedValueOnce('remove boom');
+
+    await removePackageCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(showError).toHaveBeenCalledWith('failed to remove package — remove boom', 'remove boom');
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
   });
 });
 

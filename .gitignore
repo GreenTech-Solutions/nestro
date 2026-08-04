@@ -9,6 +9,7 @@ dist/
 
 # Testing
 .vscode-test/
+coverage/
 
 # Linting caches
 .eslintcache

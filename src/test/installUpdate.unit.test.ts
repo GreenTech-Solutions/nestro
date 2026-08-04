@@ -277,6 +277,58 @@ describe('installUpdateCommand()', () => {
     provider.dispose();
   });
 
+  it('does nothing when the package is already installing', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', true, undefined, '/workspace/package.json', false, '^'), provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdated).not.toHaveBeenCalled();
+  });
+
+  it('shows an error without touching update state when the package file path is unknown', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+
+    await installUpdateCommand(new PackageItem('orphan', '^1.0.0', '1.1.0', 'minor', false, undefined, '', false, '^'), provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to install update — No workspace package.json found.',
+    );
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+  });
+
+  it('shows a fallback error message when the update fails with a non-Error value', async () => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+    vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce('boom' as never);
+
+    await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to install update — boom',
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'typescript',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+  });
+
   it('preserves devDependencies when updating through the package manager', async () => {
     const provider = {
       invalidateUpdateCache: vi.fn(),
@@ -377,6 +429,58 @@ describe('runInstallCommand()', () => {
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.options).toEqual({ cwd: '/workspace/app-mobile' });
+  });
+
+  it('shows an error when the install task exits with a non-zero code', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+    mockNextTaskExit(1);
+
+    await runInstallCommand();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: task "Install Dependencies" failed with exit code 1.',
+    );
+  });
+
+  it('shows an error when no workspace package.json is found', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([]);
+
+    await runInstallCommand();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to run install — No workspace package.json found.',
+    );
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('shows an error when the package root prompt is cancelled', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/workspace/package.json', path: '/workspace/package.json' },
+      { fsPath: '/workspace/apps/web/package.json', path: '/workspace/apps/web/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce(undefined);
+
+    await runInstallCommand();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to run install — Install cancelled.',
+    );
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('shows a fallback error message when install fails with a non-Error value', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+    vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce('install boom' as never);
+
+    await runInstallCommand();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to run install — install boom',
+    );
   });
 });
 
@@ -641,6 +745,45 @@ describe('updateAllVisibleCommand()', () => {
       packageFilePath: '/workspace/package.json',
       section: 'devDependencies',
     }, '4.1.0');
+  });
+
+  it('shows a fallback error message when a bulk update fails with a non-Error value', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce('bulk boom' as never);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — bulk boom',
+    );
+  });
+
+  it('rolls back only the identifiable package when a bulk update cannot resolve a package file path', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('orphan', '^1.0.0', '1.1.0', 'minor', false, undefined, '', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, true);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+    expect(provider.markPackageUpdating).toHaveBeenCalledTimes(2);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — No workspace package.json found.',
+    );
   });
 });
 

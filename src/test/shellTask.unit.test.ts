@@ -85,7 +85,94 @@ describe('runShellTaskAndWait()', () => {
     expect(processDispose).toHaveBeenCalledTimes(1);
     expect(taskDispose).toHaveBeenCalledTimes(1);
   });
+
+  it('resolves when the task ends before task startup resolves and no process event fires', async () => {
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
+    vi.mocked(vscode.tasks.executeTask).mockImplementationOnce(() => {
+      const listener = vi.mocked(vscode.tasks.onDidEndTask).mock.calls[0][0];
+      listener({ execution } as vscode.TaskEndEvent);
+      return Promise.resolve(execution);
+    });
+
+    await expect(
+      runShellTaskAndWait({ command: 'pnpm', args: ['remove', 'react'] }, 'Remove react'),
+    ).resolves.toBeUndefined();
+    expect(processDispose).toHaveBeenCalledTimes(1);
+    expect(taskDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a second termination event once the task has already settled', async () => {
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
+
+    const result = runShellTaskAndWait({ command: 'pnpm', args: ['install'] }, 'Install Dependencies');
+    await vi.waitFor(() => expect(vscode.tasks.onDidEndTaskProcess).toHaveBeenCalledTimes(1));
+    const processListener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
+    const taskListener = vi.mocked(vscode.tasks.onDidEndTask).mock.calls[0][0];
+    processListener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+    taskListener({ execution } as vscode.TaskEndEvent);
+
+    await expect(result).resolves.toBe(0);
+    expect(processDispose).toHaveBeenCalledTimes(1);
+    expect(taskDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a process end event reported for a different task execution', async () => {
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    const otherExecution = { id: 'other-task-execution' } as unknown as vscode.TaskExecution;
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
+
+    const result = runShellTaskAndWait({ command: 'pnpm', args: ['install'] }, 'Install Dependencies');
+    // Registration of both listeners happens synchronously before `executeTask` is awaited,
+    // but `execution` is only assigned once that awaited promise settles. Flush a macrotask so
+    // the mismatch below is checked against an already-resolved `execution`, not buffered.
+    await flushMacrotask();
+    const listener = vi.mocked(vscode.tasks.onDidEndTaskProcess).mock.calls[0][0];
+    listener({ execution: otherExecution, exitCode: 1 } as vscode.TaskProcessEndEvent);
+    listener({ execution, exitCode: 0 } as vscode.TaskProcessEndEvent);
+
+    await expect(result).resolves.toBe(0);
+    expect(processDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a task end event reported for a different task execution', async () => {
+    const execution = { id: 'task-execution' } as unknown as vscode.TaskExecution;
+    const otherExecution = { id: 'other-task-execution' } as unknown as vscode.TaskExecution;
+    const processDispose = vi.fn();
+    const taskDispose = vi.fn();
+    vi.mocked(vscode.tasks.executeTask).mockResolvedValueOnce(execution);
+    vi.mocked(vscode.tasks.onDidEndTaskProcess).mockReturnValueOnce({ dispose: processDispose });
+    vi.mocked(vscode.tasks.onDidEndTask).mockReturnValueOnce({ dispose: taskDispose });
+
+    const result = runShellTaskAndWait(
+      { command: 'pnpm', args: ['remove', { value: 'react', quoting: vscode.ShellQuoting.Strong }] },
+      'Remove react',
+    );
+    await flushMacrotask();
+    const listener = vi.mocked(vscode.tasks.onDidEndTask).mock.calls[0][0];
+    listener({ execution: otherExecution } as vscode.TaskEndEvent);
+    listener({ execution } as vscode.TaskEndEvent);
+
+    await expect(result).resolves.toBeUndefined();
+    expect(taskDispose).toHaveBeenCalledTimes(1);
+  });
 });
+
+function flushMacrotask(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
 
 describe('formatShellTaskFailureMessage()', () => {
   it('formats non-zero and missing exit codes', () => {

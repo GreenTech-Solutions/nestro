@@ -86,6 +86,19 @@ describe('registerPackageJsonWatcher()', () => {
 
     expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(2);
   });
+
+  it('disposes watchers and cancels a pending debounce on dispose', () => {
+    const provider = makeProvider(false);
+    const watcherController = registerPackageJsonWatcher(makeContext(), provider);
+    const watcher = vi.mocked(vscode.workspace.createFileSystemWatcher).mock.results[0].value;
+    getWatcherHandler('onDidChange')();
+
+    watcherController.dispose();
+    vi.advanceTimersByTime(500);
+
+    expect(watcher.dispose).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
 });
 
 function makeProvider(suppressingWrites: boolean): {

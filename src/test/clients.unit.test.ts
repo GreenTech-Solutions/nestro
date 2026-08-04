@@ -1,6 +1,44 @@
+import { execFile } from 'node:child_process';
+import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { BunClient, ClientManager, NpmClient, PnpmClient, YarnClient } from '../clients';
+
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
+}));
+
+type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
+
+function mockExecSuccess(stdout: string): void {
+  vi.mocked(execFile).mockImplementationOnce((
+    _file: string,
+    _args: readonly string[] | null | undefined,
+    _options: ExecFileOptions | null | undefined,
+    callback: ExecFileCallback | null | undefined,
+  ) => {
+    if (callback === undefined || callback === null) {
+      throw new Error('Expected execFile callback.');
+    }
+    callback(null, stdout, '');
+    return {} as ChildProcess;
+  });
+}
+
+function mockExecFailure(error: Error & { stdout?: string }): void {
+  vi.mocked(execFile).mockImplementationOnce((
+    _file: string,
+    _args: readonly string[] | null | undefined,
+    _options: ExecFileOptions | null | undefined,
+    callback: ExecFileCallback | null | undefined,
+  ) => {
+    if (callback === undefined || callback === null) {
+      throw new Error('Expected execFile callback.');
+    }
+    callback(error as ExecFileException, '', '');
+    return {} as ChildProcess;
+  });
+}
 
 describe('package manager clients', () => {
   it('builds npm update commands', () => {
@@ -57,12 +95,96 @@ describe('package manager clients', () => {
     );
   });
 
+  it.each([
+    ['pnpm', PnpmClient],
+    ['yarn', YarnClient],
+    ['bun', BunClient],
+  ] as const)('builds %s remove commands', (packageManager, ClientCtor) => {
+    expectCommand(
+      new ClientCtor('/workspace').buildRemoveCommand(['lodash', 'moment']),
+      packageManager,
+      ['remove', quoted('lodash'), quoted('moment')],
+    );
+  });
+
   it('strongly quotes package targets with shell metacharacters', () => {
     const command = new NpmClient('/workspace').buildUpdateCommand([
       { name: 'evil; touch /tmp/pwned', version: '1.0.0', section: 'dependencies' },
     ]);
 
     expectCommand(command, 'npm', ['install', quoted('evil; touch /tmp/pwned@1.0.0')]);
+  });
+});
+
+describe('runAudit()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('runs npm audit through the base Client implementation', async () => {
+    mockExecSuccess(JSON.stringify({ vulnerabilities: { react: { severity: 'high' } } }));
+
+    const vulnerabilities = await new NpmClient('/workspace').runAudit();
+
+    expect(vulnerabilities.get('react')).toBe('high');
+    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('npm');
+  });
+
+  it.each([
+    ['pnpm', PnpmClient],
+    ['bun', BunClient],
+  ] as const)('delegates %s audit to the package audit runner', async (packageManager, ClientCtor) => {
+    mockExecSuccess(JSON.stringify({ vulnerabilities: { lodash: { severity: 'critical' } } }));
+
+    const vulnerabilities = await new ClientCtor('/workspace').runAudit();
+
+    expect(vulnerabilities.get('lodash')).toBe('critical');
+    expect(vi.mocked(execFile).mock.calls[0][0]).toBe(packageManager);
+  });
+
+  it('parses yarn audit NDJSON output and merges duplicate module advisories', async () => {
+    mockExecSuccess([
+      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'high' } } }),
+      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'critical' } } }),
+    ].join('\n'));
+
+    const vulnerabilities = await new YarnClient('/workspace').runAudit();
+
+    expect(vulnerabilities.get('lodash')).toBe('critical');
+    expect(vulnerabilities.size).toBe(1);
+  });
+
+  it('ignores blank, malformed, and irrelevant lines in yarn audit NDJSON output', async () => {
+    mockExecSuccess([
+      '',
+      'not json',
+      JSON.stringify({ type: 'auditSummary', data: {} }),
+      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { severity: 'high' } } }),
+      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'express', severity: 'unknown-severity' } } }),
+      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'moderate' } } }),
+    ].join('\n'));
+
+    const vulnerabilities = await new YarnClient('/workspace').runAudit();
+
+    expect(vulnerabilities.size).toBe(1);
+    expect(vulnerabilities.get('lodash')).toBe('moderate');
+  });
+
+  it('recovers yarn audit data from stdout when the process exits with a non-zero code', async () => {
+    const error = Object.assign(new Error('yarn audit found vulnerabilities'), {
+      stdout: JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'vite', severity: 'critical' } } }),
+    });
+    mockExecFailure(error);
+
+    const vulnerabilities = await new YarnClient('/workspace').runAudit();
+
+    expect(vulnerabilities.get('vite')).toBe('critical');
+  });
+
+  it('throws when yarn audit fails without usable stdout', async () => {
+    mockExecFailure(new Error('yarn not found'));
+
+    await expect(new YarnClient('/workspace').runAudit()).rejects.toThrow('yarn not found');
   });
 });
 
