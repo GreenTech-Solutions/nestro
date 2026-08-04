@@ -145,7 +145,7 @@ Stylistic defaults: 2-space indent, single quotes, trailing semicolons.
 
 ## Commit Message Format
 
-Angular preset — drives `semantic-release` version bumps and `CHANGELOG.md`:
+`conventionalcommits` preset — drives `semantic-release` version bumps and `CHANGELOG.md`:
 
 ```
 <type>(<scope>): <subject>

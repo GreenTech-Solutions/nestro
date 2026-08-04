@@ -103,7 +103,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 
 ## Commit Message Format
 
-Angular preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
+`conventionalcommits` preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
 
 | Type | Meaning | Bump | Release notes section |
 |------|---------|:----:|---|
