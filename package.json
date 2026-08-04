@@ -346,7 +346,9 @@
     "lint": "pnpm run lint:eslint",
     "lint:fix": "eslint --fix src",
     "test": "vscode-test",
+    "pretest:minimum": "pnpm run pretest",
     "test:minimum": "vscode-test --label minimum",
+    "pretest:stable": "pnpm run pretest",
     "test:stable": "vscode-test --label stable",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest"
