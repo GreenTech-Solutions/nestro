@@ -3,9 +3,16 @@ import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
+import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { runShellTaskAndWait } from '../utils';
 import {
+  awaitTaskOutcome,
+  buildExitWithCodeCommand,
+  buildSleepCommand,
   closeFixtureWorkspace,
   countWorkspaceFolders,
+  createNoProcessTask,
+  createScriptFixture,
   fixtureTempRoot,
   materializeFixture,
   MULTI_ROOT_FIXTURES,
@@ -13,12 +20,14 @@ import {
   recordedExtensionHosts,
   recordExtensionHost,
   removeMaterializedFixture,
+  removeScriptFixture,
   resolveFixturePath,
   ROOT_MANIFEST_NESTED_PACKAGE,
   SINGLE_ROOT_FIXTURES,
   waitUntil,
 } from './fixtures';
-import type { OpenedFixtureWorkspace, WorkspaceFixture } from './fixtures';
+import type { OpenedFixtureWorkspace, ScriptFixture, WorkspaceFixture } from './fixtures';
+import type { PackageStateIdentity } from '../providers';
 
 const EXTENSION_ID = 'greentech-solutions.nestro';
 
@@ -353,6 +362,170 @@ suite('Multi-root fixture details', () => {
     finally {
       await closeFixtureWorkspace(opened);
     }
+  });
+});
+
+suite('Shell Task Lifecycle', function () {
+  this.timeout(30000);
+
+  let scripts: ScriptFixture;
+  let taskCounter = 0;
+
+  suiteSetup(async () => {
+    scripts = await createScriptFixture();
+  });
+
+  suiteTeardown(async () => {
+    await removeScriptFixture(scripts);
+  });
+
+  function nextTaskName(label: string): string {
+    taskCounter += 1;
+    return `Nestro Test - ${label} #${taskCounter}`;
+  }
+
+  test('resolves with the process exit code on a successful task', async () => {
+    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
+    assert.strictEqual(exitCode, 0);
+  });
+
+  test('resolves with the exact non-zero exit code on a failing task', async () => {
+    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
+    assert.strictEqual(exitCode, 7);
+  });
+
+  test('listeners do not leak: a task run after a success resolves independently', async () => {
+    const first = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
+    assert.strictEqual(first, 0);
+
+    const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 3), nextTaskName('Success-Rerun'));
+    assert.strictEqual(second, 3, 'A task started after a successful run must resolve on its own outcome');
+  });
+
+  test('listeners do not leak: a task run after a failure resolves independently', async () => {
+    const first = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 5), nextTaskName('Failure'));
+    assert.strictEqual(first, 5);
+
+    const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Failure-Rerun'));
+    assert.strictEqual(second, 0, 'A task started after a failing run must resolve on its own outcome');
+  });
+
+  test('resolves with undefined and does not hang for a task that reports no exit code', async () => {
+    const taskName = nextTaskName('NoExitCode');
+    const outcome = await awaitTaskOutcome(createNoProcessTask(taskName));
+    assert.strictEqual(
+      outcome,
+      undefined,
+      'A task that never reports a numeric exit code must resolve as undefined instead of hanging, '
+      + 'matching the shellTask.ts:62-73 fallback',
+    );
+
+    const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('NoExitCode-Rerun'));
+    assert.strictEqual(rerun, 0, 'A task started afterwards must not be intercepted by the earlier run\'s listeners');
+  });
+
+  test('resolves without hanging when the user terminates the task, and later tasks are unaffected', async () => {
+    const taskName = nextTaskName('Terminate');
+    const outcomePromise = runShellTaskAndWait(buildSleepCommand(scripts), taskName);
+
+    await waitUntil(
+      () => Promise.resolve(vscode.tasks.taskExecutions.some(execution => execution.task.name === taskName)),
+      `task "${taskName}" to appear in vscode.tasks.taskExecutions`,
+    );
+    const execution = vscode.tasks.taskExecutions.find(candidate => candidate.task.name === taskName);
+    assert.ok(execution, 'The running task should be discoverable through vscode.tasks.taskExecutions');
+    execution.terminate();
+
+    const outcome = await outcomePromise;
+    assert.strictEqual(
+      outcome,
+      undefined,
+      'A terminated task resolves through the same exit contract as a task with no reported exit code',
+    );
+
+    const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Terminate-Rerun'));
+    assert.strictEqual(rerun, 0, 'A task started after a termination must not be intercepted by the terminated run\'s listeners');
+  });
+});
+
+suite('Shell Task Lifecycle: package update busy state', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+  let scripts: ScriptFixture;
+  let filterManager: FilterManager;
+  let provider: PackagesProvider;
+
+  suiteSetup(async () => {
+    scripts = await createScriptFixture();
+    opened = await openTrackedFixture(fixture);
+    filterManager = new FilterManager();
+    provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+  });
+
+  suiteTeardown(async () => {
+    provider.dispose();
+    filterManager.dispose();
+    await closeIfOpen(opened);
+    opened = undefined;
+    await removeScriptFixture(scripts);
+  });
+
+  function findPackageItem(name: string): PackageItem | undefined {
+    const groups = provider.getChildren().filter((item): item is GroupItem => item instanceof GroupItem);
+    const items = groups.flatMap(group => group.children).filter((item): item is PackageItem => item instanceof PackageItem);
+    return items.find(item => item.packageName === name);
+  }
+
+  function identityFor(item: PackageItem): PackageStateIdentity {
+    return {
+      packageName: item.packageName,
+      packageFilePath: item.packageFilePath,
+      section: item.dev ? 'devDependencies' : 'dependencies',
+    };
+  }
+
+  test('clears busy state and applies the new version after a successful task', async () => {
+    const before = findPackageItem('left-pad');
+    assert.ok(before, 'left-pad should be present after loadPackages()');
+    assert.strictEqual(before.installing, false);
+
+    const identity = identityFor(before);
+    provider.markPackageUpdating(identity, true);
+    assert.strictEqual(findPackageItem('left-pad')?.installing, true, 'Item should be marked installing while the task runs');
+
+    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
+    assert.strictEqual(exitCode, 0);
+
+    provider.invalidateUpdateCache();
+    provider.markPackageUpdated(identity, '9.9.9');
+
+    const after = findPackageItem('left-pad');
+    assert.ok(after);
+    assert.strictEqual(after.installing, false, 'Busy state must clear once the task exits successfully');
+    assert.strictEqual(after.currentVersion, `${before.versionPrefix}9.9.9`);
+  });
+
+  test('clears busy state without applying the update after a failing task', async () => {
+    const before = findPackageItem('rimraf');
+    assert.ok(before, 'rimraf should be present after loadPackages()');
+    const originalVersion = before.currentVersion;
+
+    const identity = identityFor(before);
+    provider.markPackageUpdating(identity, true);
+    assert.strictEqual(findPackageItem('rimraf')?.installing, true, 'Item should be marked installing while the task runs');
+
+    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
+    assert.notStrictEqual(exitCode, 0);
+
+    provider.markPackageUpdating(identity, false);
+
+    const after = findPackageItem('rimraf');
+    assert.ok(after);
+    assert.strictEqual(after.installing, false, 'Busy state must clear after a failing task — no stuck busy state');
+    assert.strictEqual(after.currentVersion, originalVersion, 'A failing task must not apply the pending version');
   });
 });
 
