@@ -1,5 +1,6 @@
 export * from './hostMarker';
 export * from './materialize';
+export * from './nativeTool';
 export * from './scriptFixtures';
 export * from './taskObserver';
 export * from './types';

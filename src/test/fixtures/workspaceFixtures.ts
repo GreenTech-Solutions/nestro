@@ -16,6 +16,13 @@ import type { FixtureFiles, WorkspaceFixture } from './types';
  * Note that the extension models Yarn as a single `yarn` package manager, so
  * the two Yarn fixtures assert that both on-disk layouts resolve to `yarn`
  * rather than to two distinct identifiers.
+ *
+ * A second group of `SINGLE_ROOT_FIXTURES` entries (the `precedence-*` and
+ * `no-manager-signals`/`yarn-modern-no-metadata` ids) combines *competing*
+ * signals in one root — a manifest field alongside a contradicting lock file,
+ * or several lock files at once — to prove the priority order documented on
+ * `ClientManager.detectPackageManager()` rather than assume it from fixtures
+ * that each cleanly represent a single manager.
  */
 
 interface ManifestOptions {
@@ -96,6 +103,55 @@ export const SINGLE_ROOT_FIXTURES: readonly WorkspaceFixture[] = [
   singleRoot('bun-single-root', 'bun-app', 'bun', {
     'bun-app/package.json': manifest('bun-app'),
     'bun-app/bun.lock': BUN_LOCK,
+  }),
+  // The dangerous case AUD-02D's Проблема section calls out: a genuine Berry
+  // (Yarn Modern) lock file and rc, but no `packageManager` field to say so.
+  // `detectPackageManager` still resolves `'yarn'` — the extension does not
+  // distinguish Classic from Modern (fixing that is AUD-05B) — this fixture
+  // exists to prove that today's collapse is real and explicit, not merely
+  // untested.
+  singleRoot('yarn-modern-no-metadata', 'yarn-modern-no-metadata-app', 'yarn', {
+    'yarn-modern-no-metadata-app/package.json': manifest('yarn-modern-no-metadata-app'),
+    'yarn-modern-no-metadata-app/yarn.lock': YARN_MODERN_LOCK,
+    'yarn-modern-no-metadata-app/.yarnrc.yml': YARN_MODERN_RC,
+  }),
+  // `packageManager` is checked before any lock file at the same directory
+  // (`ClientManager.detectPackageManagerFromManifest` runs first inside the
+  // ancestor loop) — the yarn.lock here is real and present, and must still
+  // lose.
+  singleRoot('precedence-field-over-lockfile', 'field-over-lockfile-app', 'pnpm', {
+    'field-over-lockfile-app/package.json': manifest('field-over-lockfile-app', { packageManager: 'pnpm@9.1.0' }),
+    'field-over-lockfile-app/yarn.lock': YARN_CLASSIC_LOCK,
+  }),
+  // `detectPackageManagerFromLockfile` checks lock files in a fixed order —
+  // pnpm-lock.yaml, yarn.lock, bun.lock/bun.lockb, package-lock.json/
+  // npm-shrinkwrap.json — and returns on the first match. These three
+  // fixtures each stack every lower-priority lock file behind the winner to
+  // prove the order holds when several are genuinely present at once, not
+  // merely when only one manager's file exists.
+  singleRoot('precedence-pnpm-over-yarn-bun-npm', 'pnpm-wins-app', 'pnpm', {
+    'pnpm-wins-app/package.json': manifest('pnpm-wins-app'),
+    'pnpm-wins-app/pnpm-lock.yaml': PNPM_LOCK,
+    'pnpm-wins-app/yarn.lock': YARN_CLASSIC_LOCK,
+    'pnpm-wins-app/bun.lock': BUN_LOCK,
+    'pnpm-wins-app/package-lock.json': NPM_LOCK,
+  }),
+  singleRoot('precedence-yarn-over-bun-npm', 'yarn-wins-app', 'yarn', {
+    'yarn-wins-app/package.json': manifest('yarn-wins-app'),
+    'yarn-wins-app/yarn.lock': YARN_CLASSIC_LOCK,
+    'yarn-wins-app/bun.lock': BUN_LOCK,
+    'yarn-wins-app/package-lock.json': NPM_LOCK,
+  }),
+  singleRoot('precedence-bun-over-npm', 'bun-wins-app', 'bun', {
+    'bun-wins-app/package.json': manifest('bun-wins-app'),
+    'bun-wins-app/bun.lock': BUN_LOCK,
+    'bun-wins-app/package-lock.json': NPM_LOCK,
+  }),
+  // No manifest field and no lock file anywhere in the ancestor chain: the
+  // documented `'npm'` default, exercised explicitly rather than only as an
+  // implicit side effect of some other fixture.
+  singleRoot('no-manager-signals', 'no-signals-app', 'npm', {
+    'no-signals-app/package.json': manifest('no-signals-app'),
   }),
 ];
 

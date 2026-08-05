@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
@@ -12,21 +12,24 @@ import {
   closeFixtureWorkspace,
   countWorkspaceFolders,
   createNoProcessTask,
+  createPinnedManagerDir,
   createScriptFixture,
   fixtureTempRoot,
   materializeFixture,
   MULTI_ROOT_FIXTURES,
   openFixtureWorkspace,
+  probeNativeTool,
   recordedExtensionHosts,
   recordExtensionHost,
   removeMaterializedFixture,
+  removePinnedManagerDir,
   removeScriptFixture,
   resolveFixturePath,
   ROOT_MANIFEST_NESTED_PACKAGE,
   SINGLE_ROOT_FIXTURES,
   waitUntil,
 } from './fixtures';
-import type { OpenedFixtureWorkspace, ScriptFixture, WorkspaceFixture } from './fixtures';
+import type { OpenedFixtureWorkspace, PinnedManagerDir, ScriptFixture, WorkspaceFixture } from './fixtures';
 import type { PackageStateIdentity } from '../providers';
 
 const EXTENSION_ID = 'greentech-solutions.nestro';
@@ -51,6 +54,33 @@ function requireExtension(): vscode.Extension<unknown> {
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, 'Extension should be registered');
   return extension;
+}
+
+/** Shape of the manifest fields this suite reads; `packageJSON` is typed `any` by `@types/vscode`. */
+interface ManifestCommand {
+  readonly command: string;
+  readonly title: string;
+}
+
+interface ManifestMenuEntry {
+  readonly command: string;
+  readonly when: string;
+  readonly group?: string;
+}
+
+interface ExtensionManifest {
+  readonly capabilities?: Record<string, unknown>;
+  readonly contributes: {
+    readonly commands: readonly ManifestCommand[];
+    readonly menus: {
+      readonly 'view/item/context': readonly ManifestMenuEntry[];
+    };
+  };
+}
+
+/** Reads the real, installed manifest rather than trusting a copy of `package.json` in test code. */
+function getManifest(): ExtensionManifest {
+  return requireExtension().packageJSON as ExtensionManifest;
 }
 
 function isInside(parent: string, candidate: string): boolean {
@@ -365,6 +395,92 @@ suite('Multi-root fixture details', () => {
   });
 });
 
+suite('Manager Detection Precedence', () => {
+  function findSingleRootFixture(id: string): WorkspaceFixture {
+    const fixture = SINGLE_ROOT_FIXTURES.find(candidate => candidate.id === id);
+    assert.ok(fixture, `${id} fixture should exist in SINGLE_ROOT_FIXTURES`);
+    return fixture;
+  }
+
+  async function detectForFixture(id: string): Promise<string> {
+    const fixture = findSingleRootFixture(id);
+    const opened = await openTrackedFixture(fixture);
+    try {
+      return await new ClientManager().detectPackageManager(opened.folders[0].uri.fsPath);
+    }
+    finally {
+      await closeFixtureWorkspace(opened);
+    }
+  }
+
+  test('packageManager manifest field wins over a competing lock file in the same directory', async () => {
+    const fixture = findSingleRootFixture('precedence-field-over-lockfile');
+    const opened = await openTrackedFixture(fixture);
+    try {
+      assert.strictEqual(
+        existsSync(resolveFixturePath(opened.rootPath, 'field-over-lockfile-app/yarn.lock')),
+        true,
+        'The competing yarn.lock must genuinely exist, otherwise this only proves the absence of noise',
+      );
+      assert.strictEqual(await new ClientManager().detectPackageManager(opened.folders[0].uri.fsPath), 'pnpm');
+    }
+    finally {
+      await closeFixtureWorkspace(opened);
+    }
+  });
+
+  test('pnpm-lock.yaml wins over yarn.lock, bun.lock and package-lock.json', async () => {
+    assert.strictEqual(await detectForFixture('precedence-pnpm-over-yarn-bun-npm'), 'pnpm');
+  });
+
+  test('yarn.lock wins over bun.lock and package-lock.json when pnpm-lock.yaml is absent', async () => {
+    assert.strictEqual(await detectForFixture('precedence-yarn-over-bun-npm'), 'yarn');
+  });
+
+  test('bun.lock wins over package-lock.json when pnpm-lock.yaml and yarn.lock are absent', async () => {
+    assert.strictEqual(await detectForFixture('precedence-bun-over-npm'), 'bun');
+  });
+
+  test('defaults to npm when no packageManager field and no lock file exist anywhere in the ancestor chain', async () => {
+    const fixture = findSingleRootFixture('no-manager-signals');
+    const opened = await openTrackedFixture(fixture);
+    try {
+      for (const lockFileName of ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'package-lock.json', 'npm-shrinkwrap.json']) {
+        assert.strictEqual(
+          existsSync(resolveFixturePath(opened.rootPath, `no-signals-app/${lockFileName}`)),
+          false,
+          `${lockFileName} must genuinely be absent for this to test the true default`,
+        );
+      }
+      assert.strictEqual(await new ClientManager().detectPackageManager(opened.folders[0].uri.fsPath), 'npm');
+    }
+    finally {
+      await closeFixtureWorkspace(opened);
+    }
+  });
+
+  // AUD-05B is the future card that differentiates Yarn Classic from Yarn
+  // Modern; this proves today's collapsed behavior explicitly instead of
+  // relying on the mere absence of a test that distinguishes them.
+  test('Yarn Modern without a packageManager field still resolves to the undifferentiated "yarn" value', async () => {
+    const fixture = findSingleRootFixture('yarn-modern-no-metadata');
+    const opened = await openTrackedFixture(fixture);
+    try {
+      const packageJsonPath = resolveFixturePath(opened.rootPath, 'yarn-modern-no-metadata-app/package.json');
+      const manifestContents = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { packageManager?: string };
+      assert.strictEqual(
+        manifestContents.packageManager,
+        undefined,
+        'This fixture must genuinely omit packageManager — that is the dangerous case being proven',
+      );
+      assert.strictEqual(await new ClientManager().detectPackageManager(opened.folders[0].uri.fsPath), 'yarn');
+    }
+    finally {
+      await closeFixtureWorkspace(opened);
+    }
+  });
+});
+
 suite('Shell Task Lifecycle', function () {
   this.timeout(30000);
 
@@ -526,6 +642,267 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     assert.ok(after);
     assert.strictEqual(after.installing, false, 'Busy state must clear after a failing task — no stuck busy state');
     assert.strictEqual(after.currentVersion, originalVersion, 'A failing task must not apply the pending version');
+  });
+});
+
+suite('Manifest Contracts', () => {
+  test('contributes.commands has exactly the 18 entries the Проблема section counted', () => {
+    assert.strictEqual(getManifest().contributes.commands.length, 18);
+  });
+
+  test('capabilities.untrustedWorkspaces / virtualWorkspaces are not declared — implicit VS Code default today', () => {
+    // AUD-30 (UX-04) will declare these explicitly; this documents the
+    // present (absent) state so that future card has a red baseline to flip.
+    assert.strictEqual(getManifest().capabilities, undefined);
+  });
+
+  test('an outdated+vulnerable PackageItem contextValue does not match the exact-equality when clause that shows the inline Update button', () => {
+    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', false, 'high', '/workspace/package.json', false, '^');
+    assert.strictEqual(item.contextValue, 'outdated-vulnerable-high');
+
+    const menuEntries = getManifest().contributes.menus['view/item/context'];
+    const installUpdateEntry = menuEntries.find(entry => entry.command === 'nestro.installUpdate');
+    assert.ok(installUpdateEntry, 'nestro.installUpdate should have a view/item/context menu entry');
+    assert.strictEqual(installUpdateEntry.when, 'view == nestro.packagesView && viewItem == outdated');
+
+    const requiredViewItem = /viewItem == ([\w-]+)/.exec(installUpdateEntry.when)?.[1];
+    assert.strictEqual(requiredViewItem, 'outdated');
+    // AUD-29 (UX-02) fixes this: the exact-match `when` clause used by the
+    // inline Update button does not match an outdated+vulnerable
+    // contextValue, so the action that matters most silently disappears.
+    assert.notStrictEqual(item.contextValue, requiredViewItem);
+
+    // Contrast: the other row actions use a regex `when` clause and do keep
+    // matching the same contextValue, so only installUpdate's action is lost.
+    const pickVersionEntry = menuEntries.find(entry => entry.command === 'nestro.pickVersion');
+    assert.ok(pickVersionEntry, 'nestro.pickVersion should have a view/item/context menu entry');
+    const viewItemRegexSource = /viewItem =~ \/(.+)\//.exec(pickVersionEntry.when)?.[1];
+    assert.ok(viewItemRegexSource, 'nestro.pickVersion should use a regex viewItem match');
+    assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
+  });
+});
+
+suite('Contributed Command Surface: invocation without arguments', function () {
+  this.timeout(30000);
+
+  type CommandInvocationExpectation = 'rejects-in-background' | 'rejects-synchronously' | 'resolves';
+
+  /**
+   * Every entry is grounded in reading each command's registration in
+   * `extension.ts` and the command function it calls:
+   *
+   * - `resolves` — either the handler never dereferences its (absent)
+   *   argument, or it does so behind a try/catch (`switchDepType`,
+   *   `pinVersion`) that turns the resulting TypeError into a `showError()`
+   *   call instead of a rejection.
+   * - `rejects-synchronously` — `openOnNpm`/`copyPackageName` are registered
+   *   as plain (non-async) handlers that dereference `item.packageName`
+   *   with no guard at all; the TypeError is thrown synchronously out of the
+   *   handler, which VS Code's command dispatcher turns into a rejected
+   *   `executeCommand()` promise.
+   * - `rejects-in-background` — `installUpdate`/`pickVersion`/`removePackage`
+   *   are registered as `(item) => { void asyncCommand(item, provider); }`.
+   *   The async function's synchronous-prefix TypeError becomes a rejected
+   *   Promise per the async-function contract, but the handler itself
+   *   returns `undefined` rather than that promise, so `executeCommand()`
+   *   resolves and the rejection only ever surfaces as a process-level
+   *   `unhandledRejection`. Unlike `switchDepType`/`pinVersion`, these three
+   *   commands have no argument guard at all — a real, currently low-impact
+   *   gap worth a future hardening card, documented here rather than fixed
+   *   (this card is test-only).
+   */
+  const COMMAND_INVOCATION_EXPECTATIONS: Readonly<Record<string, CommandInvocationExpectation>> = {
+    'nestro.refresh': 'resolves',
+    'nestro.checkUpdates': 'resolves',
+    'nestro.runAudit': 'resolves',
+    'nestro.installUpdate': 'rejects-in-background',
+    'nestro.pickVersion': 'rejects-in-background',
+    'nestro.switchDepType': 'resolves',
+    'nestro.pinVersion': 'resolves',
+    'nestro.removePackage': 'rejects-in-background',
+    'nestro.updateAllVisible': 'resolves',
+    'nestro.runInstall': 'resolves',
+    'nestro.openOnNpm': 'rejects-synchronously',
+    'nestro.copyPackageName': 'rejects-synchronously',
+    'nestro.setFilter': 'resolves',
+    'nestro.showFilterPicker': 'resolves',
+    'nestro.searchPackages': 'resolves',
+    'nestro.clearSearchQuery': 'resolves',
+    'nestro.openSettings': 'resolves',
+    'nestro.pinAllVersions': 'resolves',
+  };
+
+  let commandIds: string[];
+  let unhandledRejections: unknown[];
+  let onUnhandledRejection: (reason: unknown) => void;
+
+  suiteSetup(() => {
+    commandIds = getManifest().contributes.commands.map(entry => entry.command);
+    unhandledRejections = [];
+    onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+  });
+
+  suiteTeardown(async () => {
+    process.off('unhandledRejection', onUnhandledRejection);
+    // nestro.setFilter has no argument guard and silently accepts `undefined`
+    // (see the 'resolves' expectation above, and getFilteredEntries() in
+    // treeBuilder.ts, which tolerates an unrecognized filter by matching
+    // nothing) — restore the default so later runs of this file are not
+    // affected by this suite having executed.
+    await vscode.commands.executeCommand('nestro.setFilter', 'all');
+    // nestro.searchPackages opens a real, non-modal InputBox that only
+    // resolves on hide/accept; since its handler is fire-and-forget it is
+    // never awaited by executeCommand(), so it is closed explicitly here.
+    await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+  });
+
+  test('contributes.commands still has exactly the 18 entries this suite enumerates', () => {
+    assert.strictEqual(commandIds.length, 18, 'A manifest command count drift means COMMAND_INVOCATION_EXPECTATIONS above is stale');
+    const localeCompare = (left: string, right: string): number => left.localeCompare(right);
+    assert.deepStrictEqual([...commandIds].sort(localeCompare), Object.keys(COMMAND_INVOCATION_EXPECTATIONS).sort(localeCompare));
+  });
+
+  for (const [commandId, expectation] of Object.entries(COMMAND_INVOCATION_EXPECTATIONS)) {
+    test(`${commandId} (${expectation}) does not crash the Extension Host when invoked with no arguments`, async () => {
+      unhandledRejections.length = 0;
+      let rejection: unknown;
+      try {
+        await vscode.commands.executeCommand(commandId);
+      }
+      catch (err) {
+        rejection = err;
+      }
+
+      // searchPackages/showFilterPicker are fire-and-forget: a QuickPick or
+      // InputBox they open is never awaited by executeCommand() and would
+      // otherwise sit open in the background for the rest of this loop (and
+      // potentially for a stale, not-yet-empty allEntries, showFilterPicker
+      // genuinely can show one even with no argument involved).
+      await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+      if (commandId === 'nestro.openSettings') {
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      }
+
+      // Give a fire-and-forget internal promise a turn of the microtask
+      // queue to reject and be observed by the process-level listener above
+      // before asserting on it — there is no state to poll here, only the
+      // (im)possibility of an event that Node schedules on its own.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      if (expectation === 'rejects-synchronously') {
+        assert.ok(rejection instanceof Error, `${commandId} should reject executeCommand() with a real Error, not resolve or crash silently`);
+      }
+      else {
+        assert.strictEqual(rejection, undefined, `${commandId} should resolve executeCommand() — any internal failure happens off the awaited promise`);
+      }
+
+      if (expectation === 'rejects-in-background') {
+        // Empirically confirmed on both channels (1.125.0 and stable): this
+        // Extension Host test harness fires `unhandledRejection` twice for
+        // the single rejected promise these commands' `item.<field>`
+        // TypeError produces (identical stack both times, traced back to the
+        // one `executeCommand()` call site above) — not a listener leak
+        // (`unhandledRejections` is reset per test and never exceeds 2 here)
+        // and not two distinct failures. The bound below asserts the real
+        // claim — at least one background rejection happened — without
+        // hard-coding a duplicate-fire count that may not hold on a future
+        // VS Code version.
+        assert.ok(
+          unhandledRejections.length >= 1 && unhandledRejections.length <= 2,
+          `${commandId} is expected to produce 1–2 unhandled background rejections today (no argument guard); got ${unhandledRejections.length}`,
+        );
+        for (const reason of unhandledRejections) {
+          assert.ok(reason instanceof Error, `${commandId}'s background rejection should carry a real Error`);
+        }
+      }
+      else {
+        assert.strictEqual(unhandledRejections.length, 0, `${commandId} should not leave any unhandled background rejection`);
+      }
+    });
+  }
+
+  test('the Extension Host is still fully responsive after invoking all 18 commands with no arguments', async () => {
+    const registered = await vscode.commands.getCommands(true);
+    for (const commandId of commandIds) {
+      assert.ok(registered.includes(commandId), `${commandId} should still be registered`);
+    }
+    // A trivial round trip through the command dispatcher proves the host loop is alive.
+    await vscode.commands.executeCommand('nestro.refresh');
+  });
+});
+
+suite('Native Package Manager Smoke (bun, yarn)', function () {
+  this.timeout(60000);
+
+  let pinnedYarnClassic: PinnedManagerDir;
+  let pinnedYarnModern: PinnedManagerDir;
+
+  suiteSetup(async () => {
+    pinnedYarnClassic = await createPinnedManagerDir('yarn@1.22.19');
+    pinnedYarnModern = await createPinnedManagerDir('yarn@4.6.0');
+  });
+
+  suiteTeardown(async () => {
+    await removePinnedManagerDir(pinnedYarnClassic);
+    await removePinnedManagerDir(pinnedYarnModern);
+  });
+
+  test('bun --version reports a version when bun is installed', async function () {
+    const probe = await probeNativeTool('bun', ['--version']);
+    if (!probe.available) {
+      console.warn(`[native-smoke] Skipping: bun is not available on this machine (${probe.reason}).`);
+      this.skip();
+      return;
+    }
+    assert.match(probe.output ?? '', /^\d+\.\d+\.\d+/, 'bun --version should print a semver-looking version string');
+  });
+
+  test('yarn --version reports a version when yarn is available through Corepack', async function () {
+    // Run from the system temp root, not the repository: this repo's own
+    // `packageManager: "pnpm@..."` pin makes Corepack refuse to run `yarn`
+    // at all from inside the working tree (verified manually — `yarn
+    // --version` from the repo root prints "This project is configured to
+    // use pnpm..." and exits non-zero), which would masquerade as "yarn is
+    // not installed" here.
+    const probe = await probeNativeTool('yarn', ['--version'], await fixtureTempRoot());
+    if (!probe.available) {
+      console.warn(`[native-smoke] Skipping: yarn is not available on this machine (${probe.reason}).`);
+      this.skip();
+      return;
+    }
+    assert.match(probe.output ?? '', /^\d+\.\d+\.\d+/, 'yarn --version should print a semver-looking version string');
+  });
+
+  test('Corepack transparently resolves the exact Yarn Classic release pinned by packageManager', async function () {
+    const probe = await probeNativeTool('yarn', ['--version'], pinnedYarnClassic.dir);
+    if (!probe.available) {
+      console.warn(`[native-smoke] Skipping: yarn is not available on this machine (${probe.reason}).`);
+      this.skip();
+      return;
+    }
+    assert.strictEqual(
+      probe.output,
+      '1.22.19',
+      'Corepack should run the exact pinned Yarn Classic release inside this directory, not whatever yarn resolves to on PATH',
+    );
+  });
+
+  test('Corepack transparently resolves the exact Yarn Modern release pinned by packageManager', async function () {
+    const probe = await probeNativeTool('yarn', ['--version'], pinnedYarnModern.dir);
+    if (!probe.available) {
+      console.warn(`[native-smoke] Skipping: yarn is not available on this machine (${probe.reason}).`);
+      this.skip();
+      return;
+    }
+    assert.strictEqual(
+      probe.output,
+      '4.6.0',
+      'Corepack should run the exact pinned Yarn Modern release inside this directory, not whatever yarn resolves to on PATH',
+    );
   });
 });
 
