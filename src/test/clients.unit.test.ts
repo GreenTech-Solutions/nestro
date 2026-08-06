@@ -40,6 +40,15 @@ function mockExecFailure(error: Error & { stdout?: string }): void {
   });
 }
 
+/** Minimal npm v2 audit report: the report-version marker plus one advisory. */
+function npmAuditReport(packageName: string, severity: string): string {
+  return JSON.stringify({
+    auditReportVersion: 2,
+    vulnerabilities: { [packageName]: { name: packageName, severity } },
+    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 1 } },
+  });
+}
+
 describe('package manager clients', () => {
   it('builds npm update commands', () => {
     expectCommand(new NpmClient('/workspace').buildUpdateCommand([
@@ -122,7 +131,7 @@ describe('runAudit()', () => {
   });
 
   it('runs npm audit through the base Client implementation', async () => {
-    mockExecSuccess(JSON.stringify({ vulnerabilities: { react: { severity: 'high' } } }));
+    mockExecSuccess(npmAuditReport('react', 'high'));
 
     const vulnerabilities = await new NpmClient('/workspace').runAudit();
 
@@ -134,7 +143,7 @@ describe('runAudit()', () => {
     ['pnpm', PnpmClient],
     ['bun', BunClient],
   ] as const)('delegates %s audit to the package audit runner', async (packageManager, ClientCtor) => {
-    mockExecSuccess(JSON.stringify({ vulnerabilities: { lodash: { severity: 'critical' } } }));
+    mockExecSuccess(npmAuditReport('lodash', 'critical'));
 
     const vulnerabilities = await new ClientCtor('/workspace').runAudit();
 
