@@ -96,6 +96,46 @@ export async function awaitTaskOutcome(task: vscode.Task): Promise<number | unde
 }
 
 /**
+ * Resolves with the live `TaskExecution` once the task named `taskName` has an
+ * OS process running. Subscribe **before** starting the task, or the event can
+ * fire before the listener exists.
+ *
+ * `vscode.tasks.taskExecutions` is not a safe substitute. That array is the
+ * extension host's own view and lists an execution as soon as `executeTask()`
+ * is registered there, which happens before the main thread has spawned the
+ * terminal. `terminate()` on a handle taken from it that early reaches a task
+ * service that does not know the id yet: VS Code logs "Task to terminate not
+ * found", the call is a silent no-op, and the process keeps running with no
+ * end event ever arriving — the caller then hangs until its own timeout.
+ * `onDidStartTaskProcess` is the first point at which both sides agree a live
+ * process exists, so a terminate issued after it is always delivered.
+ */
+export function awaitTaskProcessStart(
+  taskName: string,
+  timeoutMs = 15000,
+): Promise<vscode.TaskExecution> {
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      clearTimeout(timer);
+      subscription.dispose();
+    };
+
+    const timer = setTimeout(() => {
+      finish();
+      reject(new Error(`Task "${taskName}" did not start a process within ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    const subscription = vscode.tasks.onDidStartTaskProcess((event) => {
+      if (event.execution.task.name !== taskName) {
+        return;
+      }
+      finish();
+      resolve(event.execution);
+    });
+  });
+}
+
+/**
  * A task whose execution never spawns an OS process and reports no exit
  * code. `Pseudoterminal.onDidClose` is fired with no argument (`void`), not
  * `0`: a numeric close code is a real exit code as far as VS Code is

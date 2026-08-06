@@ -7,6 +7,7 @@ import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../prov
 import { runShellTaskAndWait } from '../utils';
 import {
   awaitTaskOutcome,
+  awaitTaskProcessStart,
   buildExitWithCodeCommand,
   buildSleepCommand,
   closeFixtureWorkspace,
@@ -518,14 +519,12 @@ suite('Shell Task Lifecycle', function () {
 
   test('resolves without hanging when the user terminates the task, and later tasks are unaffected', async () => {
     const taskName = nextTaskName('Terminate');
+
+    // Subscribed before the task starts, so the start event cannot be missed.
+    const started = awaitTaskProcessStart(taskName);
     const outcomePromise = runShellTaskAndWait(buildSleepCommand(scripts), taskName);
 
-    await waitUntil(
-      () => Promise.resolve(vscode.tasks.taskExecutions.some(execution => execution.task.name === taskName)),
-      `task "${taskName}" to appear in vscode.tasks.taskExecutions`,
-    );
-    const execution = vscode.tasks.taskExecutions.find(candidate => candidate.task.name === taskName);
-    assert.ok(execution, 'The running task should be discoverable through vscode.tasks.taskExecutions');
+    const execution = await started;
     execution.terminate();
 
     const outcome = await outcomePromise;
