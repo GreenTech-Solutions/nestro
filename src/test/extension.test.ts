@@ -10,6 +10,7 @@ import {
   buildExitWithCodeCommand,
   buildSleepCommand,
   closeFixtureWorkspace,
+  closeIfOpen,
   countWorkspaceFolders,
   createNoProcessTask,
   createPinnedManagerDir,
@@ -17,7 +18,7 @@ import {
   fixtureTempRoot,
   materializeFixture,
   MULTI_ROOT_FIXTURES,
-  openFixtureWorkspace,
+  openTrackedFixture,
   probeNativeTool,
   recordedExtensionHosts,
   recordExtensionHost,
@@ -27,6 +28,7 @@ import {
   resolveFixturePath,
   ROOT_MANIFEST_NESTED_PACKAGE,
   SINGLE_ROOT_FIXTURES,
+  trackedFixtureRoots,
   waitUntil,
 } from './fixtures';
 import type { OpenedFixtureWorkspace, PinnedManagerDir, ScriptFixture, WorkspaceFixture } from './fixtures';
@@ -34,21 +36,13 @@ import type { PackageStateIdentity } from '../providers';
 
 const EXTENSION_ID = 'greentech-solutions.nestro';
 
-/**
- * Folders present before any fixture is opened: the single empty anchor folder
- * of the generated `.code-workspace` file (see `.vscode-test.mjs`).
- */
+/** The single empty anchor folder of the generated `.code-workspace` file. */
 const ANCHOR_FOLDER_COUNT = 1;
 
-// A workspace-folder change that restarts the Extension Host would invalidate
-// every assumption this suite makes about shared module state, and a restarted
-// host silently re-runs the whole file. Recording the process on disk at load
-// time is what makes that observable: an in-process copy of `process.pid` is
-// re-initialized by the restart it is supposed to detect.
+// Recorded on disk rather than in memory: a restart re-initializes any
+// in-process copy of the pid along with the module holding it, so the evidence
+// has to outlive the process it is meant to detect.
 recordExtensionHost();
-
-/** Every fixture root opened during the run, checked for leaks at the end. */
-const openedFixtureRoots: string[] = [];
 
 function requireExtension(): vscode.Extension<unknown> {
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
@@ -90,23 +84,6 @@ function isInside(parent: string, candidate: string): boolean {
 
 function toPosixRelative(from: string, to: string): string {
   return relative(from, to).split(sep).join('/');
-}
-
-async function openTrackedFixture(fixture: WorkspaceFixture): Promise<OpenedFixtureWorkspace> {
-  const opened = await openFixtureWorkspace(fixture);
-  openedFixtureRoots.push(opened.rootPath);
-  return opened;
-}
-
-/**
- * Closes a fixture opened in `suiteSetup`. A failed setup leaves the handle
- * undefined, and an unguarded teardown would then fail with a type error that
- * hides the original failure.
- */
-async function closeIfOpen(opened: OpenedFixtureWorkspace | undefined): Promise<void> {
-  if (opened !== undefined) {
-    await closeFixtureWorkspace(opened);
-  }
 }
 
 function requireOpen(opened: OpenedFixtureWorkspace | undefined): OpenedFixtureWorkspace {
@@ -394,7 +371,6 @@ suite('Multi-root fixture details', () => {
     }
   });
 });
-
 suite('Manager Detection Precedence', () => {
   function findSingleRootFixture(id: string): WorkspaceFixture {
     const fixture = SINGLE_ROOT_FIXTURES.find(candidate => candidate.id === id);
@@ -906,32 +882,31 @@ suite('Native Package Manager Smoke (bun, yarn)', function () {
   });
 });
 
-suite('Fixture Workspace Lifecycle', () => {
-  test('Every fixture root opened during the run was deleted', () => {
-    assert.ok(openedFixtureRoots.length > 0, 'At least one fixture should have been opened');
-    for (const rootPath of openedFixtureRoots) {
-      assert.strictEqual(existsSync(rootPath), false, `${rootPath} should have been cleaned up`);
+/**
+ * Audits what every test file left behind. A root-level hook — declared outside
+ * any `suite()` — is what guarantees this runs after all of them: the runner's
+ * file order is not alphabetical and must not be relied on.
+ */
+suiteTeardown(function () {
+  const roots = trackedFixtureRoots();
+  assert.ok(roots.length > 0, 'At least one fixture should have been opened');
+
+  for (const rootPath of roots) {
+    assert.strictEqual(existsSync(rootPath), false, `${rootPath} should have been cleaned up`);
+  }
+
+  assert.strictEqual(countWorkspaceFolders(), ANCHOR_FOLDER_COUNT, 'Workspace should be back to the anchor baseline');
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    for (const rootPath of roots) {
+      assert.strictEqual(isInside(rootPath, folder.uri.fsPath), false, `${folder.uri.fsPath} outlived its fixture`);
     }
-  });
+  }
 
-  test('Workspace is back to the anchor baseline', () => {
-    assert.strictEqual(countWorkspaceFolders(), ANCHOR_FOLDER_COUNT);
-    const folders = vscode.workspace.workspaceFolders ?? [];
-    for (const rootPath of openedFixtureRoots) {
-      for (const folder of folders) {
-        assert.strictEqual(isInside(rootPath, folder.uri.fsPath), false);
-      }
-    }
-  });
-
-  test('Extension Host was never restarted', () => {
-    const hosts = recordedExtensionHosts();
-
-    assert.deepStrictEqual(
-      hosts,
-      [process.pid],
-      `Exactly one Extension Host should have loaded this suite, but ${hosts.length} did: ${hosts.join(', ')}. `
-      + 'A second host means a workspace mutation replaced folder 0 and restarted the run.',
-    );
-  });
+  const hosts = recordedExtensionHosts();
+  assert.deepStrictEqual(
+    hosts,
+    [process.pid],
+    `Exactly one Extension Host should have loaded the suite, but ${hosts.length} did: ${hosts.join(', ')}. `
+    + 'A second host means a workspace mutation replaced folder 0 and restarted the run.',
+  );
 });

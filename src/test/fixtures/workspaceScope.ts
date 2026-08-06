@@ -51,16 +51,13 @@ async function discardFailedOpen(
   materialized: MaterializedFixture,
   uris: readonly vscode.Uri[],
 ): Promise<void> {
-  const registered = uris.filter(
-    uri => vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath === uri.fsPath,
-  );
-
-  if (registered.length > 0) {
+  for (const uri of uris) {
+    const registered = vscode.workspace.getWorkspaceFolder(uri);
+    if (registered?.uri.fsPath !== uri.fsPath) {
+      continue;
+    }
     try {
-      await applyWorkspaceFolderChange(() => vscode.workspace.updateWorkspaceFolders(
-        countWorkspaceFolders() - registered.length,
-        registered.length,
-      ));
+      await applyWorkspaceFolderChange(() => vscode.workspace.updateWorkspaceFolders(registered.index, 1));
     }
     catch {
       // Best effort only — the temporary copy still has to be removed below.
@@ -73,20 +70,47 @@ async function discardFailedOpen(
 /**
  * Removes the fixture folders from the workspace and deletes the temporary copy,
  * restoring the baseline the test started from.
+ *
+ * Folders are removed by identity rather than by tail position: a stale folder
+ * count would shift the start index and take the anchor folder with it.
  */
 export async function closeFixtureWorkspace(opened: OpenedFixtureWorkspace): Promise<void> {
-  const removeCount = opened.folders.length;
-  if (removeCount > 0) {
-    await applyWorkspaceFolderChange(() => vscode.workspace.updateWorkspaceFolders(
-      countWorkspaceFolders() - removeCount,
-      removeCount,
-    ));
+  for (const folder of opened.folders) {
+    const current = vscode.workspace.getWorkspaceFolder(folder.uri);
+    if (current?.uri.fsPath !== folder.uri.fsPath) {
+      continue;
+    }
+    await applyWorkspaceFolderChange(() => vscode.workspace.updateWorkspaceFolders(current.index, 1));
   }
   await removeMaterializedFixture(opened);
 }
 
 export function countWorkspaceFolders(): number {
   return vscode.workspace.workspaceFolders?.length ?? 0;
+}
+
+/** Every fixture root opened during the run, checked for leaks at the end. */
+const openedRoots: string[] = [];
+
+/** Opens a fixture and records its root so the lifecycle suite can audit it. */
+export async function openTrackedFixture(fixture: WorkspaceFixture): Promise<OpenedFixtureWorkspace> {
+  const opened = await openFixtureWorkspace(fixture);
+  openedRoots.push(opened.rootPath);
+  return opened;
+}
+
+export function trackedFixtureRoots(): readonly string[] {
+  return openedRoots;
+}
+
+/**
+ * Closes a fixture opened in `suiteSetup`. A failed setup leaves the handle
+ * undefined, and an unguarded teardown would hide the original failure.
+ */
+export async function closeIfOpen(opened: OpenedFixtureWorkspace | undefined): Promise<void> {
+  if (opened !== undefined) {
+    await closeFixtureWorkspace(opened);
+  }
 }
 
 function resolveRegisteredFolder(uri: vscode.Uri): vscode.WorkspaceFolder {

@@ -5,5 +5,6 @@ export * from './scriptFixtures';
 export * from './taskObserver';
 export * from './types';
 export * from './wait';
+export * from './watcherHarness';
 export * from './workspaceFixtures';
 export * from './workspaceScope';
