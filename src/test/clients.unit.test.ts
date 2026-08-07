@@ -139,16 +139,33 @@ describe('runAudit()', () => {
     expect(vi.mocked(execFile).mock.calls[0][0]).toBe('npm');
   });
 
-  it.each([
-    ['pnpm', PnpmClient],
-    ['bun', BunClient],
-  ] as const)('delegates %s audit to the package audit runner', async (packageManager, ClientCtor) => {
+  it('delegates pnpm audit to the package audit runner', async () => {
     mockExecSuccess(npmAuditReport('lodash', 'critical'));
 
-    const vulnerabilities = await new ClientCtor('/workspace').runAudit();
+    const vulnerabilities = await new PnpmClient('/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
-    expect(vi.mocked(execFile).mock.calls[0][0]).toBe(packageManager);
+    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('pnpm');
+  });
+
+  it('delegates bun audit to the Bun bulk advisory adapter', async () => {
+    mockExecFailure(Object.assign(new Error('bun audit found vulnerabilities'), {
+      code: 1,
+      stdout: JSON.stringify({
+        lodash: [{
+          id: 1106913,
+          url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm',
+          title: 'Command Injection in lodash',
+          severity: 'critical',
+          vulnerable_versions: '<4.17.21',
+        }],
+      }),
+    }));
+
+    const vulnerabilities = await new BunClient('/workspace').runAudit();
+
+    expect(vulnerabilities.get('lodash')).toBe('critical');
+    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('bun');
   });
 
   it('parses yarn audit NDJSON output and merges duplicate module advisories', async () => {

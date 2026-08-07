@@ -1,4 +1,5 @@
-import { AuditSeverity, runPackageAudit } from '../utils/auditClient';
+import { AuditSeverity } from '../utils/auditClient';
+import { runBunAudit } from '../utils/bunAuditClient';
 import { Client, PackageTarget } from './Client';
 
 export class BunClient extends Client {
@@ -18,6 +19,6 @@ export class BunClient extends Client {
   }
 
   async runAudit(): Promise<Map<string, AuditSeverity>> {
-    return (await runPackageAudit('bun', this.cwd)).vulnerabilities;
+    return (await runBunAudit(this.cwd)).vulnerabilities;
   }
 }

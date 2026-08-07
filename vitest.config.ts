@@ -52,6 +52,7 @@ export default defineConfig({
 				'src/utils/registryClient.ts': { statements: 96, branches: 79, functions: 100, lines: 96 },
 				'src/utils/ncuClient.ts': { statements: 85, branches: 80, functions: 100, lines: 84 },
 				'src/utils/auditClient.ts': { statements: 100, branches: 92, functions: 100, lines: 100 },
+				'src/utils/bunAuditClient.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
 				'src/utils/logger.ts': { statements: 100, branches: 83, functions: 100, lines: 100 },
 				'src/providers/PackagesProvider.ts': { statements: 90, branches: 80, functions: 86, lines: 91 },
 				'src/providers/FilterManager.ts': { statements: 98, branches: 84, functions: 94, lines: 98 },

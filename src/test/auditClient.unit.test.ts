@@ -303,8 +303,8 @@ describe('parseAuditOutcome()', () => {
     ['an object without a known report section', '{"error":{"code":"ENOLOCK"}}'],
     ['an empty object', '{}'],
     ['an advisories section without its summary marker', '{"advisories":{}}'],
-    // Bun returns the raw npm bulk advisory response; its adapter lands in AUD-05C. Until
-    // then the npm/pnpm parser must reject it instead of reading it as zero findings.
+    // Bun returns the raw npm bulk advisory response through its own adapter. The shared
+    // npm/pnpm parser must keep rejecting that shape instead of guessing a manager family.
     ['a bun bulk advisory response', '{"react":[{"id":1,"severity":"high","title":"XSS"}]}'],
   ])('treats %s as an unrecognized schema', (_label, stdout) => {
     expectIncomplete(parseAuditOutcome({ command: 'npm', stdout, exitCode: 0 }), 'unrecognized-schema');

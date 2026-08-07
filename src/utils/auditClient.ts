@@ -12,11 +12,13 @@ export interface AuditResult {
 }
 
 /**
- * Audit JSON schemas the shared npm/pnpm parser is allowed to recognize. Other package
- * manager families (Yarn NDJSON, Yarn Modern, Bun bulk advisories) own their own schema
- * ids and must never be recognized by this parser.
+ * Audit JSON schemas recognized by the manager-specific adapters. The shared parser in
+ * this module still recognizes only npm/pnpm shapes; Bun owns its bulk-advisory adapter.
  */
-export type AuditSchemaId = 'npm-v2-vulnerabilities' | 'npm-v1-advisories';
+export type AuditSchemaId
+  = | 'npm-v2-vulnerabilities'
+    | 'npm-v1-advisories'
+    | 'bun-bulk-advisory';
 
 /** Why audit output could not be turned into a recognized result. */
 export type AuditIncompleteReason
