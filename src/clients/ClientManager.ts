@@ -13,11 +13,25 @@ interface PackageJson {
   packageManager?: string;
 }
 
+interface PackageManagerSignal {
+  packageManager: PackageManager;
+  signalRoot: string;
+}
+
 const packageManagerNames = ['npm', 'pnpm', 'yarn', 'bun'] as const;
 
 export class ClientManager {
   async getClient(cwd: string): Promise<Client> {
-    return this.createClient(await this.detectPackageManager(cwd), cwd);
+    try {
+      const signal = await this.detectPackageManagerFromAncestors(cwd);
+      const packageManager = signal?.packageManager ?? 'npm';
+      const clientCwd = signal?.packageManager === 'yarn' ? signal.signalRoot : cwd;
+      return this.createClient(packageManager, clientCwd);
+    }
+    catch (err) {
+      logger.error('Failed to detect package manager.', err);
+      throw err;
+    }
   }
 
   createClient(packageManager: PackageManager, cwd: string): Client {
@@ -37,7 +51,7 @@ export class ClientManager {
     try {
       if (cwd !== undefined) {
         const fromAncestor = await this.detectPackageManagerFromAncestors(cwd);
-        return fromAncestor ?? 'npm';
+        return fromAncestor?.packageManager ?? 'npm';
       }
 
       const fromManifest = await this.detectPackageManagerFromManifest(cwd);
@@ -53,19 +67,19 @@ export class ClientManager {
     }
   }
 
-  private async detectPackageManagerFromAncestors(cwd: string): Promise<PackageManager | undefined> {
+  private async detectPackageManagerFromAncestors(cwd: string): Promise<PackageManagerSignal | undefined> {
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
     const directories = getAncestorDirectories(cwd, workspaceFolder?.uri.fsPath);
 
     for (const directory of directories) {
       const fromManifest = await this.detectPackageManagerFromManifest(directory);
       if (fromManifest !== undefined) {
-        return fromManifest;
+        return { packageManager: fromManifest, signalRoot: directory };
       }
 
       const fromLockfile = await this.detectPackageManagerFromLockfile(directory);
       if (fromLockfile !== undefined) {
-        return fromLockfile;
+        return { packageManager: fromLockfile, signalRoot: directory };
       }
     }
 

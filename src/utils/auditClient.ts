@@ -18,7 +18,9 @@ export interface AuditResult {
 export type AuditSchemaId
   = | 'npm-v2-vulnerabilities'
     | 'npm-v1-advisories'
-    | 'bun-bulk-advisory';
+    | 'bun-bulk-advisory'
+    | 'yarn-classic-audit'
+    | 'yarn-modern-npm-audit';
 
 /** Why audit output could not be turned into a recognized result. */
 export type AuditIncompleteReason
@@ -26,7 +28,8 @@ export type AuditIncompleteReason
     | 'malformed-json'
     | 'unrecognized-schema'
     | 'unexpected-exit'
-    | 'summary-mismatch';
+    | 'summary-mismatch'
+    | 'unknown-yarn-family';
 
 /** Why the audit process itself never produced output that could be inspected. */
 export type AuditErrorReason = 'command-not-found' | 'process-failed';

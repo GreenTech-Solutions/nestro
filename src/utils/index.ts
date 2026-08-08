@@ -8,3 +8,5 @@ export * from './logger';
 export * from './auditClient';
 export * from './bunAuditClient';
 export * from './shellTask';
+export * from './yarnAuditClient';
+export * from './yarnFamily';

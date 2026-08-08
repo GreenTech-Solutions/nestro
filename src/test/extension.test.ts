@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { runShellTaskAndWait } from '../utils';
+import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   awaitTaskOutcome,
   awaitTaskProcessStart,
@@ -436,10 +436,7 @@ suite('Manager Detection Precedence', () => {
     }
   });
 
-  // AUD-05B is the future card that differentiates Yarn Classic from Yarn
-  // Modern; this proves today's collapsed behavior explicitly instead of
-  // relying on the mere absence of a test that distinguishes them.
-  test('Yarn Modern without a packageManager field still resolves to the undifferentiated "yarn" value', async () => {
+  test('Yarn Modern without packageManager metadata resolves from Berry markers', async () => {
     const fixture = findSingleRootFixture('yarn-modern-no-metadata');
     const opened = await openTrackedFixture(fixture);
     try {
@@ -451,6 +448,38 @@ suite('Manager Detection Precedence', () => {
         'This fixture must genuinely omit packageManager — that is the dangerous case being proven',
       );
       assert.strictEqual(await new ClientManager().detectPackageManager(opened.folders[0].uri.fsPath), 'yarn');
+      assert.deepStrictEqual(await resolveYarnFamily(opened.folders[0].uri.fsPath), {
+        family: 'modern',
+        source: 'project-markers',
+      });
+    }
+    finally {
+      await closeFixtureWorkspace(opened);
+    }
+  });
+
+  test('Yarn Classic and metadata-pinned Yarn Modern resolve to explicit families', async () => {
+    for (const [fixtureId, family, source] of [
+      ['yarn-classic-single-root', 'classic', 'project-markers'],
+      ['yarn-modern-single-root', 'modern', 'package-manager'],
+    ] as const) {
+      const opened = await openTrackedFixture(findSingleRootFixture(fixtureId));
+      try {
+        assert.deepStrictEqual(await resolveYarnFamily(opened.folders[0].uri.fsPath), { family, source });
+      }
+      finally {
+        await closeFixtureWorkspace(opened);
+      }
+    }
+  });
+
+  test('conflicting Yarn family markers remain unknown without a default to Classic', async () => {
+    const opened = await openTrackedFixture(findSingleRootFixture('yarn-ambiguous-markers'));
+    try {
+      assert.deepStrictEqual(await resolveYarnFamily(opened.folders[0].uri.fsPath), {
+        family: 'unknown',
+        source: 'conflicting-markers',
+      });
     }
     finally {
       await closeFixtureWorkspace(opened);

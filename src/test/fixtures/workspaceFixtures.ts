@@ -11,11 +11,10 @@ import type { FixtureFiles, WorkspaceFixture } from './types';
  * distinguishes them (`ClientManager.detectPackageManager()`): the
  * `packageManager` manifest field first, then lock file detection. npm, pnpm,
  * Yarn Classic and Bun are covered through their lock files; Yarn Modern is
- * covered through the `packageManager` field plus a Berry-format lock file.
+ * covered through both `packageManager` metadata and Berry-format markers.
  *
- * Note that the extension models Yarn as a single `yarn` package manager, so
- * the two Yarn fixtures assert that both on-disk layouts resolve to `yarn`
- * rather than to two distinct identifiers.
+ * The public package-manager API continues to model Yarn as `yarn`; the audit
+ * boundary separately resolves Classic/Modern/unknown from each fixture root.
  *
  * A second group of `SINGLE_ROOT_FIXTURES` entries (the `precedence-*` and
  * `no-manager-signals`/`yarn-modern-no-metadata` ids) combines *competing*
@@ -104,16 +103,19 @@ export const SINGLE_ROOT_FIXTURES: readonly WorkspaceFixture[] = [
     'bun-app/package.json': manifest('bun-app'),
     'bun-app/bun.lock': BUN_LOCK,
   }),
-  // The dangerous case AUD-02D's Проблема section calls out: a genuine Berry
-  // (Yarn Modern) lock file and rc, but no `packageManager` field to say so.
-  // `detectPackageManager` still resolves `'yarn'` — the extension does not
-  // distinguish Classic from Modern (fixing that is AUD-05B) — this fixture
-  // exists to prove that today's collapse is real and explicit, not merely
-  // untested.
+  // A genuine Berry project without packageManager metadata: manager detection
+  // remains `yarn`, while the audit-family resolver must use same-root markers.
   singleRoot('yarn-modern-no-metadata', 'yarn-modern-no-metadata-app', 'yarn', {
     'yarn-modern-no-metadata-app/package.json': manifest('yarn-modern-no-metadata-app'),
     'yarn-modern-no-metadata-app/yarn.lock': YARN_MODERN_LOCK,
     'yarn-modern-no-metadata-app/.yarnrc.yml': YARN_MODERN_RC,
+  }),
+  // Contradictory same-root family markers must never silently select Classic
+  // or invoke a PATH-dependent audit command.
+  singleRoot('yarn-ambiguous-markers', 'yarn-ambiguous-app', 'yarn', {
+    'yarn-ambiguous-app/package.json': manifest('yarn-ambiguous-app'),
+    'yarn-ambiguous-app/yarn.lock': YARN_CLASSIC_LOCK,
+    'yarn-ambiguous-app/.yarnrc.yml': YARN_MODERN_RC,
   }),
   // `packageManager` is checked before any lock file at the same directory
   // (`ClientManager.detectPackageManagerFromManifest` runs first inside the

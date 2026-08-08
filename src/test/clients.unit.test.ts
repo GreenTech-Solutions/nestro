@@ -49,6 +49,36 @@ function npmAuditReport(packageName: string, severity: string): string {
   });
 }
 
+function yarnClassicAdvisory(packageName: string, severity: string, id: number): string {
+  return JSON.stringify({
+    type: 'auditAdvisory',
+    data: {
+      resolution: { id, path: packageName, dev: false, optional: false, bundled: false },
+      advisory: { id, module_name: packageName, severity },
+    },
+  });
+}
+
+function yarnClassicSummary(overrides: Record<string, number> = {}): string {
+  return JSON.stringify({
+    type: 'auditSummary',
+    data: {
+      vulnerabilities: {
+        info: 0,
+        low: 0,
+        moderate: 0,
+        high: 0,
+        critical: 0,
+        ...overrides,
+      },
+      dependencies: 1,
+      devDependencies: 0,
+      optionalDependencies: 0,
+      totalDependencies: 1,
+    },
+  });
+}
+
 describe('package manager clients', () => {
   it('builds npm update commands', () => {
     expectCommand(new NpmClient('/workspace').buildUpdateCommand([
@@ -128,6 +158,12 @@ describe('package manager clients', () => {
 describe('runAudit()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
+      if (uri.fsPath === '/workspace/package.json') {
+        return Promise.resolve(Buffer.from(JSON.stringify({ packageManager: 'yarn@1.22.19' })));
+      }
+      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
+    });
   });
 
   it('runs npm audit through the base Client implementation', async () => {
@@ -168,11 +204,15 @@ describe('runAudit()', () => {
     expect(vi.mocked(execFile).mock.calls[0][0]).toBe('bun');
   });
 
-  it('parses yarn audit NDJSON output and merges duplicate module advisories', async () => {
-    mockExecSuccess([
-      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'high' } } }),
-      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'critical' } } }),
-    ].join('\n'));
+  it('parses strict Yarn Classic NDJSON and merges duplicate package advisories', async () => {
+    mockExecFailure(Object.assign(new Error('Yarn Classic audit found vulnerabilities'), {
+      code: 24,
+      stdout: [
+        yarnClassicAdvisory('lodash', 'high', 1),
+        yarnClassicAdvisory('lodash', 'critical', 2),
+        yarnClassicSummary({ high: 1, critical: 1 }),
+      ].join('\n'),
+    }));
 
     const vulnerabilities = await new YarnClient('/workspace').runAudit();
 
@@ -180,25 +220,21 @@ describe('runAudit()', () => {
     expect(vulnerabilities.size).toBe(1);
   });
 
-  it('ignores blank, malformed, and irrelevant lines in yarn audit NDJSON output', async () => {
+  it('fails closed on malformed or irrelevant Yarn Classic NDJSON lines', async () => {
     mockExecSuccess([
-      '',
       'not json',
-      JSON.stringify({ type: 'auditSummary', data: {} }),
-      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { severity: 'high' } } }),
-      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'express', severity: 'unknown-severity' } } }),
-      JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'lodash', severity: 'moderate' } } }),
+      yarnClassicSummary(),
     ].join('\n'));
 
-    const vulnerabilities = await new YarnClient('/workspace').runAudit();
-
-    expect(vulnerabilities.size).toBe(1);
-    expect(vulnerabilities.get('lodash')).toBe('moderate');
+    await expect(new YarnClient('/workspace').runAudit()).rejects.toMatchObject({
+      outcome: { kind: 'incomplete', reason: 'malformed-json' },
+    });
   });
 
-  it('recovers yarn audit data from stdout when the process exits with a non-zero code', async () => {
+  it('recovers Yarn Classic data from stdout when the process exits with its severity mask', async () => {
     const error = Object.assign(new Error('yarn audit found vulnerabilities'), {
-      stdout: JSON.stringify({ type: 'auditAdvisory', data: { advisory: { module_name: 'vite', severity: 'critical' } } }),
+      code: 16,
+      stdout: `${yarnClassicAdvisory('vite', 'critical', 1)}\n${yarnClassicSummary({ critical: 1 })}`,
     });
     mockExecFailure(error);
 
@@ -207,7 +243,7 @@ describe('runAudit()', () => {
     expect(vulnerabilities.get('vite')).toBe('critical');
   });
 
-  it('throws when yarn audit fails without usable stdout', async () => {
+  it('throws a typed error when Yarn Classic fails before producing inspectable output', async () => {
     mockExecFailure(new Error('yarn not found'));
 
     await expect(new YarnClient('/workspace').runAudit()).rejects.toThrow('yarn not found');
@@ -260,6 +296,46 @@ describe('ClientManager', () => {
     await expect(new ClientManager().detectPackageManager('/workspace/packages/app')).resolves.toBe('yarn');
   });
 
+  it('runs Yarn audit from the ancestor directory that supplied the winning Yarn signal', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@4.6.0' }),
+      '/workspace/packages/app/package.json': '{}',
+    });
+    mockExecSuccess('');
+
+    const client = await new ClientManager().getClient('/workspace/packages/app');
+    await client.runAudit();
+
+    expect(execFile).toHaveBeenCalledWith(
+      'yarn',
+      ['npm', 'audit', '--all', '--recursive', '--json'],
+      { cwd: '/workspace' },
+      expect.any(Function),
+    );
+  });
+
+  it('retains the caller cwd for non-Yarn clients while resolving an ancestor manager', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: 'npm@11.0.0' }),
+      '/workspace/packages/app/package.json': '{}',
+    });
+    mockExecSuccess(JSON.stringify({
+      auditReportVersion: 2,
+      vulnerabilities: {},
+      metadata: { vulnerabilities: { total: 0 } },
+    }));
+
+    const client = await new ClientManager().getClient('/workspace/packages/app');
+    await client.runAudit();
+
+    expect(execFile).toHaveBeenCalledWith(
+      'npm',
+      ['audit', '--json'],
+      { cwd: '/workspace/packages/app' },
+      expect.any(Function),
+    );
+  });
+
   it('prefers a child lockfile over parent packageManager metadata', async () => {
     mockWorkspaceFiles({
       '/workspace/package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0' }),
@@ -290,6 +366,27 @@ describe('ClientManager', () => {
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalledWith(
       expect.objectContaining({ fsPath: '/pnpm-lock.yaml' }),
     );
+  });
+
+  it('checks only the requested directory when it has no owning workspace folder', async () => {
+    vi.mocked(vscode.workspace.getWorkspaceFolder).mockReturnValue(undefined);
+    mockWorkspaceFiles({
+      '/outside/package.json': '{}',
+      '/outside/yarn.lock': '# yarn lockfile v1\n',
+    });
+
+    await expect(new ClientManager().detectPackageManager('/outside')).resolves.toBe('yarn');
+  });
+
+  it.each([
+    ['getClient', (manager: ClientManager) => manager.getClient('/workspace')],
+    ['detectPackageManager', (manager: ClientManager) => manager.detectPackageManager('/workspace')],
+  ] as const)('logs and propagates workspace lookup failures from %s', async (_label, operation) => {
+    vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation(() => {
+      throw new Error('workspace lookup failed');
+    });
+
+    await expect(operation(new ClientManager())).rejects.toThrow('workspace lookup failed');
   });
 });
 

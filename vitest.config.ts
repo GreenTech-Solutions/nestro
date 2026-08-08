@@ -53,6 +53,11 @@ export default defineConfig({
 				'src/utils/ncuClient.ts': { statements: 85, branches: 80, functions: 100, lines: 84 },
 				'src/utils/auditClient.ts': { statements: 100, branches: 92, functions: 100, lines: 100 },
 				'src/utils/bunAuditClient.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
+				// AUD-05B: measured after the full Yarn family/schema matrix. Rounded-down
+				// per-file floors keep new family/parser regressions visible without pinning
+				// the non-trivial branch surfaces to vanity 100% targets.
+				'src/utils/yarnAuditClient.ts': { statements: 95, branches: 90, functions: 100, lines: 95 },
+				'src/utils/yarnFamily.ts': { statements: 95, branches: 92, functions: 100, lines: 95 },
 				'src/utils/logger.ts': { statements: 100, branches: 83, functions: 100, lines: 100 },
 				'src/providers/PackagesProvider.ts': { statements: 90, branches: 80, functions: 86, lines: 91 },
 				'src/providers/FilterManager.ts': { statements: 98, branches: 84, functions: 94, lines: 98 },
