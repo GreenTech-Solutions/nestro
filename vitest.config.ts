@@ -59,6 +59,18 @@ export default defineConfig({
 				'src/utils/yarnAuditClient.ts': { statements: 95, branches: 90, functions: 100, lines: 95 },
 				'src/utils/yarnFamily.ts': { statements: 95, branches: 92, functions: 100, lines: 95 },
 				'src/utils/logger.ts': { statements: 100, branches: 83, functions: 100, lines: 100 },
+				// AUD-12: the VSIX package boundary tooling. Numbers are each file's own
+				// measured level on the clean allowlist package, rounded down.
+				// src/tools/index.ts measures 100% on all four metrics, so — same rule as
+				// the barrels further down — it intentionally gets no entry and stays on the
+				// global backstop rather than being pinned to a vanity 100 on every metric.
+				// The ZIP and XML readers have deliberately broad fail-closed grammars, so
+				// their measured rounded floors are recorded separately.
+				'src/tools/vsixPolicy.ts': { statements: 98, branches: 97, functions: 100, lines: 98 },
+				'src/tools/verifyVsix.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
+				'src/tools/verifyVsixCli.ts': { statements: 100, branches: 94, functions: 100, lines: 100 },
+				'src/tools/vsixArchive.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
+				'src/tools/vsixManifest.ts': { statements: 96, branches: 92, functions: 100, lines: 96 },
 				'src/providers/PackagesProvider.ts': { statements: 90, branches: 80, functions: 86, lines: 91 },
 				'src/providers/FilterManager.ts': { statements: 98, branches: 84, functions: 94, lines: 98 },
 				'src/providers/PackageItem.ts': { statements: 100, branches: 93, functions: 100, lines: 100 },
