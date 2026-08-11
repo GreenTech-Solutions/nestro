@@ -69,6 +69,25 @@ export default defineConfig({
 				'src/tools/vsixPolicy.ts': { statements: 98, branches: 97, functions: 100, lines: 98 },
 				'src/tools/verifyVsix.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
 				'src/tools/verifyVsixCli.ts': { statements: 100, branches: 94, functions: 100, lines: 100 },
+				// AUD-11: the pnpm signature audit guard. Measured at 100% on all four
+				// metrics for both files, and pinned there as a deliberate, narrow
+				// exception to the "files at 100% everywhere get no entry" rule stated at
+				// the end of this block. That rule exists so unrelated churn in a tiny
+				// TreeItem class or a barrel cannot hard-fail the gate; neither file here
+				// is that. Their whole content is one closed decision surface — every
+				// branch is one member of the SignatureAuditRejectionReason union — so a
+				// new untested branch means a new, unproven way for a supply-chain gate to
+				// answer, which is exactly the "green proves nothing" defect AUD-11 closes.
+				// Leaving them on the global backstop (branches 70) would allow that.
+				// The negative-threshold form AUD-03's review left as a fast-follow
+				// (`branches: -2` = at most N uncovered units) was considered and does not
+				// fit here for the same reason: the smallest useful negative value still
+				// permits one uncovered branch, and one uncovered branch in this file is
+				// one untested answer from the signature gate. Where the anti-vanity rule
+				// protects files whose new branches are ordinary code, these two have no
+				// ordinary branches to protect.
+				'src/tools/auditSignatures.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
+				'src/tools/auditSignaturesCli.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
 				'src/tools/vsixArchive.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
 				'src/tools/vsixManifest.ts': { statements: 96, branches: 92, functions: 100, lines: 96 },
 				'src/providers/PackagesProvider.ts': { statements: 90, branches: 80, functions: 86, lines: 91 },
