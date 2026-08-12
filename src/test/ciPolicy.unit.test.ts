@@ -2,10 +2,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { CI_WORKFLOW_PATH, evaluateCiWorkflowPolicy } from '../tools';
+import {
+  CI_WORKFLOW_PATH,
+  evaluateCiWorkflowPolicy,
+  evaluateWorkflowActionPolicy,
+} from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const canonicalSource = readFileSync(resolve(repositoryRoot, CI_WORKFLOW_PATH), 'utf8');
+const releaseWorkflowPath = '.github/workflows/release.yml';
+const canonicalReleaseSource = readFileSync(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
 
 function mutateWorkflow(mutator: (workflow: Record<string, unknown>) => void): string {
   const workflow = parse(canonicalSource, { uniqueKeys: true }) as Record<string, unknown>;
@@ -343,3 +349,91 @@ describe('AUD-14 CI workflow policy', () => {
     expectRejected('name: Verify\nname: Forged\njobs: {}\n', 'yaml');
   });
 });
+
+describe('AUD-15A immutable workflow action policy', () => {
+  const checkoutReference = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
+
+  it('accepts every reviewed action reference and version comment in the current workflows', () => {
+    expect(evaluateWorkflowActionPolicy(canonicalSource)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource)).toEqual([]);
+  });
+
+  it.each(['v6', 'main', 'd23441a', 'D23441A48E516B6C34AEA4FA41551A30E30AF803', 'not-a-sha'])(
+    'rejects a mutable or non-full release checkout ref %s',
+    (ref) => {
+      const mutated = canonicalReleaseSource.replace(
+        `${checkoutReference} # v6.1.0`,
+        `actions/checkout@${ref} # v6.1.0`,
+      );
+      expectRejectedAction(mutated, 'immutable-action');
+    },
+  );
+
+  it('rejects an arbitrary full SHA and locator substitution', () => {
+    expectRejectedAction(canonicalReleaseSource.replace(
+      checkoutReference,
+      `actions/checkout@${'f'.repeat(40)}`,
+    ), 'reviewed-action');
+    expectRejectedAction(canonicalReleaseSource.replace(
+      checkoutReference,
+      'attacker/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+    ), 'reviewed-action');
+    expectRejectedAction(canonicalReleaseSource.replace(
+      checkoutReference,
+      'actions/checkout/subpath@d23441a48e516b6c34aea4fa41551a30e30af803',
+    ), 'reviewed-action');
+  });
+
+  it('requires the exact version comment attached to the uses scalar', () => {
+    expectRejectedAction(canonicalReleaseSource.replace(' # v6.1.0', ''), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource.replace('# v6.1.0', '# v6.0.0'), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource
+      .replace(`${checkoutReference} # v6.1.0`, checkoutReference)
+      .replace('name: 1. Checkout', 'name: 1. Checkout # v6.1.0'), 'action-version-comment');
+  });
+
+  it.each([
+    ['job-level tag', 'jobs:\n  call:\n    uses: owner/repo/.github/workflows/build.yml@v1\n'],
+    ['dynamic expression', 'jobs:\n  call:\n    uses: "${{ github.repository }}/.github/workflows/build.yml@main"\n'],
+  ])('rejects an unreviewed %s executable reference', (_label, source) => {
+    expectRejectedAction(source, 'immutable-action');
+  });
+
+  it('rejects local and Docker action forms until their exact code identity is reviewed', () => {
+    expectRejectedAction('jobs:\n  call:\n    uses: ./../outside/workflow.yml\n', 'reviewed-local-action');
+    expectRejectedAction(
+      'jobs:\n  test:\n    steps:\n      - uses: docker://alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n',
+      'reviewed-docker-action',
+    );
+  });
+
+  it('scans only executable job and step uses fields', () => {
+    const inertSource = `jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+        with:
+          uses: attacker/action@v1
+`;
+    expect(evaluateWorkflowActionPolicy(inertSource)).toEqual([]);
+  });
+
+  it('does not turn AUD-15A into a release topology or permissions redesign', () => {
+    const mutated = canonicalReleaseSource
+      .replace('contents: write', 'contents: read')
+      .replace('branches: [master]', 'branches: [release]')
+      .replace('      - name: 7. Release', '      - name: Extra run-only step\n        run: echo unchanged-action-policy\n\n      - name: 7. Release');
+    expect(evaluateWorkflowActionPolicy(mutated)).toEqual([]);
+  });
+
+  it('fails closed on malformed YAML and executable step shape', () => {
+    expectRejectedAction('jobs:\n  test: [unterminated\n', 'yaml');
+    expectRejectedAction('jobs:\n  test:\n    steps: forged\n', 'workflow-shape');
+    expectRejectedAction('jobs:\n  test:\n    steps:\n      - forged\n', 'workflow-shape');
+  });
+});
+
+function expectRejectedAction(source: string, rule: string): void {
+  expect(evaluateWorkflowActionPolicy(source)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
+}

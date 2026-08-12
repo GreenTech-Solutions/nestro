@@ -2,15 +2,26 @@ import { isDeepStrictEqual } from 'node:util';
 import { parseDocument } from 'yaml';
 
 export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
+export const WORKFLOWS_DIRECTORY_PATH = '.github/workflows';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const ACTION_REFERENCE_PATTERN = /^([^/]+\/[^/@]+)@(.+)$/u;
-const REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
+const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
   'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   'pnpm/setup': '84cb39b217b10273981911c288cd62326dc7c6d2',
+};
+const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
+  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1': 'v7.0.1',
+  'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803': 'v6.1.0',
+  'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c': 'v8.0.1',
+  'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38': 'v6.5.0',
+  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020': 'v7.0.0',
+  'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a': 'v7.0.1',
+  'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
+  'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
 };
 const ACTIONLINT_COMMAND = `set -euo pipefail
 archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
@@ -245,6 +256,103 @@ function findActionStep(steps: readonly UnknownRecord[], ownerAndRepo: string): 
   return steps.find(step => asString(step.uses)?.startsWith(`${ownerAndRepo}@`) === true);
 }
 
+function scalarComment(node: unknown): string | undefined {
+  return isRecord(node) ? asString(node.comment)?.trim() : undefined;
+}
+
+function parseExecutableActionReference(reference: string): readonly [string, string] | undefined {
+  const separator = reference.lastIndexOf('@');
+  if (separator <= 0 || separator === reference.length - 1) {
+    return undefined;
+  }
+  const locator = reference.slice(0, separator);
+  const ref = reference.slice(separator + 1);
+  const segments = locator.split('/');
+  if (segments.length < 2
+    || segments.some(segment => segment.length === 0 || segment.includes('@') || /\s/u.test(segment))
+    || /\s/u.test(ref)) {
+    return undefined;
+  }
+  return [locator, ref];
+}
+
+function assertReviewedExecutableUse(
+  referenceValue: unknown,
+  referenceNode: unknown,
+  location: string,
+  violations: CiPolicyViolation[],
+): void {
+  const reference = asString(referenceValue);
+  if (reference === undefined) {
+    add(violations, 'immutable-action', `${location} must be a static reviewed action reference`);
+    return;
+  }
+  if (reference.startsWith('./')) {
+    add(violations, 'reviewed-local-action', `${location} uses an unreviewed local action or reusable workflow`);
+    return;
+  }
+  if (reference.startsWith('docker://')) {
+    add(violations, 'reviewed-docker-action', `${location} uses an unreviewed Docker action image`);
+    return;
+  }
+  const parsed = parseExecutableActionReference(reference);
+  if (parsed === undefined || !FULL_SHA_PATTERN.test(parsed[1])) {
+    add(violations, 'immutable-action', `${location} must pin an external action to a lowercase full SHA`);
+    return;
+  }
+  const reviewedVersion = REVIEWED_EXTERNAL_ACTIONS[reference];
+  if (reviewedVersion === undefined) {
+    add(violations, 'reviewed-action', `${location} must use a reviewed action locator and commit`);
+    return;
+  }
+  if (scalarComment(referenceNode) !== reviewedVersion) {
+    add(violations, 'action-version-comment', `${location} must identify the reviewed ${reviewedVersion} tag`);
+  }
+}
+
+export function evaluateWorkflowActionPolicy(source: string): CiPolicyViolation[] {
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (document.errors.length > 0) {
+    return document.errors.map(error => ({ rule: 'yaml', message: error.message }));
+  }
+  const violations: CiPolicyViolation[] = [];
+  const root = asRecord(document.toJS(), 'workflow', violations);
+  const jobs = asRecord(root.jobs, 'jobs', violations);
+  for (const [jobId, rawJob] of Object.entries(jobs)) {
+    const job = asRecord(rawJob, `jobs.${jobId}`, violations);
+    if (Object.hasOwn(job, 'uses')) {
+      assertReviewedExecutableUse(
+        job.uses,
+        document.getIn(['jobs', jobId, 'uses'], true),
+        `jobs.${jobId}.uses`,
+        violations,
+      );
+    }
+    if (job.steps === undefined) {
+      continue;
+    }
+    if (!Array.isArray(job.steps)) {
+      add(violations, 'workflow-shape', `jobs.${jobId}.steps must be a sequence`);
+      continue;
+    }
+    for (const [index, rawStep] of job.steps.entries()) {
+      if (!isRecord(rawStep)) {
+        add(violations, 'workflow-shape', `jobs.${jobId}.steps[${index}] must be a mapping`);
+        continue;
+      }
+      if (Object.hasOwn(rawStep, 'uses')) {
+        assertReviewedExecutableUse(
+          rawStep.uses,
+          document.getIn(['jobs', jobId, 'steps', index, 'uses'], true),
+          `jobs.${jobId}.steps[${index}].uses`,
+          violations,
+        );
+      }
+    }
+  }
+  return violations;
+}
+
 function assertExternalActionsPinned(jobs: UnknownRecord, violations: CiPolicyViolation[]): void {
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob, `jobs.${jobId}`, violations);
@@ -272,7 +380,7 @@ function assertExternalActionsPinned(jobs: UnknownRecord, violations: CiPolicyVi
       if (match === null || !FULL_SHA_PATTERN.test(match[2])) {
         add(violations, 'immutable-action', `${jobId} step ${index + 1} must pin an external action to a full SHA`);
       }
-      else if (REVIEWED_ACTIONS[match[1]] !== match[2]) {
+      else if (CI_REVIEWED_ACTIONS[match[1]] !== match[2]) {
         add(violations, 'reviewed-action', `${jobId} step ${index + 1} must use the reviewed ${match[1]} commit`);
       }
     }
