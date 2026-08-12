@@ -343,6 +343,8 @@
     "check:vsce": "pnpm run test:compile && node out/tools/verifyVsixCli.js",
     "audit:dependencies": "pnpm audit --audit-level high",
     "audit:signatures": "pnpm run test:compile && node out/tools/auditSignaturesCli.js",
+    "ci:evidence": "pnpm run test:compile && node out/tools/ciEvidenceCli.js",
+    "ci:policy": "pnpm run test:compile && node out/tools/ciPolicyCli.js",
     "typecheck": "tsc --noEmit",
     "lint:eslint": "eslint src --max-warnings=0",
     "lint": "pnpm run lint:eslint",
@@ -352,6 +354,7 @@
     "test:minimum": "vscode-test --label minimum",
     "pretest:stable": "pnpm run pretest",
     "test:stable": "vscode-test --label stable",
+    "test:packaged": "pnpm run test:compile && node out/test/packagedSmokeCli.js",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
     "test:unit:watch": "vitest"
@@ -377,7 +380,8 @@
     "tsdown": "0.22.14",
     "typescript": "6.0.3",
     "typescript-eslint": "8.65.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   },
   "type": "commonjs",
   "packageManager": "pnpm@11.20.0",

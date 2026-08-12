@@ -1,0 +1,232 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_SHA: ${{ github.sha }}
+  CI_ARTIFACT_DIR: dist/ci
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prepare pnpm
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          install: false
+          cache: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Audit dependencies
+        run: pnpm run audit:dependencies
+      - name: Audit dependency signatures
+        run: pnpm run audit:signatures
+      - name: Strict lint
+        run: pnpm run lint
+      - name: Production typecheck
+        run: pnpm run typecheck
+      - name: Test typecheck
+        run: pnpm exec tsc -p tsconfig.test.json --noEmit
+      - name: Validate workflow syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \
+            | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/ci.yml
+      - name: Workflow policy
+        run: pnpm run ci:policy
+      - name: Unit coverage
+        run: pnpm run test:unit:coverage
+      - name: Build
+        run: pnpm run build
+
+  extension-host:
+    name: Extension Host (${{ matrix.os }}, ${{ matrix.channel }})
+    needs: quality
+    if: ${{ success() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        channel: [minimum, stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prepare pnpm
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          install: false
+          cache: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build extension
+        run: pnpm run build
+      - name: Compile integration tests
+        run: pnpm run test:compile
+      - name: Run Extension Host on Linux
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a pnpm exec vscode-test --label "${{ matrix.channel }}"
+      - name: Run Extension Host
+        if: ${{ runner.os != 'Linux' }}
+        run: pnpm exec vscode-test --label "${{ matrix.channel }}"
+
+  package:
+    name: Package verified evidence
+    needs: [quality, extension-host]
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Checkout exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prepare pnpm
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          install: false
+          cache: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Package and verify VSIX
+        run: pnpm run check:vsce --out-dir "$CI_ARTIFACT_DIR" --require-clean-worktree
+      - name: Write evidence-only identity
+        run: pnpm run ci:evidence --out-dir "$CI_ARTIFACT_DIR"
+        env:
+          CI_SOURCE_SHA: ${{ env.EXPECTED_SHA }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - name: Upload immutable evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verify-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CI_ARTIFACT_DIR }}/*.vsix
+            ${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt
+            ${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256
+            ${{ env.CI_ARTIFACT_DIR }}/evidence.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
+
+  packaged-smoke:
+    name: Packaged activation (${{ matrix.os }}, ${{ matrix.channel }})
+    needs: package
+    if: ${{ success() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        channel: [minimum, stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prepare pnpm
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          install: false
+          cache: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Compile packaged smoke runner
+        run: pnpm run test:compile
+      - name: Download exact immutable evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          path: ${{ env.CI_ARTIFACT_DIR }}
+      - name: Verify, install and activate packaged VSIX on Linux
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a pnpm run test:packaged --artifact-dir "${{ env.CI_ARTIFACT_DIR }}" --expected-sha "${{ env.EXPECTED_SHA }}" --channel "${{ matrix.channel }}"
+      - name: Verify, install and activate packaged VSIX
+        if: ${{ runner.os != 'Linux' }}
+        run: pnpm run test:packaged --artifact-dir "${{ env.CI_ARTIFACT_DIR }}" --expected-sha "${{ env.EXPECTED_SHA }}" --channel "${{ matrix.channel }}"
+
+  required:
+    name: Verify / Required
+    needs: [quality, extension-host, package, packaged-smoke]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed or skipped gates
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          HOST_RESULT: ${{ needs.extension-host.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          PACKAGED_SMOKE_RESULT: ${{ needs.packaged-smoke.result }}
+        shell: bash
+        run: |
+          test "$QUALITY_RESULT" = success
+          test "$HOST_RESULT" = success
+          test "$PACKAGE_RESULT" = success
+          test "$PACKAGED_SMOKE_RESULT" = success
