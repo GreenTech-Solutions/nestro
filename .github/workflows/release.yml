@@ -22,7 +22,7 @@ jobs:
       - name: 2. Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "lts/*" 
+          node-version-file: ".nvmrc"
 
       - name: 3.1 Prepare pnpm
         uses: pnpm/action-setup@v6
