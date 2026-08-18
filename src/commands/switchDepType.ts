@@ -1,11 +1,16 @@
-import { PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PackagesProvider } from '../providers';
 import {
   logger,
   showError,
   switchDependencyType,
 } from '../utils';
 
-export async function switchDepTypeCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
+export async function switchDepTypeCommand(item: unknown, provider: PackagesProvider): Promise<void> {
+  if (!isPackageItem(item)) {
+    logger.warn('nestro.switchDepType invoked without a valid package item; ignoring.');
+    return;
+  }
+
   try {
     logger.info(`Switching ${item.packageName} dependency type.`);
     await provider.withWriteSuppressed(async () => {

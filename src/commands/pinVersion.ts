@@ -1,11 +1,16 @@
-import { PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PackagesProvider } from '../providers';
 import {
   logger,
   setVersionPin,
   showError,
 } from '../utils';
 
-export async function pinVersionCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
+export async function pinVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
+  if (!isPackageItem(item)) {
+    logger.warn('nestro.pinVersion invoked without a valid package item; ignoring.');
+    return;
+  }
+
   try {
     const shouldPin = item.versionPrefix === '^' || item.versionPrefix === '~';
     logger.info(`${shouldPin ? 'Pinning' : 'Unpinning'} ${item.packageName} version.`);

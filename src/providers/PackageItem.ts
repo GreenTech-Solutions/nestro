@@ -39,6 +39,17 @@ export class PackageItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * Structural guard for commands that only make sense against a real row: the Command
+ * Palette can invoke a contributed command with no argument at all, and `executeCommand()`
+ * accepts any value from the API regardless of the declared parameter type. This narrows
+ * `unknown` down to an actual `PackageItem` instance so callers can safely no-op instead
+ * of dereferencing a missing/malformed argument.
+ */
+export function isPackageItem(value: unknown): value is PackageItem {
+  return value instanceof PackageItem;
+}
+
 function getVulnerabilityIcon(severity: AuditSeverity): vscode.ThemeIcon {
   const color = severity === 'critical' || severity === 'high'
     ? 'errorForeground'

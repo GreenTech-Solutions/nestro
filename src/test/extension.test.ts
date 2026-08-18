@@ -55,6 +55,8 @@ function requireExtension(): vscode.Extension<unknown> {
 interface ManifestCommand {
   readonly command: string;
   readonly title: string;
+  readonly category?: string;
+  readonly enablement?: string;
 }
 
 interface ManifestMenuEntry {
@@ -68,6 +70,7 @@ interface ExtensionManifest {
   readonly contributes: {
     readonly commands: readonly ManifestCommand[];
     readonly menus: {
+      readonly commandPalette: readonly ManifestMenuEntry[];
       readonly 'view/item/context': readonly ManifestMenuEntry[];
     };
   };
@@ -684,57 +687,95 @@ suite('Manifest Contracts', () => {
     assert.ok(viewItemRegexSource, 'nestro.pickVersion should use a regex viewItem match');
     assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
   });
+
+  // AUD-04A (UX-01): row-only and contextual commands have no meaningful
+  // effect when triggered outside their row/context, so they are excluded
+  // from the Command Palette entirely via a `when: false` menu entry.
+  const PALETTE_HIDDEN_COMMAND_IDS = [
+    'nestro.setFilter',
+    'nestro.showFilterPicker',
+    'nestro.installUpdate',
+    'nestro.pickVersion',
+    'nestro.switchDepType',
+    'nestro.pinVersion',
+    'nestro.removePackage',
+    'nestro.openOnNpm',
+    'nestro.copyPackageName',
+    'nestro.clearSearchQuery',
+  ] as const;
+
+  test('row-only and contextual commands are hidden from the Command Palette', () => {
+    const paletteEntries = getManifest().contributes.menus.commandPalette;
+    for (const commandId of PALETTE_HIDDEN_COMMAND_IDS) {
+      const entry = paletteEntries.find(candidate => candidate.command === commandId);
+      assert.ok(entry, `${commandId} should have a commandPalette menu entry`);
+      assert.strictEqual(entry.when, 'false', `${commandId} should be hidden from the Command Palette`);
+    }
+    assert.strictEqual(
+      paletteEntries.length,
+      PALETTE_HIDDEN_COMMAND_IDS.length,
+      'every commandPalette override should be one of the hidden row-only/contextual commands',
+    );
+  });
+
+  test('every command still visible in the Command Palette carries the Nestro category', () => {
+    const hiddenIds = new Set<string>(PALETTE_HIDDEN_COMMAND_IDS);
+    const visibleCommands = getManifest().contributes.commands.filter(entry => !hiddenIds.has(entry.command));
+    assert.ok(visibleCommands.length > 0, 'at least one command should remain visible in the Command Palette');
+    for (const command of visibleCommands) {
+      assert.strictEqual(command.category, 'Nestro', `${command.command} should carry the Nestro category`);
+    }
+  });
+
+  test('nestro.updateAllVisible is only enabled while a visible package actually has an update', () => {
+    const command = getManifest().contributes.commands.find(entry => entry.command === 'nestro.updateAllVisible');
+    assert.ok(command, 'nestro.updateAllVisible should be a contributed command');
+    assert.strictEqual(command.enablement, 'nestro.canUpdateVisiblePackages');
+  });
 });
 
 suite('Contributed Command Surface: invocation without arguments', function () {
   this.timeout(30000);
 
-  type CommandInvocationExpectation = 'rejects-in-background' | 'rejects-synchronously' | 'resolves';
-
   /**
-   * Every entry is grounded in reading each command's registration in
-   * `extension.ts` and the command function it calls:
+   * AUD-04A (UX-01) gave every row-only command handler (`installUpdate`,
+   * `pickVersion`, `switchDepType`, `pinVersion`, `removePackage`,
+   * `openOnNpm`, `copyPackageName`) a typed `isPackageItem()` guard —
+   * `src/providers/PackageItem.ts` — as its first statement, before any
+   * dereference of the (possibly absent) argument; `openOnNpm`/
+   * `copyPackageName` were extracted out of inline `extension.ts` lambdas
+   * into guarded command functions of their own (`src/commands/openOnNpm.ts`,
+   * `src/commands/copyPackageName.ts`) so the guard lives in one place per
+   * command instead of at the registration boundary.
    *
-   * - `resolves` — either the handler never dereferences its (absent)
-   *   argument, or it does so behind a try/catch (`switchDepType`,
-   *   `pinVersion`) that turns the resulting TypeError into a `showError()`
-   *   call instead of a rejection.
-   * - `rejects-synchronously` — `openOnNpm`/`copyPackageName` are registered
-   *   as plain (non-async) handlers that dereference `item.packageName`
-   *   with no guard at all; the TypeError is thrown synchronously out of the
-   *   handler, which VS Code's command dispatcher turns into a rejected
-   *   `executeCommand()` promise.
-   * - `rejects-in-background` — `installUpdate`/`pickVersion`/`removePackage`
-   *   are registered as `(item) => { void asyncCommand(item, provider); }`.
-   *   The async function's synchronous-prefix TypeError becomes a rejected
-   *   Promise per the async-function contract, but the handler itself
-   *   returns `undefined` rather than that promise, so `executeCommand()`
-   *   resolves and the rejection only ever surfaces as a process-level
-   *   `unhandledRejection`. Unlike `switchDepType`/`pinVersion`, these three
-   *   commands have no argument guard at all — a real, currently low-impact
-   *   gap worth a future hardening card, documented here rather than fixed
-   *   (this card is test-only).
+   * Every contributed command — global or row-only — therefore resolves
+   * `executeCommand()` and leaves no unhandled background rejection when
+   * invoked with no argument. Row-only/contextual commands are additionally
+   * hidden from the Command Palette (see 'Manifest Contracts' above), but
+   * `executeCommand()` still reaches the real handler directly through the
+   * API regardless of Palette visibility, which is exactly what this suite
+   * exercises.
    */
-  const COMMAND_INVOCATION_EXPECTATIONS: Readonly<Record<string, CommandInvocationExpectation>> = {
-    'nestro.refresh': 'resolves',
-    'nestro.checkUpdates': 'resolves',
-    'nestro.runAudit': 'resolves',
-    'nestro.installUpdate': 'rejects-in-background',
-    'nestro.pickVersion': 'rejects-in-background',
-    'nestro.switchDepType': 'resolves',
-    'nestro.pinVersion': 'resolves',
-    'nestro.removePackage': 'rejects-in-background',
-    'nestro.updateAllVisible': 'resolves',
-    'nestro.runInstall': 'resolves',
-    'nestro.openOnNpm': 'rejects-synchronously',
-    'nestro.copyPackageName': 'rejects-synchronously',
-    'nestro.setFilter': 'resolves',
-    'nestro.showFilterPicker': 'resolves',
-    'nestro.searchPackages': 'resolves',
-    'nestro.clearSearchQuery': 'resolves',
-    'nestro.openSettings': 'resolves',
-    'nestro.pinAllVersions': 'resolves',
-  };
+  const COMMAND_IDS_UNDER_TEST: readonly string[] = [
+    'nestro.refresh',
+    'nestro.checkUpdates',
+    'nestro.runAudit',
+    'nestro.installUpdate',
+    'nestro.pickVersion',
+    'nestro.switchDepType',
+    'nestro.pinVersion',
+    'nestro.removePackage',
+    'nestro.updateAllVisible',
+    'nestro.runInstall',
+    'nestro.openOnNpm',
+    'nestro.copyPackageName',
+    'nestro.setFilter',
+    'nestro.showFilterPicker',
+    'nestro.searchPackages',
+    'nestro.clearSearchQuery',
+    'nestro.openSettings',
+    'nestro.pinAllVersions',
+  ];
 
   let commandIds: string[];
   let unhandledRejections: unknown[];
@@ -764,13 +805,13 @@ suite('Contributed Command Surface: invocation without arguments', function () {
   });
 
   test('contributes.commands still has exactly the 18 entries this suite enumerates', () => {
-    assert.strictEqual(commandIds.length, 18, 'A manifest command count drift means COMMAND_INVOCATION_EXPECTATIONS above is stale');
+    assert.strictEqual(commandIds.length, 18, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
     const localeCompare = (left: string, right: string): number => left.localeCompare(right);
-    assert.deepStrictEqual([...commandIds].sort(localeCompare), Object.keys(COMMAND_INVOCATION_EXPECTATIONS).sort(localeCompare));
+    assert.deepStrictEqual([...commandIds].sort(localeCompare), [...COMMAND_IDS_UNDER_TEST].sort(localeCompare));
   });
 
-  for (const [commandId, expectation] of Object.entries(COMMAND_INVOCATION_EXPECTATIONS)) {
-    test(`${commandId} (${expectation}) does not crash the Extension Host when invoked with no arguments`, async () => {
+  for (const commandId of COMMAND_IDS_UNDER_TEST) {
+    test(`${commandId} does not crash the Extension Host when invoked with no arguments`, async () => {
       unhandledRejections.length = 0;
       let rejection: unknown;
       try {
@@ -797,35 +838,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
       await new Promise(resolve => setImmediate(resolve));
       await new Promise(resolve => setImmediate(resolve));
 
-      if (expectation === 'rejects-synchronously') {
-        assert.ok(rejection instanceof Error, `${commandId} should reject executeCommand() with a real Error, not resolve or crash silently`);
-      }
-      else {
-        assert.strictEqual(rejection, undefined, `${commandId} should resolve executeCommand() — any internal failure happens off the awaited promise`);
-      }
-
-      if (expectation === 'rejects-in-background') {
-        // Empirically confirmed on both channels (1.125.0 and stable): this
-        // Extension Host test harness fires `unhandledRejection` twice for
-        // the single rejected promise these commands' `item.<field>`
-        // TypeError produces (identical stack both times, traced back to the
-        // one `executeCommand()` call site above) — not a listener leak
-        // (`unhandledRejections` is reset per test and never exceeds 2 here)
-        // and not two distinct failures. The bound below asserts the real
-        // claim — at least one background rejection happened — without
-        // hard-coding a duplicate-fire count that may not hold on a future
-        // VS Code version.
-        assert.ok(
-          unhandledRejections.length >= 1 && unhandledRejections.length <= 2,
-          `${commandId} is expected to produce 1–2 unhandled background rejections today (no argument guard); got ${unhandledRejections.length}`,
-        );
-        for (const reason of unhandledRejections) {
-          assert.ok(reason instanceof Error, `${commandId}'s background rejection should carry a real Error`);
-        }
-      }
-      else {
-        assert.strictEqual(unhandledRejections.length, 0, `${commandId} should not leave any unhandled background rejection`);
-      }
+      assert.strictEqual(rejection, undefined, `${commandId} should resolve executeCommand() — the isPackageItem() guard (row-only commands) or the absence of any argument dereference (global commands) prevents a thrown/rejected TypeError`);
+      assert.strictEqual(unhandledRejections.length, 0, `${commandId} should not leave any unhandled background rejection`);
     });
   }
 

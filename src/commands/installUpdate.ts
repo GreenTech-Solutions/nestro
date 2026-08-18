@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
-import { PackageItem, PackagesProvider, PackageStateIdentity, toRelativeLabel } from '../providers';
+import { isPackageItem, PackageItem, PackagesProvider, PackageStateIdentity, toRelativeLabel } from '../providers';
 import {
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -18,7 +18,12 @@ const clientManager = new ClientManager();
 
 type PackageUpdate = { item: PackageItem; version: string };
 
-export async function installUpdateCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
+export async function installUpdateCommand(item: unknown, provider: PackagesProvider): Promise<void> {
+  if (!isPackageItem(item)) {
+    logger.warn('nestro.installUpdate invoked without a valid package item; ignoring.');
+    return;
+  }
+
   if (item.latest !== undefined && !item.installing) {
     const latest = item.latest;
     try {

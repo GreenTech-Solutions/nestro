@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
-import { PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PackageItem, PackagesProvider } from '../providers';
 import {
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -12,7 +12,12 @@ import {
 
 const clientManager = new ClientManager();
 
-export async function removePackageCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
+export async function removePackageCommand(item: unknown, provider: PackagesProvider): Promise<void> {
+  if (!isPackageItem(item)) {
+    logger.warn('nestro.removePackage invoked without a valid package item; ignoring.');
+    return;
+  }
+
   const confirmed = await vscode.window.showWarningMessage(
     `Remove ${item.packageName} from ${item.dev ? 'devDependencies' : 'dependencies'}?`,
     { modal: true },

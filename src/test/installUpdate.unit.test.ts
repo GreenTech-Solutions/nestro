@@ -349,6 +349,25 @@ describe('installUpdateCommand()', () => {
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.commandLine).toBe('pnpm add vitest@4.1.0 --save-dev');
   });
+
+  it.each([
+    ['undefined (Command Palette invocation with no context item)', undefined],
+    ['a malformed non-PackageItem object', { packageName: 'react', latest: '19.0.0' }],
+    ['a primitive value', 'react'],
+  ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
+    const provider = {
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider;
+
+    await expect(installUpdateCommand(malformedItem as unknown as PackageItem, provider)).resolves.toBeUndefined();
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('runInstallCommand()', () => {

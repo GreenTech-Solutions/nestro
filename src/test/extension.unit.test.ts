@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { activate, deactivate } from '../extension';
 import { PackagesProvider } from '../providers';
 import {
+  copyPackageNameCommand,
   installUpdateCommand,
+  openOnNpmCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
   pinVersionCommand,
@@ -17,7 +22,9 @@ import {
 // independently-tested command function; stubbing them keeps handler invocation below
 // safe (no real network/task/file-system side effects) while still proving the wiring.
 vi.mock('../commands', () => ({
+  copyPackageNameCommand: vi.fn(),
   installUpdateCommand: vi.fn(),
+  openOnNpmCommand: vi.fn(),
   pickVersionCommand: vi.fn(),
   pinAllVersionsCommand: vi.fn(),
   pinVersionCommand: vi.fn(),
@@ -60,28 +67,23 @@ vi.mock('../providers', () => ({
   PackageItem: vi.fn(),
 }));
 
-// Every command id activate() is expected to register with VS Code — must match
-// contributes.commands in package.json exactly (CLAUDE.md convention).
-const REGISTERED_COMMAND_IDS = [
-  'nestro.refresh',
-  'nestro.checkUpdates',
-  'nestro.installUpdate',
-  'nestro.pickVersion',
-  'nestro.switchDepType',
-  'nestro.pinVersion',
-  'nestro.removePackage',
-  'nestro.runAudit',
-  'nestro.runInstall',
-  'nestro.updateAllVisible',
-  'nestro.pinAllVersions',
-  'nestro.openOnNpm',
-  'nestro.copyPackageName',
-  'nestro.setFilter',
-  'nestro.showFilterPicker',
-  'nestro.searchPackages',
-  'nestro.clearSearchQuery',
-  'nestro.openSettings',
-];
+interface ManifestCommand {
+  readonly command: string;
+}
+
+interface ExtensionManifest {
+  readonly contributes: {
+    readonly commands: readonly ManifestCommand[];
+  };
+}
+
+const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ExtensionManifest;
+
+// Sourced directly from contributes.commands in package.json — the real source of truth —
+// rather than a hardcoded copy, so this list cannot silently drift from the manifest
+// (CLAUDE.md convention: command IDs must match exactly between package.json and registerCommand).
+const REGISTERED_COMMAND_IDS = manifest.contributes.commands.map(entry => entry.command);
 
 function makeContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
@@ -158,13 +160,13 @@ describe('activate()', () => {
     expect(PackagesProvider).toHaveBeenCalledWith(expect.objectContaining({ current: 'all' }));
   });
 
-  it('invokes every registered command handler without throwing', () => {
+  it('invokes every registered command handler without throwing, matching a real Command Palette invocation with no argument', () => {
     activate(makeContext());
 
     const calls = vi.mocked(vscode.commands.registerCommand).mock.calls;
     expect(calls).toHaveLength(REGISTERED_COMMAND_IDS.length);
     for (const [, handler] of calls) {
-      expect(() => handler({} as never)).not.toThrow();
+      expect(() => handler(undefined as never)).not.toThrow();
     }
   });
 
@@ -183,6 +185,8 @@ describe('activate()', () => {
     handlers.get('nestro.runInstall')?.();
     handlers.get('nestro.updateAllVisible')?.();
     handlers.get('nestro.pinAllVersions')?.();
+    handlers.get('nestro.openOnNpm')?.(item);
+    handlers.get('nestro.copyPackageName')?.(item);
 
     expect(installUpdateCommand).toHaveBeenCalledWith(item, expect.any(Object));
     expect(pickVersionCommand).toHaveBeenCalledWith(item, expect.any(Object));
@@ -192,6 +196,8 @@ describe('activate()', () => {
     expect(runInstallCommand).toHaveBeenCalledTimes(1);
     expect(updateAllVisibleCommand).toHaveBeenCalledWith(expect.any(Object));
     expect(pinAllVersionsCommand).toHaveBeenCalledWith(expect.any(Object));
+    expect(openOnNpmCommand).toHaveBeenCalledWith(item);
+    expect(copyPackageNameCommand).toHaveBeenCalledWith(item);
   });
 
   it.each([

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PackageItem, PackagesProvider } from '../providers';
 import {
   fetchPackageVersions,
   getUpdateType,
@@ -8,7 +8,12 @@ import {
 } from '../utils';
 import { installUpdateCommand } from './installUpdate';
 
-export async function pickVersionCommand(item: PackageItem, provider: PackagesProvider): Promise<void> {
+export async function pickVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
+  if (!isPackageItem(item)) {
+    logger.warn('nestro.pickVersion invoked without a valid package item; ignoring.');
+    return;
+  }
+
   logger.info(`Fetching versions for ${item.packageName}.`);
   const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
   quickPick.title = `Select version for ${item.packageName}`;

@@ -15,6 +15,7 @@ vi.mock('../utils', () => ({
   logger: {
     info: vi.fn(),
     error: vi.fn(),
+    warn: vi.fn(),
   },
   selectVersionsForPicker: vi.fn((versions: string[]) => versions),
 }));
@@ -59,7 +60,7 @@ describe('pickVersionCommand()', () => {
     expect(installUpdateCommand).toHaveBeenCalledTimes(1);
     expect(quickPick.acceptDisposable.dispose).toHaveBeenCalledTimes(1);
     expect(quickPick.dispose).toHaveBeenCalledTimes(1);
-    const syntheticItem = vi.mocked(installUpdateCommand).mock.calls[0][0];
+    const syntheticItem = vi.mocked(installUpdateCommand).mock.calls[0][0] as PackageItem;
     expect(syntheticItem.packageName).toBe('react');
     expect(syntheticItem.latest).toBe('19.0.0');
     expect(syntheticItem.packageFilePath).toBe('/workspace/package.json');
@@ -173,6 +174,16 @@ describe('pickVersionCommand()', () => {
     expect(quickPick.dispose).toHaveBeenCalledTimes(1);
     expect(quickPick.acceptDisposable.dispose).toHaveBeenCalledTimes(1);
     expect(quickPick.hideDisposable.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['undefined (Command Palette invocation with no context item)', undefined],
+    ['a malformed non-PackageItem object', { packageName: 'react' }],
+  ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
+    await expect(pickVersionCommand(malformedItem as unknown as PackageItem, makeProvider())).resolves.toBeUndefined();
+
+    expect(vscode.window.createQuickPick).not.toHaveBeenCalled();
+    expect(fetchPackageVersions).not.toHaveBeenCalled();
   });
 });
 

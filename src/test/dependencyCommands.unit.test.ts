@@ -20,6 +20,7 @@ vi.mock('../utils', async (importOriginal) => {
     logger: {
       info: vi.fn(),
       error: vi.fn(),
+      warn: vi.fn(),
     },
     setVersionPin: vi.fn(),
     showError: vi.fn(),
@@ -105,6 +106,20 @@ describe('switchDepTypeCommand()', () => {
     expect(showError).toHaveBeenCalledWith(`failed to switch dependency type — ${expectedMessage}`, rejection);
     expect(provider.loadPackages).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['undefined (Command Palette invocation with no context item)', undefined],
+    ['a malformed non-PackageItem object', { packageName: 'react', packageFilePath: '/workspace/package.json' }],
+  ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
+    const provider = makeProvider();
+
+    await switchDepTypeCommand(malformedItem as unknown as PackageItem, provider);
+
+    expect(switchDependencyType).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+  });
 });
 
 describe('pinVersionCommand()', () => {
@@ -174,6 +189,20 @@ describe('pinVersionCommand()', () => {
 
     expect(showError).toHaveBeenCalledWith(`failed to toggle version pin — ${expectedMessage}`, rejection);
     expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['undefined (Command Palette invocation with no context item)', undefined],
+    ['a malformed non-PackageItem object', { packageName: 'react', versionPrefix: '^' }],
+  ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
+    const provider = makeProvider();
+
+    await pinVersionCommand(malformedItem as unknown as PackageItem, provider);
+
+    expect(setVersionPin).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
   });
 });
 
@@ -330,6 +359,20 @@ describe('removePackageCommand()', () => {
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
     }, false);
+  });
+
+  it.each([
+    ['undefined (Command Palette invocation with no context item)', undefined],
+    ['a malformed non-PackageItem object', { packageName: 'react', packageFilePath: '/workspace/package.json' }],
+  ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
+    const provider = makeProvider();
+
+    await removePackageCommand(malformedItem as unknown as PackageItem, provider);
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(executeTaskMock).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
   });
 });
 
