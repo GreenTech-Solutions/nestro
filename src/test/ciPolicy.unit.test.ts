@@ -4,7 +4,11 @@ import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import {
   CI_WORKFLOW_PATH,
+  CODEOWNERS_PATH,
+  DEPENDABOT_CONFIG_PATH,
   evaluateCiWorkflowPolicy,
+  evaluateCodeownersPolicy,
+  evaluateDependabotConfigPolicy,
   evaluateWorkflowActionPolicy,
 } from '../tools';
 
@@ -12,6 +16,8 @@ const repositoryRoot = resolve(import.meta.dirname, '../..');
 const canonicalSource = readFileSync(resolve(repositoryRoot, CI_WORKFLOW_PATH), 'utf8');
 const releaseWorkflowPath = '.github/workflows/release.yml';
 const canonicalReleaseSource = readFileSync(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
+const canonicalCodeownersSource = readFileSync(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8');
+const canonicalDependabotSource = readFileSync(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8');
 
 function mutateWorkflow(mutator: (workflow: Record<string, unknown>) => void): string {
   const workflow = parse(canonicalSource, { uniqueKeys: true }) as Record<string, unknown>;
@@ -33,6 +39,12 @@ function removeRun(workflow: Record<string, unknown>, job: string, needle: strin
 
 function expectRejected(source: string, rule: string): void {
   expect(evaluateCiWorkflowPolicy(source)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
+}
+
+function expectRejectedDependabot(source: string, rule: string): void {
+  expect(evaluateDependabotConfigPolicy(source)).toEqual(
+    expect.arrayContaining([expect.objectContaining({ rule })]),
+  );
 }
 
 describe('AUD-14 CI workflow policy', () => {
@@ -431,6 +443,129 @@ describe('AUD-15A immutable workflow action policy', () => {
     expectRejectedAction('jobs:\n  test: [unterminated\n', 'yaml');
     expectRejectedAction('jobs:\n  test:\n    steps: forged\n', 'workflow-shape');
     expectRejectedAction('jobs:\n  test:\n    steps:\n      - forged\n', 'workflow-shape');
+  });
+});
+
+describe('AUD-15B reviewed action update policy', () => {
+  const releaseCheckoutV6 = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0';
+  const reviewedCheckoutV7 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
+
+  it('accepts only the canonical standalone GitHub Actions updater and .github owner', () => {
+    expect(evaluateDependabotConfigPolicy(canonicalDependabotSource)).toEqual([]);
+    expect(evaluateCodeownersPolicy(canonicalCodeownersSource)).toEqual([]);
+  });
+
+  it.each([
+    ['another ecosystem', 'github-actions', 'npm'],
+    ['another directory', 'directory: /', 'directory: /packages'],
+    ['daily updates', 'interval: weekly', 'interval: daily'],
+    ['another weekday', 'day: monday', 'day: friday'],
+    ['another time', 'time: "04:00"', 'time: "12:00"'],
+    ['another timezone', 'timezone: UTC', 'timezone: Asia/Bangkok'],
+    ['a wider PR limit', 'open-pull-requests-limit: 2', 'open-pull-requests-limit: 5'],
+    ['another commit prefix', 'prefix: ci(deps)', 'prefix: chore(deps)'],
+  ])('rejects %s in the updater contract', (_label, current, replacement) => {
+    expectRejectedDependabot(canonicalDependabotSource.replace(current, replacement), 'dependabot-contract');
+  });
+
+  it.each([
+    ['groups', '    groups:\n      actions:\n        patterns: ["*"]\n'],
+    ['custom labels', '    labels: [dependencies]\n'],
+    ['retired reviewers', '    reviewers: [GreenTech-Solutions]\n'],
+    ['target branch', '    target-branch: release\n'],
+    ['automatic assignment', '    assignees: [GreenTech-Solutions]\n'],
+  ])('rejects an extra %s option', (_label, option) => {
+    expectRejectedDependabot(`${canonicalDependabotSource}${option}`, 'dependabot-contract');
+  });
+
+  it('rejects a second updater, duplicate keys, malformed YAML and aliases without throwing', () => {
+    const secondUpdater = canonicalDependabotSource.replace(
+      'updates:\n',
+      `updates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n`,
+    );
+    expectRejectedDependabot(secondUpdater, 'dependabot-contract');
+    expectRejectedDependabot(`${canonicalDependabotSource}version: 2\n`, 'dependabot-yaml');
+    expectRejectedDependabot('version: 2\nupdates: [unterminated\n', 'dependabot-yaml');
+    expectRejectedDependabot('version: 2\nupdates: &updates [*updates]\n', 'dependabot-yaml');
+    expectRejectedDependabot(canonicalDependabotSource.replace('schedule:', 'schedule: &schedule'), 'dependabot-yaml');
+
+    const aliases = Array.from({ length: 101 }, () => '*updater').join(', ');
+    expect(() => evaluateDependabotConfigPolicy(
+      `version: 2\nupdater: &updater { package-ecosystem: github-actions }\nupdates: [${aliases}]\n`,
+    )).not.toThrow();
+    expectRejectedDependabot(
+      `version: 2\nupdater: &updater { package-ecosystem: github-actions }\nupdates: [${aliases}]\n`,
+      'dependabot-yaml',
+    );
+  });
+
+  it.each([
+    ['a narrower path', '/.github/workflows/ @GreenTech-Solutions\n'],
+    ['another owner', '/.github/ @attacker\n'],
+    ['a later override', '/.github/ @GreenTech-Solutions\n/.github/workflows/ @attacker\n'],
+    ['an extra comment', '# privileged files\n/.github/ @GreenTech-Solutions\n'],
+    ['a missing final newline', '/.github/ @GreenTech-Solutions'],
+  ])('rejects CODEOWNERS with %s', (_label, source) => {
+    expect(evaluateCodeownersPolicy(source)).toEqual([
+      expect.objectContaining({ rule: 'codeowners-contract' }),
+    ]);
+  });
+
+  it('models a reviewed full-SHA update and fails closed before an unknown SHA is enrolled', () => {
+    const reviewedUpdate = canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7);
+    expect(evaluateWorkflowActionPolicy(reviewedUpdate)).toEqual([]);
+
+    const unknownUpdate = canonicalReleaseSource.replace(
+      releaseCheckoutV6,
+      `actions/checkout@${'f'.repeat(40)} # v8.0.0`,
+    );
+    expectRejectedAction(unknownUpdate, 'reviewed-action');
+    expectRejectedAction(
+      canonicalReleaseSource.replace(releaseCheckoutV6, 'actions/checkout@v7 # v7.0.1'),
+      'immutable-action',
+    );
+    expectRejectedAction(
+      canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7.replace('v7.0.1', 'v7.0.0')),
+      'action-version-comment',
+    );
+    expectRejectedAction(
+      canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7.replace(' # v7.0.1', '')),
+      'action-version-comment',
+    );
+  });
+
+  it.each([
+    ['GitHub CLI merge', 'gh pr merge 42 --auto'],
+    ['GraphQL auto-merge mutation', 'gh api graphql -f query="mutation { enablePullRequestAutoMerge(input: {}) }"'],
+    ['REST merge endpoint', 'gh api --method PUT repos/acme/repo/pulls/42/merge'],
+  ])('rejects a direct %s command', (_label, command) => {
+    expectRejectedAction(`jobs:\n  merge:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ${JSON.stringify(command)}\n`, 'dependabot-auto-merge');
+  });
+
+  it('rejects direct auto-merge actions and reusable workflows while ignoring inert text', () => {
+    expectRejectedAction(
+      `jobs:\n  merge:\n    uses: owner/auto-merge@${'a'.repeat(40)} # v1\n`,
+      'dependabot-auto-merge',
+    );
+    expectRejectedAction(
+      `jobs:\n  merge:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: owner/auto-merge@${'a'.repeat(40)} # v1\n`,
+      'dependabot-auto-merge',
+    );
+    expect(evaluateWorkflowActionPolicy(`jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+        env:
+          NOTE: gh pr merge --auto
+`)).toEqual([]);
+  });
+
+  it('fails closed on workflow alias exhaustion', () => {
+    const aliases = Array.from({ length: 101 }, () => '*job').join(', ');
+    const source = `job: &job { runs-on: ubuntu-latest, steps: [] }\njobs: { aliases: [${aliases}] }\n`;
+    expect(() => evaluateWorkflowActionPolicy(source)).not.toThrow();
+    expectRejectedAction(source, 'yaml');
   });
 });
 

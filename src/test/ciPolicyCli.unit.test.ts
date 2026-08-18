@@ -4,13 +4,26 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CI_WORKFLOW_PATH,
+  CODEOWNERS_PATH,
   createNodeCiPolicyCliDependencies,
+  DEPENDABOT_CONFIG_PATH,
   runCiPolicyCli,
-  type WorkflowPolicySource,
 } from '../tools';
+import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const releaseWorkflowPath = '.github/workflows/release.yml';
+
+const canonicalPolicyReaders: Pick<
+  CiPolicyCliDependencies,
+  'readCodeowners' | 'readDependabotConfigs'
+> = {
+  readCodeowners: () => readFile(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8'),
+  readDependabotConfigs: async () => [{
+    path: DEPENDABOT_CONFIG_PATH,
+    source: await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8'),
+  }],
+};
 
 function readCanonicalWorkflows(): Promise<WorkflowPolicySource[]> {
   return Promise.all([CI_WORKFLOW_PATH, releaseWorkflowPath].map(async path => ({
@@ -25,6 +38,7 @@ describe('CI policy CLI', () => {
     const writeError = vi.fn();
 
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: readCanonicalWorkflows,
       writeOut,
       writeError,
@@ -38,6 +52,7 @@ describe('CI policy CLI', () => {
     const writeError = vi.fn();
 
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: () => Promise.resolve([{
         path: CI_WORKFLOW_PATH,
         source: 'name: Forged\non: pull_request\npermissions: {}\njobs: {}\n',
@@ -51,17 +66,36 @@ describe('CI policy CLI', () => {
   });
 
   it.each([
-    ['an Error', new Error('read denied'), 'read denied'],
-    ['a non-Error reason', 'filesystem vanished', 'filesystem vanished'],
-  ])('reports %s from the workflow reader', async (_label, failure, expected) => {
+    ['the workflow reader', 'readWorkflows'],
+    ['the CODEOWNERS reader', 'readCodeowners'],
+    ['the Dependabot reader', 'readDependabotConfigs'],
+  ] as const)('reports a failure from %s', async (_label, rejectedReader) => {
     const writeError = vi.fn();
+    const rejected = () => Promise.reject(new Error('read denied'));
 
     await expect(runCiPolicyCli({
-      readWorkflows: () => Promise.reject(failure),
+      readCodeowners: rejectedReader === 'readCodeowners'
+        ? rejected
+        : canonicalPolicyReaders.readCodeowners,
+      readDependabotConfigs: rejectedReader === 'readDependabotConfigs'
+        ? rejected
+        : canonicalPolicyReaders.readDependabotConfigs,
+      readWorkflows: rejectedReader === 'readWorkflows' ? rejected : readCanonicalWorkflows,
       writeOut: vi.fn(),
       writeError,
     })).resolves.toBe(1);
-    expect(writeError).toHaveBeenCalledExactlyOnceWith(`CI workflow policy failed: ${expected}`);
+    expect(writeError).toHaveBeenCalledExactlyOnceWith('CI workflow policy failed: read denied');
+  });
+
+  it('reports a non-Error reader rejection without throwing', async () => {
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readWorkflows: () => Promise.reject('filesystem vanished'),
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledExactlyOnceWith('CI workflow policy failed: filesystem vanished');
   });
 
   it('wires the Node dependencies to the repository workflow and process streams', async () => {
@@ -70,9 +104,13 @@ describe('CI policy CLI', () => {
     try {
       const dependencies = createNodeCiPolicyCliDependencies(repositoryRoot);
       const workflows = await dependencies.readWorkflows();
+      const dependabotConfigs = await dependencies.readDependabotConfigs();
       expect(workflows.map(workflow => workflow.path)).toEqual([CI_WORKFLOW_PATH, releaseWorkflowPath]);
       expect(workflows[0].source).toContain('name: Verify');
       expect(workflows[1].source).toContain('name: Release');
+      await expect(dependencies.readCodeowners()).resolves.toBe('/.github/ @GreenTech-Solutions\n');
+      expect(dependabotConfigs.map(config => config.path)).toEqual([DEPENDABOT_CONFIG_PATH]);
+      expect(dependabotConfigs[0].source).toContain('package-ecosystem: github-actions');
       dependencies.writeOut('accepted');
       dependencies.writeError('rejected');
       expect(output).toHaveBeenCalledWith('accepted\n');
@@ -81,6 +119,77 @@ describe('CI policy CLI', () => {
     finally {
       output.mockRestore();
       error.mockRestore();
+    }
+  });
+
+  it('fails closed on a missing or alternate Dependabot configuration', async () => {
+    const canonicalConfig = await canonicalPolicyReaders.readDependabotConfigs();
+    for (const configs of [
+      [],
+      [{ ...canonicalConfig[0], path: '.github/dependabot.yaml' }],
+      [...canonicalConfig, { ...canonicalConfig[0], path: '.github/dependabot.yaml' }],
+    ]) {
+      const writeError = vi.fn();
+      await expect(runCiPolicyCli({
+        ...canonicalPolicyReaders,
+        readDependabotConfigs: () => Promise.resolve(configs),
+        readWorkflows: readCanonicalWorkflows,
+        writeOut: vi.fn(),
+        writeError,
+      })).resolves.toBe(1);
+      expect(writeError).toHaveBeenCalledWith(expect.stringContaining(
+        `[dependabot-config-set] ${DEPENDABOT_CONFIG_PATH}:`,
+      ));
+    }
+  });
+
+  it('path-qualifies rejected Dependabot and CODEOWNERS contracts', async () => {
+    const canonicalConfig = await canonicalPolicyReaders.readDependabotConfigs();
+    const dependabotError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readDependabotConfigs: () => Promise.resolve([{
+        ...canonicalConfig[0],
+        source: canonicalConfig[0].source.replace('interval: weekly', 'interval: daily'),
+      }]),
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError: dependabotError,
+    })).resolves.toBe(1);
+    expect(dependabotError).toHaveBeenCalledWith(expect.stringContaining(
+      `[dependabot-contract] ${DEPENDABOT_CONFIG_PATH}:`,
+    ));
+
+    const codeownersError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readCodeowners: () => Promise.resolve('/.github/workflows/ @GreenTech-Solutions\n'),
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError: codeownersError,
+    })).resolves.toBe(1);
+    expect(codeownersError).toHaveBeenCalledWith(expect.stringContaining(
+      `[codeowners-contract] ${CODEOWNERS_PATH}:`,
+    ));
+  });
+
+  it('discovers both supported Dependabot filename spellings so a second config cannot hide', async () => {
+    const temporaryRoot = await mkdtemp(resolve(tmpdir(), 'nestro-dependabot-policy-'));
+    try {
+      await mkdir(resolve(temporaryRoot, '.github'), { recursive: true });
+      const source = await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH));
+      await Promise.all([
+        writeFile(resolve(temporaryRoot, DEPENDABOT_CONFIG_PATH), source),
+        writeFile(resolve(temporaryRoot, '.github/dependabot.yaml'), source),
+      ]);
+      const configs = await createNodeCiPolicyCliDependencies(temporaryRoot).readDependabotConfigs();
+      expect(configs.map(config => config.path)).toEqual([
+        '.github/dependabot.yaml',
+        DEPENDABOT_CONFIG_PATH,
+      ]);
+    }
+    finally {
+      await rm(temporaryRoot, { force: true, recursive: true });
     }
   });
 
@@ -96,6 +205,7 @@ describe('CI policy CLI', () => {
     }
     const writeError = vi.fn();
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: () => Promise.resolve(workflows.map(workflow => workflow === release
         ? {
             ...workflow,
@@ -121,6 +231,7 @@ describe('CI policy CLI', () => {
     };
     const extraError = vi.fn();
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: () => Promise.resolve([...canonical, mutableExtra]),
       writeOut: vi.fn(),
       writeError: extraError,
@@ -131,6 +242,7 @@ describe('CI policy CLI', () => {
 
     const missingCiError = vi.fn();
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: () => Promise.resolve(canonical.filter(workflow => workflow.path !== CI_WORKFLOW_PATH)),
       writeOut: vi.fn(),
       writeError: missingCiError,
@@ -146,6 +258,11 @@ describe('CI policy CLI', () => {
     try {
       await mkdir(workflowsDirectory, { recursive: true });
       await Promise.all([
+        writeFile(resolve(temporaryRoot, CODEOWNERS_PATH), await readFile(resolve(repositoryRoot, CODEOWNERS_PATH))),
+        writeFile(
+          resolve(temporaryRoot, DEPENDABOT_CONFIG_PATH),
+          await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH)),
+        ),
         writeFile(resolve(workflowsDirectory, 'release.yml'), await readFile(resolve(repositoryRoot, releaseWorkflowPath))),
         writeFile(resolve(workflowsDirectory, 'ci.yml'), await readFile(resolve(repositoryRoot, CI_WORKFLOW_PATH))),
         writeFile(resolve(workflowsDirectory, 'extra.yaml'), 'jobs:\n  test:\n    uses: owner/repo/.github/workflows/test.yml@main\n'),
@@ -178,6 +295,7 @@ describe('CI policy CLI', () => {
     const workflows = await readCanonicalWorkflows();
     const writeError = vi.fn();
     await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
       readWorkflows: () => Promise.resolve(workflows.map(workflow => workflow.path === CI_WORKFLOW_PATH
         ? {
             ...workflow,

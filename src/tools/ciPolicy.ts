@@ -1,7 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
-import { parseDocument } from 'yaml';
+import { parseDocument, visit } from 'yaml';
 
+export const CODEOWNERS_PATH = '.github/CODEOWNERS';
 export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
+export const DEPENDABOT_CONFIG_PATH = '.github/dependabot.yml';
 export const WORKFLOWS_DIRECTORY_PATH = '.github/workflows';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -22,6 +24,24 @@ const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a': 'v7.0.1',
   'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
   'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
+};
+const EXPECTED_CODEOWNERS = '/.github/ @GreenTech-Solutions\n';
+const EXPECTED_DEPENDABOT_CONFIG: UnknownRecord = {
+  updates: [{
+    'commit-message': {
+      prefix: 'ci(deps)',
+    },
+    directory: '/',
+    'open-pull-requests-limit': 2,
+    'package-ecosystem': 'github-actions',
+    schedule: {
+      day: 'monday',
+      interval: 'weekly',
+      time: '04:00',
+      timezone: 'UTC',
+    },
+  }],
+  version: 2,
 };
 const ACTIONLINT_COMMAND = `set -euo pipefail
 archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
@@ -310,17 +330,90 @@ function assertReviewedExecutableUse(
   }
 }
 
+function isAutoMergeCommand(command: string): boolean {
+  return /\bgh\s+pr\s+merge\b/u.test(command)
+    || /enablePullRequestAutoMerge/u.test(command)
+    || /(?:gh\s+api|curl\b)[^\n]*\/pulls\/[^\s'"`]+\/merge\b/u.test(command);
+}
+
+function isAutoMergeAction(reference: string): boolean {
+  const locator = reference.split('@', 1)[0];
+  return /(?:^|[/_-])auto-?merge(?:[/_-]|$)/iu.test(locator);
+}
+
+export function evaluateDependabotConfigPolicy(source: string): CiPolicyViolation[] {
+  const document = parseDocument(source, { uniqueKeys: true });
+  if (document.errors.length > 0) {
+    return document.errors.map(error => ({ rule: 'dependabot-yaml', message: error.message }));
+  }
+  let containsNonLiteralYaml = false;
+  visit(document, {
+    Alias: () => {
+      containsNonLiteralYaml = true;
+    },
+    Node: (_key, node) => {
+      if (isRecord(node) && typeof node.anchor === 'string') {
+        containsNonLiteralYaml = true;
+      }
+    },
+  });
+  if (containsNonLiteralYaml) {
+    return [{ rule: 'dependabot-yaml', message: 'Dependabot configuration must not use YAML anchors or aliases' }];
+  }
+  let value: unknown;
+  try {
+    value = document.toJS();
+  }
+  catch (error) {
+    return [{
+      rule: 'dependabot-yaml',
+      message: `Dependabot configuration could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+    }];
+  }
+  if (!isDeepStrictEqual(value, EXPECTED_DEPENDABOT_CONFIG)) {
+    return [{
+      rule: 'dependabot-contract',
+      message: 'Dependabot must use the exact reviewed standalone github-actions update contract',
+    }];
+  }
+  return [];
+}
+
+export function evaluateCodeownersPolicy(source: string): CiPolicyViolation[] {
+  if (source !== EXPECTED_CODEOWNERS) {
+    return [{
+      rule: 'codeowners-contract',
+      message: '.github must be owned exactly by @GreenTech-Solutions, including CODEOWNERS itself',
+    }];
+  }
+  return [];
+}
+
 export function evaluateWorkflowActionPolicy(source: string): CiPolicyViolation[] {
   const document = parseDocument(source, { uniqueKeys: true });
   if (document.errors.length > 0) {
     return document.errors.map(error => ({ rule: 'yaml', message: error.message }));
   }
+  let value: unknown;
+  try {
+    value = document.toJS();
+  }
+  catch (error) {
+    return [{
+      rule: 'yaml',
+      message: `Workflow could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+    }];
+  }
   const violations: CiPolicyViolation[] = [];
-  const root = asRecord(document.toJS(), 'workflow', violations);
+  const root = asRecord(value, 'workflow', violations);
   const jobs = asRecord(root.jobs, 'jobs', violations);
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob, `jobs.${jobId}`, violations);
     if (Object.hasOwn(job, 'uses')) {
+      const reference = asString(job.uses);
+      if (reference !== undefined && isAutoMergeAction(reference)) {
+        add(violations, 'dependabot-auto-merge', `jobs.${jobId}.uses must not enable automatic merging`);
+      }
       assertReviewedExecutableUse(
         job.uses,
         document.getIn(['jobs', jobId, 'uses'], true),
@@ -341,12 +434,20 @@ export function evaluateWorkflowActionPolicy(source: string): CiPolicyViolation[
         continue;
       }
       if (Object.hasOwn(rawStep, 'uses')) {
+        const reference = asString(rawStep.uses);
+        if (reference !== undefined && isAutoMergeAction(reference)) {
+          add(violations, 'dependabot-auto-merge', `jobs.${jobId}.steps[${index}].uses must not enable automatic merging`);
+        }
         assertReviewedExecutableUse(
           rawStep.uses,
           document.getIn(['jobs', jobId, 'steps', index, 'uses'], true),
           `jobs.${jobId}.steps[${index}].uses`,
           violations,
         );
+      }
+      const command = normalizedRun(rawStep);
+      if (command !== undefined && isAutoMergeCommand(command)) {
+        add(violations, 'dependabot-auto-merge', `jobs.${jobId}.steps[${index}].run must not enable automatic merging`);
       }
     }
   }
@@ -574,8 +675,18 @@ export function evaluateCiWorkflowPolicy(source: string): CiPolicyViolation[] {
   if (document.errors.length > 0) {
     return document.errors.map(error => ({ rule: 'yaml', message: error.message }));
   }
+  let value: unknown;
+  try {
+    value = document.toJS();
+  }
+  catch (error) {
+    return [{
+      rule: 'yaml',
+      message: `Workflow could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+    }];
+  }
   const violations: CiPolicyViolation[] = [];
-  const root = asRecord(document.toJS(), 'workflow', violations);
+  const root = asRecord(value, 'workflow', violations);
   const rootKeys = Object.keys(root).sort((left, right) => left.localeCompare(right));
   if (!isDeepStrictEqual(rootKeys, ['env', 'jobs', 'name', 'on', 'permissions']) || root.name !== 'Verify') {
     add(violations, 'workflow-contract', 'workflow must contain only the reviewed Verify keys');
