@@ -1,4 +1,4 @@
-import { AuditSeverity } from '../utils/auditClient';
+import { AuditResult } from '../utils/auditClient';
 import { runBunAudit } from '../utils/bunAuditClient';
 import { Client, PackageTarget } from './Client';
 
@@ -18,7 +18,7 @@ export class BunClient extends Client {
     return { command: 'bun', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
-    return (await runBunAudit(this.cwd, signal)).vulnerabilities;
+  async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {
+    return await runBunAudit(this.cwd, signal);
   }
 }

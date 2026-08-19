@@ -343,6 +343,16 @@ describe('parseAuditOutcome()', () => {
     expect(expectAdvisories(outcome).vulnerabilities.get('react')).toBe('critical');
   });
 
+  it('does not route an unknown command through the npm parser fallback', () => {
+    const outcome = parseAuditOutcome({
+      command: 'bun',
+      stdout: JSON.stringify({ auditReportVersion: 2, vulnerabilities: {} }),
+      exitCode: 0,
+    });
+
+    expect(expectIncomplete(outcome, 'unrecognized-schema').detail).toContain('not handled');
+  });
+
   it.each([
     ['a summary without a vulnerabilities section', { dependencies: 3 }],
     ['a summary total that is not a number', { vulnerabilities: { total: 'many' } }],
@@ -610,7 +620,13 @@ describe('toAuditResult()', () => {
       total: 0,
     });
 
-    expect(result).toEqual({ vulnerabilities: new Map(), total: 0 });
+    expect(result).toEqual({
+      vulnerabilities: new Map(),
+      total: 0,
+      advisories: [],
+      manager: 'npm',
+      schema: 'npm-v2-vulnerabilities',
+    });
   });
 
   it('passes an advisories outcome through with its vulnerabilities', () => {

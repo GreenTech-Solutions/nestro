@@ -6,6 +6,8 @@ export * from './registryClient';
 export * from './notify';
 export * from './logger';
 export * from './auditClient';
+export * from './auditReport';
+export * from './auditReportFormatter';
 export * from './bunAuditClient';
 export * from './processRunner';
 export * from './shellTask';

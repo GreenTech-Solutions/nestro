@@ -191,6 +191,25 @@ describe('parseYarnAuditOutcome() — Classic', () => {
     expect(outcome.vulnerabilities.get('legacy-package')).toBe('info');
   });
 
+  it('preserves Classic optional fix metadata and resolved version fallback', () => {
+    const record = JSON.parse(classicAdvisory('lodash', 'high')) as {
+      data: { resolution: Record<string, unknown>; advisory: Record<string, unknown> };
+    };
+    delete record.data.resolution.version;
+    record.data.advisory.version = '4.17.20';
+    record.data.advisory.fixAvailable = { name: 'lodash', version: '4.17.21', isSemVerMajor: false };
+
+    const outcome = expectAdvisories(parseYarnAuditOutcome('classic', {
+      command: 'yarn',
+      stdout: `${JSON.stringify(record)}\n${classicSummary({ high: 1 })}`,
+      exitCode: 8,
+    }));
+    expect(outcome.advisories?.[0]).toMatchObject({
+      resolvedVersions: ['4.17.20'],
+      fixAvailable: { name: 'lodash', version: '4.17.21', isSemVerMajor: false },
+    });
+  });
+
   it('recognizes Classic advisories despite diagnostic stderr when summary and mask match', () => {
     const outcome = expectAdvisories(parseYarnAuditOutcome('classic', {
       command: 'yarn',
@@ -380,6 +399,44 @@ describe('parseYarnAuditOutcome() — Modern', () => {
       command: 'yarn', stdout: JSON.stringify(record), exitCode: 1,
     }), 'unrecognized-schema');
   });
+
+  it('preserves Modern object fix metadata while retaining virtual dependent provenance', () => {
+    const outcome = expectAdvisories(parseYarnAuditOutcome('modern', {
+      command: 'yarn',
+      stdout: modernAdvisory('lodash', 'high', {
+        Fix: { name: 'lodash', version: '4.17.21', isSemVerMajor: false },
+      }),
+      exitCode: 1,
+    }));
+    expect(outcome.advisories?.[0]?.fixAvailable).toEqual({
+      name: 'lodash', version: '4.17.21', isSemVerMajor: false,
+    });
+    expect(outcome.advisories?.[0]?.resolvedPaths).toEqual([]);
+  });
+
+  it('rejects a Classic advisory record with non-object data', () => {
+    const malformed = JSON.stringify({ type: 'auditAdvisory', data: null });
+    expectIncomplete(parseYarnAuditOutcome('classic', {
+      command: 'yarn',
+      stdout: `${malformed}\n${classicSummary()}`,
+      exitCode: 0,
+    }), 'unrecognized-schema');
+  });
+
+  it('rejects a Classic summary with non-object data or vulnerability buckets', () => {
+    const nonObjectData = JSON.stringify({ type: 'auditSummary', data: null });
+    expectIncomplete(parseYarnAuditOutcome('classic', {
+      command: 'yarn', stdout: nonObjectData, exitCode: 0,
+    }), 'unrecognized-schema');
+
+    const nonObjectBuckets = JSON.stringify({
+      type: 'auditSummary',
+      data: { vulnerabilities: null, dependencies: 0, devDependencies: 0, optionalDependencies: 0, totalDependencies: 0 },
+    });
+    expectIncomplete(parseYarnAuditOutcome('classic', {
+      command: 'yarn', stdout: nonObjectBuckets, exitCode: 0,
+    }), 'unrecognized-schema');
+  });
 });
 
 describe('Yarn audit runner', () => {
@@ -450,6 +507,14 @@ describe('Yarn audit runner', () => {
     await expect(runYarnAuditOutcome(cwd)).resolves.toMatchObject({
       kind: 'error', reason: 'command-not-found',
     });
+  });
+
+  it('keeps bounded output failures incomplete after family detection', async () => {
+    mockAuditProcess(Object.assign(new Error('audit output exceeded limit'), {
+      code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+    }), '');
+
+    expectIncomplete(await runYarnAuditOutcome(cwd), 'output-overflow');
   });
 
   it.each([

@@ -14,6 +14,8 @@ import type {
   AuditResult,
   AuditSeverity,
 } from './auditClient';
+import { createAuditAdvisory, inferPathAttribution, mergeAuditAdvisory } from './auditReport';
+import type { AuditAdvisory } from './auditReport';
 import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
@@ -42,11 +44,6 @@ interface ParsedLineFailure {
   detail: string;
 }
 
-interface ModernAdvisory {
-  packageName: string;
-  severity: AuditSeverity;
-}
-
 interface YarnAuditExecution extends AuditExecution {
   stderr?: string;
 }
@@ -66,12 +63,12 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
   if (family === 'unknown') {
     return incompleteOutcome(
       'unknown-yarn-family',
-      `Yarn audit family could not be identified in ${cwd} (${source}); audit was not run.`,
+      `Yarn audit family could not be identified (${source}); audit was not run.`,
     );
   }
 
   const args = family === 'classic' ? classicArgs : modernArgs;
-  logger.info(`Running Yarn ${family} audit in ${cwd}.`);
+  logger.info(`Running Yarn ${family} audit.`);
   const outcome = await runBoundedProcess('yarn', args, {
     cwd,
     timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
@@ -85,7 +82,7 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
     // shared runner cannot reproduce on its own (N6) — and is this event's one log call.
     const familyLabel = family === 'classic' ? 'classic' : 'berry';
     const detail = `yarn ${familyLabel} audit could not run: ${describeError(outcome.message)}`;
-    logger.error(detail, outcome.cause);
+    logger.error('Yarn audit process could not start; see the security audit report for redacted details.');
     return { kind: 'error', reason: outcome.reason, detail };
   }
   if (outcome.kind !== 'exit') {
@@ -101,7 +98,7 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
 
 /** Parses only the schema documented for the family selected before command execution. */
 export function parseYarnAuditOutcome(family: YarnFamily, execution: YarnAuditExecution): AuditOutcome {
-  logger.debug(`Raw Yarn ${family} audit output snippet: ${execution.stdout.slice(0, 200)}`);
+  logger.debug(`Yarn ${family} audit output received (${execution.stdout.length} bytes).`);
   if (family === 'classic') {
     return parseClassicOutcome(execution);
   }
@@ -120,7 +117,7 @@ function parseClassicOutcome(execution: AuditExecution): AuditOutcome {
     return incompleteOutcome('empty-output', 'Yarn Classic audit produced no output.');
   }
 
-  const vulnerabilities = new Map<string, AuditSeverity>();
+  const advisories = new Map<string, AuditAdvisory>();
   const observedCounts = emptySeverityCounts();
   let summary: ClassicSummary | undefined;
 
@@ -154,7 +151,7 @@ function parseClassicOutcome(execution: AuditExecution): AuditOutcome {
     if (advisory === undefined) {
       return incompleteOutcome('unrecognized-schema', 'Yarn Classic auditAdvisory is malformed.');
     }
-    mergeFinding(vulnerabilities, advisory.packageName, advisory.severity);
+    mergeAuditAdvisory(advisories, advisory);
     observedCounts[advisory.severity] += 1;
   }
 
@@ -173,7 +170,7 @@ function parseClassicOutcome(execution: AuditExecution): AuditOutcome {
       `Yarn Classic audit severity mask requires exit ${summary.mask} but received ${execution.exitCode ?? 'none'}.`,
     );
   }
-  return recognizedOutcome(classicSchema, execution.exitCode, vulnerabilities);
+  return recognizedOutcome(classicSchema, execution.exitCode, advisories);
 }
 
 function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
@@ -208,7 +205,7 @@ function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
     return incompleteOutcome('unrecognized-schema', 'Yarn Modern clean output must be exactly empty.');
   }
 
-  const vulnerabilities = new Map<string, AuditSeverity>();
+  const advisories = new Map<string, AuditAdvisory>();
   for (const line of lines) {
     const parsed = parseJsonLine(line, 'Yarn Modern');
     if (isLineFailure(parsed)) {
@@ -218,13 +215,13 @@ function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
     if (advisory === undefined) {
       return incompleteOutcome('unrecognized-schema', 'Yarn Modern audit contains an unknown tree record.');
     }
-    mergeFinding(vulnerabilities, advisory.packageName, advisory.severity);
+    mergeAuditAdvisory(advisories, advisory);
   }
 
-  return recognizedOutcome(modernSchema, 1, vulnerabilities);
+  return recognizedOutcome(modernSchema, 1, advisories);
 }
 
-function parseClassicAdvisory(record: Record<string, unknown>): ModernAdvisory | undefined {
+function parseClassicAdvisory(record: Record<string, unknown>): AuditAdvisory | undefined {
   if (!isPlainObject(record.data)
     || !isPlainObject(record.data.resolution)
     || !isPlainObject(record.data.advisory)) {
@@ -247,7 +244,26 @@ function parseClassicAdvisory(record: Record<string, unknown>): ModernAdvisory |
     || severity === undefined) {
     return undefined;
   }
-  return { packageName, severity };
+  const advisory = record.data.advisory;
+  const resolutionPath = readRequiredString(resolution.path);
+  const resolvedVersion = readRequiredString(resolution.version) ?? readRequiredString(advisory.version);
+  return createAuditAdvisory({
+    packageName,
+    severity,
+    manager: 'yarn',
+    schema: classicSchema,
+    advisoryId: String(advisoryId),
+    source: readRequiredString(advisory.source),
+    title: readRequiredString(advisory.title),
+    url: readRequiredString(advisory.url),
+    affectedRange: readRequiredString(advisory.vulnerable_versions)
+      ?? readRequiredString(advisory.range),
+    resolvedPaths: resolutionPath === undefined ? [] : [resolutionPath],
+    resolvedVersions: resolvedVersion === undefined ? [] : [resolvedVersion],
+    attribution: inferPathAttribution(packageName, resolutionPath === undefined ? [] : [resolutionPath]),
+    via: [],
+    fixAvailable: parseFixAvailable(advisory.fixAvailable ?? advisory.fix_available),
+  });
 }
 
 function parseClassicSummary(record: Record<string, unknown>): ClassicSummary | undefined {
@@ -280,7 +296,7 @@ function parseClassicSummary(record: Record<string, unknown>): ClassicSummary | 
   return { mask, counts };
 }
 
-function parseModernAdvisory(value: unknown): ModernAdvisory | undefined {
+function parseModernAdvisory(value: unknown): AuditAdvisory | undefined {
   if (!isPlainObject(value)
     || !isPlainObject(value.children)) {
     return undefined;
@@ -289,17 +305,38 @@ function parseModernAdvisory(value: unknown): ModernAdvisory | undefined {
   const id = value.children.ID;
   const severity = parseSeverity(readRequiredString(value.children.Severity));
   const url = value.children.URL;
+  const issue = readRequiredString(value.children.Issue);
+  const affectedRange = readRequiredString(value.children['Vulnerable Versions']);
+  const resolvedVersions = readNonEmptyStringArray(value.children['Tree Versions']);
+  const dependents = readNonEmptyStringArray(value.children.Dependents);
   if (packageName === undefined
     || !isAdvisoryId(id)
-    || readRequiredString(value.children.Issue) === undefined
+    || issue === undefined
     || (url !== undefined && readRequiredString(url) === undefined)
     || severity === undefined
-    || readRequiredString(value.children['Vulnerable Versions']) === undefined
-    || !isNonEmptyStringArray(value.children['Tree Versions'])
-    || !isNonEmptyStringArray(value.children.Dependents)) {
+    || affectedRange === undefined
+    || resolvedVersions === undefined
+    || dependents === undefined) {
     return undefined;
   }
-  return { packageName, severity };
+  return createAuditAdvisory({
+    packageName,
+    severity,
+    manager: 'yarn',
+    schema: modernSchema,
+    advisoryId: String(id),
+    title: issue,
+    url: readRequiredString(url),
+    affectedRange,
+    // Berry's Dependents values are virtual locators (for example workspace:.),
+    // not filesystem resolution paths. Keep them as provenance only so they can
+    // never accidentally badge a manifest row.
+    resolvedPaths: [],
+    resolvedVersions,
+    attribution: 'unknown',
+    via: dependents.map(identity => ({ identity })),
+    fixAvailable: parseFixAvailable(value.children.Fix ?? value.children['Fix Available']),
+  });
 }
 
 function parseJsonLine(line: string, familyLabel: string): unknown | ParsedLineFailure {
@@ -317,29 +354,28 @@ function parseJsonLine(line: string, familyLabel: string): unknown | ParsedLineF
 function recognizedOutcome(
   schema: typeof classicSchema | typeof modernSchema,
   exitCode: number,
-  vulnerabilities: Map<string, AuditSeverity>,
+  advisories: Map<string, AuditAdvisory>,
 ): AuditOutcome {
+  const normalizedAdvisories = [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  const vulnerabilities = new Map<string, AuditSeverity>();
+  for (const advisory of normalizedAdvisories) {
+    const current = vulnerabilities.get(advisory.packageName);
+    vulnerabilities.set(advisory.packageName, current === undefined ? advisory.severity : mergeSeverity(current, advisory.severity));
+  }
   if (vulnerabilities.size === 0) {
     logger.info('Audit complete: 0 vulnerable package(s).');
-    return { kind: 'clean', schema, exitCode, vulnerabilities, total: 0 };
+    return { kind: 'clean', schema, manager: 'yarn', exitCode, vulnerabilities, advisories: normalizedAdvisories, total: 0 };
   }
   logger.info(`Audit complete: ${vulnerabilities.size} vulnerable package(s).`);
   return {
     kind: 'advisories',
     schema,
+    manager: 'yarn',
     exitCode,
     vulnerabilities,
+    advisories: normalizedAdvisories,
     total: vulnerabilities.size,
   };
-}
-
-function mergeFinding(
-  vulnerabilities: Map<string, AuditSeverity>,
-  packageName: string,
-  severity: AuditSeverity,
-): void {
-  const existing = vulnerabilities.get(packageName);
-  vulnerabilities.set(packageName, existing === undefined ? severity : mergeSeverity(existing, severity));
 }
 
 function emptySeverityCounts(): Record<AuditSeverity, number> {
@@ -388,6 +424,27 @@ function isNonEmptyStringArray(value: unknown): boolean {
   return Array.isArray(value)
     && value.length > 0
     && value.every(entry => readRequiredString(entry) !== undefined);
+}
+
+function readNonEmptyStringArray(value: unknown): string[] | undefined {
+  return isNonEmptyStringArray(value)
+    ? (value as unknown[]).map(entry => String(entry))
+    : undefined;
+}
+
+function parseFixAvailable(value: unknown): boolean | { name?: string; version?: string; isSemVerMajor?: boolean } | undefined {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const name = readRequiredString(value.name);
+  const version = readRequiredString(value.version);
+  const isSemVerMajor = typeof value.isSemVerMajor === 'boolean' ? value.isSemVerMajor : undefined;
+  return name === undefined && version === undefined && isSemVerMajor === undefined
+    ? undefined
+    : { name, version, isSemVerMajor };
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

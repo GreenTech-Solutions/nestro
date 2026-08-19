@@ -23,6 +23,12 @@ vi.mock('../utils/processRunner', () => ({
 
 const cwd = '/workspace/bun-app';
 
+class NonErrorParseFailure {
+  toString(): string {
+    return 'synthetic parse failure';
+  }
+}
+
 function mockAuditProcess(err: unknown, stdout: string): void {
   runBoundedProcessMock.mockImplementationOnce(() => {
     if (err === null) {
@@ -205,6 +211,35 @@ describe('parseBunAuditOutcome()', () => {
     expect(outcome.vulnerabilities.get('lodash')).toBe('high');
   });
 
+  it('tolerates an empty optional fix object without inventing a fix', () => {
+    const outcome = expectAdvisories(parseBunAuditOutcome({
+      command: 'bun',
+      stdout: bunReport({ lodash: [bunAdvisory({ fixAvailable: {}, source: 123 })] }),
+      exitCode: 1,
+    }));
+
+    expect(outcome.advisories?.[0]?.fixAvailable).toBeUndefined();
+  });
+
+  it('preserves boolean and object fix availability when Bun provides it', () => {
+    const outcome = expectAdvisories(parseBunAuditOutcome({
+      command: 'bun',
+      stdout: bunReport({
+        lodash: [bunAdvisory({ id: 1106915, fixAvailable: true })],
+        react: [bunAdvisory({
+          id: 1106916,
+          fixAvailable: { name: 'react', version: '19.0.0', isSemVerMajor: true },
+        })],
+      }),
+      exitCode: 1,
+    }));
+
+    expect(outcome.advisories?.find(advisory => advisory.packageName === 'lodash')?.fixAvailable).toBe(true);
+    expect(outcome.advisories?.find(advisory => advisory.packageName === 'react')?.fixAvailable).toEqual({
+      name: 'react', version: '19.0.0', isSemVerMajor: true,
+    });
+  });
+
   it.each([
     ['empty stdout', '', 'empty-output'],
     ['whitespace-only stdout', '  \n\t', 'empty-output'],
@@ -330,6 +365,21 @@ describe('parseBunAuditOutcome()', () => {
 
     expect(outcome.detail).toContain('none');
   });
+
+  it('keeps non-Error JSON parser failures bounded and incomplete', () => {
+    const parse = vi.spyOn(JSON, 'parse').mockImplementationOnce(() => {
+      throw new NonErrorParseFailure();
+    });
+    try {
+      const outcome = expectIncomplete(parseBunAuditOutcome({
+        command: 'bun', stdout: '{}', exitCode: 0,
+      }), 'malformed-json');
+      expect(outcome.detail).toContain('synthetic parse failure');
+    }
+    finally {
+      parse.mockRestore();
+    }
+  });
 });
 
 describe('runBunAuditOutcome()', () => {
@@ -415,6 +465,9 @@ describe('runBunAudit()', () => {
     await expect(runBunAudit(cwd)).resolves.toEqual({
       vulnerabilities: new Map(),
       total: 0,
+      advisories: [],
+      manager: 'bun',
+      schema: 'bun-bulk-advisory',
     });
   });
 

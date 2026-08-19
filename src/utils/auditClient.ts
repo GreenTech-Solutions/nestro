@@ -1,8 +1,20 @@
 import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import type { BoundedProcessOutcome } from './processRunner';
+import {
+  createAuditAdvisory,
+  inferPathAttribution,
+  mergeAuditAdvisory,
+} from './auditReport';
+import type {
+  AuditAdvisory,
+  AuditAttribution,
+  AuditFixAvailability,
+  AuditVia,
+} from './auditReport';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
+export type AuditPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 /**
  * Audit processes are given a generous but finite timeout: Yarn's full-graph recursive
@@ -22,6 +34,9 @@ export const AUDIT_PROCESS_MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 export interface AuditResult {
   vulnerabilities: Map<string, AuditSeverity>;
   total: number;
+  advisories: readonly AuditAdvisory[];
+  manager: AuditPackageManager;
+  schema: AuditSchemaId;
 }
 
 /**
@@ -67,6 +82,9 @@ interface AuditRecognizedOutcomeBase {
   exitCode: number;
   vulnerabilities: Map<string, AuditSeverity>;
   total: number;
+  /** Structured entries; optional for backwards-compatible hand-authored outcomes. */
+  advisories?: readonly AuditAdvisory[];
+  manager?: AuditPackageManager;
 }
 
 /** Confirmed absence of vulnerabilities: recognized schema plus a compatible exit code. */
@@ -118,6 +136,7 @@ const compatibleExitCodes: readonly number[] = [0, 1];
 
 interface RecognizedAuditPayload {
   schema: AuditSchemaId;
+  manager: AuditPackageManager;
   /** The `vulnerabilities` or `advisories` object of the recognized schema. */
   entries: Record<string, unknown>;
   /** `metadata.vulnerabilities.total` when the summary marker exposes it. */
@@ -125,16 +144,16 @@ interface RecognizedAuditPayload {
 }
 
 export async function runNpmAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
-  logger.info(`Running npm audit in ${cwd}.`);
+  logger.info('Running npm audit.');
   return toAuditResult(await runAuditOutcome('npm', ['audit', '--json'], cwd, signal));
 }
 
 export async function runPackageAudit(
-  packageManager: string,
+  packageManager: 'npm' | 'pnpm',
   cwd: string,
   signal?: AbortSignal,
 ): Promise<AuditResult> {
-  logger.info(`Running ${packageManager} audit in ${cwd}.`);
+  logger.info(`Running ${packageManager} audit.`);
   return toAuditResult(await runAuditOutcome(packageManager, ['audit', '--json'], cwd, signal));
 }
 
@@ -192,7 +211,7 @@ export function describeBoundedProcessFailure(
       // means to the user — is the single source of truth for every bounded-process
       // failure message, instead of the runner and its caller each logging their own
       // near-duplicate line.
-      logger.error(outcome.detail, outcome.cause);
+      logger.error('Audit process could not start; see the security audit report for redacted details.');
       return { kind: 'error', reason: outcome.reason, detail: outcome.detail };
   }
 }
@@ -204,7 +223,7 @@ export function describeBoundedProcessFailure(
  */
 export function parseAuditOutcome(execution: AuditExecution): AuditOutcome {
   const { command, exitCode, stdout } = execution;
-  logger.debug(`Raw ${command} audit output snippet: ${stdout.slice(0, 200)}`);
+  logger.debug(`${command} audit output received (${stdout.length} bytes).`);
 
   if (exitCode === undefined || !compatibleExitCodes.includes(exitCode)) {
     return incompleteOutcome(
@@ -229,7 +248,14 @@ export function parseAuditOutcome(execution: AuditExecution): AuditOutcome {
     );
   }
 
-  const payload = recognizeAuditPayload(json);
+  const manager = managerForCommand(command);
+  if (manager === undefined) {
+    return incompleteOutcome(
+      'unrecognized-schema',
+      `${command} audit is not handled by the npm/pnpm audit adapter.`,
+    );
+  }
+  const payload = recognizeAuditPayload(json, manager);
   if (payload === undefined) {
     return incompleteOutcome(
       'unrecognized-schema',
@@ -237,14 +263,17 @@ export function parseAuditOutcome(execution: AuditExecution): AuditOutcome {
     );
   }
 
-  const vulnerabilities = collectVulnerabilities(payload);
+  const advisories = collectAdvisories(payload);
+  const vulnerabilities = collectVulnerabilities(advisories);
   if (vulnerabilities.size > 0) {
     logger.info(`Audit complete: ${vulnerabilities.size} vulnerable package(s).`);
     return {
       kind: 'advisories',
       schema: payload.schema,
+      manager: payload.manager,
       exitCode,
       vulnerabilities,
+      advisories,
       total: vulnerabilities.size,
     };
   }
@@ -264,16 +293,34 @@ export function parseAuditOutcome(execution: AuditExecution): AuditOutcome {
   }
 
   logger.info('Audit complete: 0 vulnerable package(s).');
-  return { kind: 'clean', schema: payload.schema, exitCode, vulnerabilities, total: 0 };
+  return {
+    kind: 'clean',
+    schema: payload.schema,
+    manager: payload.manager,
+    exitCode,
+    vulnerabilities,
+    advisories,
+    total: 0,
+  };
 }
 
 /**
  * Narrows a recognized outcome to the legacy result shape. Incomplete and error outcomes
  * throw, so a caller can never mistake them for an empty vulnerability set.
  */
-export function toAuditResult(outcome: AuditOutcome): AuditResult {
+export function toAuditResult(outcome: AuditOutcome, managerOverride?: AuditPackageManager): AuditResult {
   if (outcome.kind === 'clean' || outcome.kind === 'advisories') {
-    return { vulnerabilities: outcome.vulnerabilities, total: outcome.total };
+    const manager = managerOverride ?? outcome.manager ?? managerForSchema(outcome.schema);
+    return {
+      vulnerabilities: outcome.vulnerabilities,
+      total: outcome.total,
+      advisories: (outcome.advisories ?? []).map(advisory => ({
+        ...advisory,
+        manager,
+      })),
+      manager,
+      schema: outcome.schema,
+    };
   }
   throw new UnrecognizedAuditResultError(outcome);
 }
@@ -295,7 +342,7 @@ function incompleteOutcome(reason: AuditIncompleteReason, detail: string): Audit
  * Accepts only the two documented npm/pnpm report shapes, each together with its own
  * version or summary marker, so an unknown or future schema is never guessed at.
  */
-function recognizeAuditPayload(json: unknown): RecognizedAuditPayload | undefined {
+function recognizeAuditPayload(json: unknown, manager: AuditPackageManager): RecognizedAuditPayload | undefined {
   if (!isPlainObject(json)) {
     return undefined;
   }
@@ -304,30 +351,119 @@ function recognizeAuditPayload(json: unknown): RecognizedAuditPayload | undefine
   const summaryTotal = readSummaryTotal(json.metadata);
 
   if (isPlainObject(json.vulnerabilities) && (typeof json.auditReportVersion === 'number' || hasSummary)) {
-    return { schema: 'npm-v2-vulnerabilities', entries: json.vulnerabilities, summaryTotal };
+    return { schema: 'npm-v2-vulnerabilities', manager, entries: json.vulnerabilities, summaryTotal };
   }
   if (isPlainObject(json.advisories) && hasSummary) {
-    return { schema: 'npm-v1-advisories', entries: json.advisories, summaryTotal };
+    return { schema: 'npm-v1-advisories', manager, entries: json.advisories, summaryTotal };
   }
   return undefined;
 }
 
-function collectVulnerabilities(payload: RecognizedAuditPayload): Map<string, AuditSeverity> {
-  const vulnerabilities = new Map<string, AuditSeverity>();
+function collectAdvisories(payload: RecognizedAuditPayload): AuditAdvisory[] {
+  const advisories = new Map<string, AuditAdvisory>();
 
   for (const [key, info] of Object.entries(payload.entries)) {
     if (!isPlainObject(info)) {
       continue;
     }
-    const name = payload.schema === 'npm-v2-vulnerabilities' ? readString(key) : readString(info.module_name);
+    const packageName = payload.schema === 'npm-v2-vulnerabilities'
+      ? readString(info.name) ?? (isLikelyPackageName(key) ? readString(key) : undefined)
+      : readString(info.module_name);
     const severity = parseSeverity(readString(info.severity));
-    if (name === undefined || severity === undefined) {
+    if (packageName === undefined || severity === undefined) {
       continue;
     }
-    const existing = vulnerabilities.get(name);
-    vulnerabilities.set(name, existing === undefined ? severity : mergeSeverity(existing, severity));
+
+    const paths = readStringArray(info.nodes)
+      .concat(readStringArray(info.paths))
+      .concat(readSingleString(info.resolvedPath));
+    const versions = readStringArray(info.versions)
+      .concat(readSingleString(info.version))
+      .concat(readSingleString(info.resolvedVersion))
+      .concat(readSingleString(info.installedVersion));
+    const direct = typeof info.isDirect === 'boolean' ? info.isDirect : undefined;
+    const baseAttribution = direct === true
+      ? 'direct'
+      : direct === false
+        ? 'transitive'
+        : inferPathAttribution(packageName, paths);
+    const via = parseVia(info.via);
+    const fixAvailable = parseFixAvailable(info.fixAvailable ?? info.fix_available);
+    const base = {
+      packageName,
+      severity,
+      manager: payload.manager,
+      schema: payload.schema,
+      source: readString(info.source),
+      title: readString(info.title),
+      url: readString(info.url),
+      affectedRange: readString(info.range) ?? readString(info.vulnerableVersions) ?? readString(info.vulnerable_versions),
+      resolvedPaths: paths,
+      resolvedVersions: versions,
+      attribution: baseAttribution as AuditAttribution,
+      via,
+      fixAvailable,
+    };
+
+    const viaAdvisories = via.filter(entry => entry.url !== undefined || entry.id !== undefined || entry.source !== undefined);
+    const findings = payload.schema === 'npm-v1-advisories' && Array.isArray(info.findings)
+      ? info.findings.filter(isPlainObject)
+      : [];
+    if (payload.schema === 'npm-v2-vulnerabilities' && viaAdvisories.length > 0) {
+      for (const detail of viaAdvisories) {
+        mergeAuditAdvisory(advisories, createAuditAdvisory({
+          ...base,
+          advisoryId: detail.id,
+          source: detail.source ?? base.source,
+          title: detail.title ?? base.title,
+          url: detail.url ?? base.url,
+          severity: detail.severity ?? base.severity,
+          affectedRange: detail.range ?? base.affectedRange,
+        }));
+      }
+    }
+    else if (findings.length === 0) {
+      mergeAuditAdvisory(advisories, createAuditAdvisory({
+        ...base,
+        advisoryId: readIdentity(info.id),
+      }));
+    }
+
+    if (payload.schema === 'npm-v1-advisories') {
+      if (findings.length > 0) {
+        // npm v1 puts the resolved path/version/directness only on each finding;
+        // only findings become advisories so no graph evidence is invented.
+        for (const finding of findings) {
+          const findingPaths = readStringArray(finding.paths);
+          const findingVersion = readString(finding.version);
+          const findingAttribution = typeof finding.isDirect === 'boolean'
+            ? finding.isDirect ? 'direct' : 'transitive'
+            : inferPathAttribution(packageName, findingPaths);
+          mergeAuditAdvisory(advisories, createAuditAdvisory({
+            ...base,
+            identity: undefined,
+            advisoryId: readIdentity(info.id) ?? key,
+            resolvedPaths: findingPaths,
+            resolvedVersions: findingVersion === undefined ? [] : [findingVersion],
+            attribution: findingAttribution,
+          }));
+        }
+      }
+    }
   }
 
+  return [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+function collectVulnerabilities(advisories: readonly AuditAdvisory[]): Map<string, AuditSeverity> {
+  const vulnerabilities = new Map<string, AuditSeverity>();
+  for (const advisory of advisories) {
+    const existing = vulnerabilities.get(advisory.packageName);
+    vulnerabilities.set(
+      advisory.packageName,
+      existing === undefined ? advisory.severity : mergeSeverity(existing, advisory.severity),
+    );
+  }
   return vulnerabilities;
 }
 
@@ -345,6 +481,90 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function readSingleString(value: unknown): string[] {
+  const result = readString(value);
+  return result === undefined ? [] : [result];
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
+    : [];
+}
+
+function readIdentity(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return readString(value);
+}
+
+function isLikelyPackageName(value: string): boolean {
+  return value.trim() !== '' && !/^\d+$/.test(value);
+}
+
+function parseFixAvailable(value: unknown): AuditFixAvailability | undefined {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const name = readString(value.name);
+  const version = readString(value.version);
+  const isSemVerMajor = typeof value.isSemVerMajor === 'boolean' ? value.isSemVerMajor : undefined;
+  if (name === undefined && version === undefined && isSemVerMajor === undefined) {
+    return undefined;
+  }
+  return { name, version, isSemVerMajor };
+}
+
+function parseVia(value: unknown): AuditVia[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry): AuditVia[] => {
+    if (typeof entry === 'string' && entry !== '') {
+      return [{ identity: entry }];
+    }
+    if (!isPlainObject(entry)) {
+      return [];
+    }
+    const id = readIdentity(entry.id);
+    const source = readIdentity(entry.source);
+    const name = readString(entry.name);
+    const dependency = readString(entry.dependency);
+    const title = readString(entry.title);
+    const url = readString(entry.url);
+    const severity = parseSeverity(readString(entry.severity));
+    const range = readString(entry.range) ?? readString(entry.vulnerableVersions);
+    const identity = id ?? url ?? source ?? dependency ?? name ?? title;
+    return identity === undefined
+      ? []
+      : [{ identity, id, source, name, dependency, title, url, severity, range }];
+  });
+}
+
+function managerForCommand(command: string): AuditPackageManager | undefined {
+  if (command === 'npm') {
+    return 'npm';
+  }
+  if (command === 'pnpm') {
+    return 'pnpm';
+  }
+  return undefined;
+}
+
+function managerForSchema(schema: AuditSchemaId): AuditPackageManager {
+  if (schema === 'npm-v1-advisories' || schema === 'npm-v2-vulnerabilities') {
+    return 'npm';
+  }
+  if (schema.startsWith('yarn-')) {
+    return 'yarn';
+  }
+  return 'bun';
 }
 
 function describeError(err: unknown): string {

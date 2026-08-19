@@ -2,6 +2,8 @@ import { vi } from 'vitest';
 
 export const outputChannel = {
   appendLine: vi.fn(),
+  replace: vi.fn(),
+  show: vi.fn(),
   dispose: vi.fn(),
 };
 

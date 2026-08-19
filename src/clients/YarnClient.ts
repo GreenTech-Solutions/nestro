@@ -1,4 +1,4 @@
-import type { AuditSeverity } from '../utils/auditClient';
+import type { AuditResult } from '../utils/auditClient';
 import { runYarnAudit } from '../utils/yarnAuditClient';
 import { Client, PackageTarget } from './Client';
 
@@ -18,7 +18,7 @@ export class YarnClient extends Client {
     return { command: 'yarn', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
-    return (await runYarnAudit(this.cwd, signal)).vulnerabilities;
+  async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {
+    return await runYarnAudit(this.cwd, signal);
   }
 }

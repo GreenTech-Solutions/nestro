@@ -122,7 +122,7 @@ async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResoluti
     };
   }
   catch (err) {
-    logger.warn(`Unable to identify Yarn family in ${projectRoot}: ${describeError(err)}`);
+    logger.warn(`Unable to identify Yarn family: ${describeError(err)}`);
     return { family: 'unknown', source: 'version-probe' };
   }
 }

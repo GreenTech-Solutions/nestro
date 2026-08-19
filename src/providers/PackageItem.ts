@@ -1,6 +1,15 @@
 import * as vscode from 'vscode';
 import { AuditSeverity, UpdateType } from '../utils';
 
+const PACKAGE_ANSI_ESCAPE = new RegExp(
+  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
+  'g',
+);
+const PACKAGE_CONTROL = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
+  'g',
+);
+
 export class PackageItem extends vscode.TreeItem {
   constructor(
     public readonly packageName: string,
@@ -13,12 +22,15 @@ export class PackageItem extends vscode.TreeItem {
     public readonly dev = false,
     public readonly versionPrefix = '',
   ) {
-    super(packageName, vscode.TreeItemCollapsibleState.Collapsed);
+    const safePackageName = sanitizePackageText(packageName);
+    const safeCurrentVersion = sanitizePackageText(currentVersion);
+    const safeLatest = latest === undefined ? undefined : sanitizePackageText(latest);
+    super(safePackageName, vscode.TreeItemCollapsibleState.Collapsed);
     const hasUpdate = updateType !== 'none';
-    this.description = hasUpdate ? `${currentVersion} → ${latest}` : currentVersion;
+    this.description = hasUpdate ? `${safeCurrentVersion} → ${safeLatest}` : safeCurrentVersion;
     this.tooltip = installing
-      ? `Updating ${packageName} to ${latest}`
-      : `${packageName}@${currentVersion}${hasUpdate ? ` (latest: ${latest})` : ''}`;
+      ? `Updating ${safePackageName} to ${safeLatest}`
+      : `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`;
     this.contextValue = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
     if (vulnerabilitySeverity !== undefined) {
       this.description = `${this.description} vulnerability: ${vulnerabilitySeverity}`;
@@ -37,6 +49,14 @@ export class PackageItem extends vscode.TreeItem {
         ? icons[updateType]
         : getVulnerabilityIcon(vulnerabilitySeverity);
   }
+}
+
+export function sanitizePackageText(value: string): string {
+  return value
+    .replace(PACKAGE_ANSI_ESCAPE, '')
+    .replace(PACKAGE_CONTROL, ' ')
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .slice(0, 240);
 }
 
 /**

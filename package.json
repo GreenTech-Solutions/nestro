@@ -152,6 +152,12 @@
         "icon": "$(shield)"
       },
       {
+        "command": "nestro.openAuditReport",
+        "title": "Open Security Audit Report",
+        "category": "Nestro",
+        "icon": "$(report)"
+      },
+      {
         "command": "nestro.installUpdate",
         "title": "Update Package",
         "icon": "$(arrow-up)"

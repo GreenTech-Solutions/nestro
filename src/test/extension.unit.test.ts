@@ -8,6 +8,7 @@ import { PackagesProvider } from '../providers';
 import {
   copyPackageNameCommand,
   installUpdateCommand,
+  openAuditReportCommand,
   openOnNpmCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
@@ -24,6 +25,7 @@ import {
 vi.mock('../commands', () => ({
   copyPackageNameCommand: vi.fn(),
   installUpdateCommand: vi.fn(),
+  openAuditReportCommand: vi.fn(),
   openOnNpmCommand: vi.fn(),
   pickVersionCommand: vi.fn(),
   pinAllVersionsCommand: vi.fn(),
@@ -51,6 +53,7 @@ vi.mock('../providers', () => ({
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.runAudit = vi.fn().mockResolvedValue(undefined);
+    this.getAuditReport = vi.fn(() => ({ projects: [], failures: [] }));
     this.invalidateUpdateCache = vi.fn();
     this.setFilter = vi.fn();
     this.resetUpdateData = vi.fn();
@@ -187,6 +190,7 @@ describe('activate()', () => {
     handlers.get('nestro.pinAllVersions')?.();
     handlers.get('nestro.openOnNpm')?.(item);
     handlers.get('nestro.copyPackageName')?.(item);
+    handlers.get('nestro.openAuditReport')?.();
 
     expect(installUpdateCommand).toHaveBeenCalledWith(item, expect.any(Object));
     expect(pickVersionCommand).toHaveBeenCalledWith(item, expect.any(Object));
@@ -198,6 +202,7 @@ describe('activate()', () => {
     expect(pinAllVersionsCommand).toHaveBeenCalledWith(expect.any(Object));
     expect(openOnNpmCommand).toHaveBeenCalledWith(item);
     expect(copyPackageNameCommand).toHaveBeenCalledWith(item);
+    expect(openAuditReportCommand).toHaveBeenCalledWith(expect.any(Object), expect.any(Object));
   });
 
   it.each([

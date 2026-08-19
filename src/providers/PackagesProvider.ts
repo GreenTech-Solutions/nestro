@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
@@ -6,14 +7,22 @@ import {
   fetchAllLatestVersions,
   getUpdateType,
   getWorkspacePackageFilePaths,
+  inferPathAttribution,
   logger,
+  mergeAuditAdvisories,
   NcuUpdateTarget,
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
 import type { AuditSeverity, UpdateType } from '../utils';
+import type {
+  AuditAdvisory,
+  AuditPackageManager,
+  AuditResult,
+  AuditSchemaId,
+} from '../utils';
 import { LoadingItem } from './LoadingItem';
-import { PackageItem } from './PackageItem';
+import { PackageItem, sanitizePackageText } from './PackageItem';
 import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
@@ -36,7 +45,28 @@ export interface PackageStateIdentity {
  */
 export interface AuditProjectSummary {
   readonly project: AuditProject;
+  readonly status: 'success' | 'failure';
+  readonly manager: AuditPackageManager;
+  readonly schema?: AuditSchemaId;
   readonly vulnerabilities: ReadonlyMap<string, AuditSeverity>;
+  readonly advisories: readonly AuditAdvisory[];
+  readonly failure?: {
+    readonly reason: string;
+    readonly detail: string;
+  };
+}
+
+export interface AuditProjectFailure {
+  readonly project?: AuditProject;
+  readonly packageFilePaths: readonly string[];
+  readonly manager?: AuditPackageManager;
+  readonly reason: string;
+  readonly detail: string;
+}
+
+export interface AuditReportSnapshot {
+  readonly projects: readonly AuditProjectSummary[];
+  readonly failures: readonly AuditProjectFailure[];
 }
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
@@ -53,6 +83,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
   private auditProjects: AuditProjectSummary[] = [];
+  private auditFailures: AuditProjectFailure[] = [];
   private checkState: 'idle' | 'running' | 'done' = 'idle';
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
@@ -151,7 +182,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    * project result and its origin manifest set are always kept here.
    */
   getAuditProjects(): readonly AuditProjectSummary[] {
-    return [...this.auditProjects];
+    return this.auditProjects.map(summary => this.cloneAuditProjectSummary(summary));
+  }
+
+  getAuditFailures(): readonly AuditProjectFailure[] {
+    return this.auditFailures.map(failure => this.cloneAuditProjectFailure(failure));
+  }
+
+  getAuditReport(): AuditReportSnapshot {
+    return {
+      projects: this.getAuditProjects(),
+      failures: this.getAuditFailures(),
+    };
   }
 
   getVisibleOutdatedPackages(): PackageItem[] {
@@ -251,6 +293,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.loading = true;
     this.auditResults = new Map();
     this.auditProjects = [];
+    this.auditFailures = [];
     this.auditState = 'idle';
     this.lastAuditCount = undefined;
     this.lastAuditSuccessfulRootCount = undefined;
@@ -435,6 +478,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     // contract — never hands back a previous run's stale projects while this run is
     // in progress, after an early exit with no package files, or after an exception (N10).
     this.auditProjects = [];
+    this.auditFailures = [];
+    // Clear row-scoped evidence atomically with the report snapshot. Rebuild before
+    // discovery/resolution so a failed new run cannot leave badges from the previous run.
+    this.auditResults = new Map();
+    this.rebuildPackageItems();
     const abortController = new AbortController();
     this.auditAbortController = abortController;
     this.emitTreeChanged();
@@ -451,12 +499,17 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       // manifests (no owning workspace, or a workspace-escaping root — SEC-05) never
       // reach a client at all and are treated the same as a failed audit root.
       const { projects, rejected } = await resolveAuditProjects(packageFilePaths);
-      for (const rejection of rejected) {
-        logger.error(`Audit project resolution failed for ${rejection.packageFilePath}: ${rejection.detail}`);
+      if (rejected.length > 0) {
+        logger.error('Audit project resolution failed; see the security audit report for redacted details.');
       }
 
       const auditResults = new Map<string, AuditSeverity>();
       const auditProjects: AuditProjectSummary[] = [];
+      const auditFailures: AuditProjectFailure[] = rejected.map(rejection => ({
+        packageFilePaths: [rejection.packageFilePath],
+        reason: rejection.reason,
+        detail: rejection.detail,
+      }));
       const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
       let successfulAuditRootCount = 0;
       for (const project of projects) {
@@ -468,14 +521,59 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
         try {
           const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
-          const vulnerabilities = await client.runAudit(abortController.signal);
+          const reportRunner = client as unknown as {
+            runAuditReport?: (signal?: AbortSignal) => Promise<unknown>;
+          };
+          const rawResult = typeof reportRunner.runAuditReport === 'function'
+            ? await reportRunner.runAuditReport(abortController.signal)
+            : await client.runAudit(abortController.signal);
           successfulAuditRootCount += 1;
-          auditProjects.push({ project, vulnerabilities });
-          this.applyProjectAuditResults(project, vulnerabilities, auditResults);
+          if (this.isAuditResult(rawResult)) {
+            const advisories = mergeAuditAdvisories(rawResult.advisories);
+            auditProjects.push({
+              project,
+              status: 'success',
+              manager: rawResult.manager,
+              schema: rawResult.schema,
+              vulnerabilities: new Map(rawResult.vulnerabilities),
+              advisories: advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
+            });
+            await this.applyStructuredProjectAuditResults(project, advisories, auditResults);
+          }
+          else if (rawResult instanceof Map) {
+            const vulnerabilities = new Map(rawResult as Map<string, AuditSeverity>);
+            auditProjects.push({
+              project,
+              status: 'success',
+              manager: project.packageManager,
+              vulnerabilities,
+              advisories: [],
+            });
+            this.applyLegacyProjectAuditResults(project, vulnerabilities, auditResults);
+          }
+          else {
+            throw new Error('Audit client returned an unrecognized audit result.');
+          }
         }
         catch (err) {
           failedAuditPaths.push(...project.originManifests);
-          logger.error(`Audit failed for project root ${project.projectRoot}.`, err);
+          const failure = describeAuditFailure(err);
+          auditProjects.push({
+            project,
+            status: 'failure',
+            manager: project.packageManager,
+            vulnerabilities: new Map(),
+            advisories: [],
+            failure,
+          });
+          auditFailures.push({
+            project,
+            packageFilePaths: [...project.originManifests],
+            manager: project.packageManager,
+            reason: failure.reason,
+            detail: failure.detail,
+          });
+          logger.error('Audit failed for a project; see the security audit report for redacted details.');
         }
       }
 
@@ -485,22 +583,29 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
       this.auditResults = auditResults;
       this.auditProjects = auditProjects;
+      this.auditFailures = auditFailures;
       this.failedAuditPaths = failedAuditPaths;
       this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
-      this.lastAuditCount = this.auditResults.size;
+      this.lastAuditCount = countProjectVulnerablePackages(auditProjects);
       this.lastAuditSuccessfulRootCount = successfulAuditRootCount;
       logger.info(
         failedAuditPaths.length === 0
-          ? `Audit: ${this.auditResults.size} vulnerable package(s).`
-          : `Audit incomplete: ${this.auditResults.size} vulnerable package(s); `
+          ? `Audit: ${this.lastAuditCount} vulnerable package(s).`
+          : `Audit incomplete: ${this.lastAuditCount} vulnerable package(s); `
             + `failed ${failedAuditPaths.length} package root(s).`,
       );
       this.rebuildPackageItems();
     }
     catch (err) {
       if (!abortController.signal.aborted) {
+        const failure = describeAuditFailure(err);
+        this.auditFailures = [{
+          packageFilePaths: [],
+          reason: failure.reason,
+          detail: failure.detail,
+        }];
         this.auditState = 'idle';
-        showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+        showError('package audit failed — the security audit report is incomplete.');
       }
     }
     finally {
@@ -542,7 +647,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       latest,
       updateType,
       installing,
-      this.auditResults.get(this.entryKey(packageName, packageFilePath)),
+      this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
       packageFilePath,
       dev,
       versionPrefix,
@@ -640,19 +745,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return entries;
   }
 
-  /**
-   * Attributes a project-level audit result to individual rows only when the match is
-   * provably unique (AUD-06 brief / plan.md decision 25). A project audit result is
-   * project-scoped, not row-scoped, until `AUD-08` adds resolved path/version
-   * projection, so:
-   * - a project spanning more than one origin manifest never gets row badges — there is
-   *   no safe way yet to say which manifest (or none, if the finding is transitive-only
-   *   for all of them) a given package name belongs to;
-   * - within a single-manifest project, a package name that appears in exactly one row
-   *   (not duplicated across `dependencies`/`devDependencies`, and not transitive-only)
-   *   still gets its badge, matching the pre-existing single-project behavior.
-   */
-  private applyProjectAuditResults(
+  /** Legacy Map-only adapters retain AUD-06's conservative single-manifest behavior. */
+  private applyLegacyProjectAuditResults(
     project: AuditProject,
     vulnerabilities: ReadonlyMap<string, AuditSeverity>,
     auditResults: Map<string, AuditSeverity>,
@@ -667,13 +761,158 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         entry.packageFilePath === packageFilePath && entry.item.packageName === packageName
       ));
       if (matchingRows.length === 1) {
-        auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+        const [matchingRow] = matchingRows;
+        auditResults.set(this.auditEntryKey(packageName, packageFilePath, matchingRow.dev), severity);
       }
     }
   }
 
+  /**
+   * Projects become row-scoped only when the advisory proves all of the following:
+   * direct attribution, one filesystem resolution path, one installed version, one
+   * owning manifest/section row, and a version/range relationship that can be checked
+   * without guessing. Anything else remains available in the project report only.
+   */
+  private async applyStructuredProjectAuditResults(
+    project: AuditProject,
+    advisories: readonly AuditAdvisory[],
+    auditResults: Map<string, AuditSeverity>,
+  ): Promise<void> {
+    for (const advisory of advisories) {
+      if (advisory.attribution !== 'direct'
+        || advisory.resolvedPaths.length !== 1
+        || advisory.resolvedVersions.length !== 1
+        || advisory.affectedRanges.length === 0) {
+        continue;
+      }
+
+      const resolvedPath = advisory.resolvedPaths[0];
+      const resolvedVersion = advisory.resolvedVersions[0];
+      const owningRows: PackageTreeEntry[] = [];
+      for (const entry of this.allEntries) {
+        if (entry.item.packageName === advisory.packageName
+          && await this.resolvedPathBelongsToManifest(
+            resolvedPath,
+            advisory.packageName,
+            entry.packageFilePath,
+            project,
+          )) {
+          owningRows.push(entry);
+        }
+      }
+      // Resolve ownership before checking versions. If the same manifest declares a
+      // package in both sections, the audit has no authoritative section evidence;
+      // choosing the row whose spec happens to match would create a false badge.
+      if (owningRows.length !== 1) {
+        continue;
+      }
+      const [match] = owningRows;
+      if (matchesManifestVersion(match.item.currentVersion, resolvedVersion)
+        && isVersionInAffectedRange(resolvedVersion, advisory.affectedRanges)) {
+        auditResults.set(
+          this.auditEntryKey(match.item.packageName, match.packageFilePath, match.dev),
+          advisory.severity,
+        );
+      }
+    }
+  }
+
+  private async resolvedPathBelongsToManifest(
+    resolvedPath: string,
+    packageName: string,
+    packageFilePath: string,
+    project: AuditProject,
+  ): Promise<boolean> {
+    if (project.originManifests.length !== 1
+      || resolvedPath.trim() === ''
+      || resolvedPath.startsWith('workspace:')) {
+      return false;
+    }
+    if (packageFilePath !== project.originManifests[0]
+      || inferPathAttribution(packageName, [resolvedPath]) !== 'direct') {
+      return false;
+    }
+    const normalizedPath = resolvedPath.replace(/\\/g, '/');
+    const dependencySuffix = `/node_modules/${packageName.replace(/\\/g, '/')}`;
+
+    // A manager may report `node_modules/pkg` relative to the project root, or an
+    // absolute path. A single-origin project is required before this evidence can
+    // identify one manifest row; merged projects remain report-only.
+    if (normalizedPath !== packageName && normalizedPath !== `node_modules/${packageName}`
+      && !normalizedPath.endsWith(dependencySuffix)) {
+      return false;
+    }
+    const absoluteResolvedPath = path.isAbsolute(resolvedPath)
+      ? path.normalize(resolvedPath)
+      : path.resolve(project.projectRoot, resolvedPath);
+    try {
+      const [canonicalProjectRoot, canonicalManifest, canonicalResolvedPath] = await Promise.all([
+        realpath(project.projectRoot),
+        realpath(packageFilePath),
+        realpath(absoluteResolvedPath),
+      ]);
+      return isWithinPath(canonicalManifest, canonicalProjectRoot)
+        && isWithinPath(canonicalResolvedPath, canonicalProjectRoot);
+    }
+    catch {
+      // Missing paths, broken symlinks, and other realpath failures do not constitute
+      // ownership evidence. Keep the advisory in the project report only.
+      return false;
+    }
+  }
+
+  private isAuditResult(value: unknown): value is AuditResult {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    const candidate = value as {
+      vulnerabilities?: unknown;
+      advisories?: unknown;
+      manager?: unknown;
+      schema?: unknown;
+    };
+    return candidate.vulnerabilities instanceof Map
+      && Array.isArray(candidate.advisories)
+      && isAuditPackageManager(candidate.manager)
+      && isAuditSchemaId(candidate.schema);
+  }
+
+  private cloneAuditProjectSummary(summary: AuditProjectSummary): AuditProjectSummary {
+    return {
+      ...summary,
+      project: {
+        ...summary.project,
+        originManifests: [...summary.project.originManifests],
+      },
+      vulnerabilities: new Map(summary.vulnerabilities),
+      advisories: summary.advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
+      failure: summary.failure === undefined ? undefined : { ...summary.failure },
+    };
+  }
+
+  private cloneAuditProjectFailure(failure: AuditProjectFailure): AuditProjectFailure {
+    return {
+      ...failure,
+      project: failure.project === undefined
+        ? undefined
+        : {
+            ...failure.project,
+            originManifests: [...failure.project.originManifests],
+          },
+      packageFilePaths: [...failure.packageFilePaths],
+    };
+  }
+
   private entryKey(packageName: string, packageFilePath: string): string {
     return `${packageFilePath}\0${packageName}`;
+  }
+
+  private auditEntryKey(packageName: string, packageFilePath: string, dev: boolean): string {
+    return this.packageStateKey({
+      packageName,
+      packageFilePath,
+      section: dev ? 'devDependencies' : 'dependencies',
+    });
   }
 
   private packageFilesKey(packageFiles: readonly string[]): string {
@@ -696,10 +935,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
     const details = [
       new PackageDetailItem(item.dev ? 'Dev dependency' : 'Dependency', item.dev ? 'tools' : 'package'),
-      new PackageDetailItem(`Current: ${item.currentVersion}`, 'tag'),
+      new PackageDetailItem(`Current: ${sanitizePackageText(item.currentVersion)}`, 'tag'),
     ];
     if (item.latest !== undefined) {
-      details.push(new PackageDetailItem(`Update: ${item.currentVersion} → ${item.latest} (${item.updateType})`, 'arrow-up'));
+      details.push(new PackageDetailItem(`Update: ${sanitizePackageText(item.currentVersion)} → ${sanitizePackageText(item.latest)} (${item.updateType})`, 'arrow-up'));
     }
     if (item.vulnerabilitySeverity !== undefined) {
       details.push(new PackageDetailItem(`Vulnerability: ${item.vulnerabilitySeverity}`, 'warning'));
@@ -707,7 +946,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.workspaceRoot !== undefined) {
       const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
       if (relativeFile !== undefined) {
-        details.push(new PackageDetailItem(`File: ${relativeFile}`, 'file'));
+        details.push(new PackageDetailItem(`File: ${sanitizePackageText(relativeFile)}`, 'file'));
       }
     }
     return details;
@@ -782,4 +1021,162 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     return relativeFile;
   }
+}
+
+function isAuditPackageManager(value: unknown): value is AuditPackageManager {
+  return value === 'npm' || value === 'pnpm' || value === 'yarn' || value === 'bun';
+}
+
+function isAuditSchemaId(value: unknown): value is AuditSchemaId {
+  return value === 'npm-v2-vulnerabilities'
+    || value === 'npm-v1-advisories'
+    || value === 'bun-bulk-advisory'
+    || value === 'yarn-classic-audit'
+    || value === 'yarn-modern-npm-audit';
+}
+
+function countProjectVulnerablePackages(projects: readonly AuditProjectSummary[]): number {
+  const packageNames = new Set<string>();
+  for (const project of projects) {
+    for (const packageName of project.vulnerabilities.keys()) {
+      packageNames.add(packageName);
+    }
+  }
+  return packageNames.size;
+}
+
+function describeAuditFailure(error: unknown): { reason: string; detail: string } {
+  if (typeof error === 'object' && error !== null) {
+    const candidate = error as {
+      outcome?: { reason?: unknown; detail?: unknown };
+      message?: unknown;
+    };
+    if (typeof candidate.outcome?.reason === 'string') {
+      return {
+        reason: candidate.outcome.reason,
+        detail: typeof candidate.outcome.detail === 'string'
+          ? candidate.outcome.detail
+          : 'Audit did not produce a complete result.',
+      };
+    }
+    if (typeof candidate.message === 'string') {
+      return { reason: 'audit-failed', detail: candidate.message };
+    }
+  }
+  return { reason: 'audit-failed', detail: String(error) };
+}
+
+function isWithinPath(candidate: string, root: string): boolean {
+  const relative = path.relative(path.normalize(root), path.normalize(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+interface ParsedVersion {
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+function matchesManifestVersion(spec: string, resolvedVersion: string): boolean {
+  const resolved = parseVersion(resolvedVersion);
+  if (resolved === undefined) {
+    return false;
+  }
+  const normalizedSpec = spec.trim();
+  const exact = parseVersion(normalizedSpec.replace(/^=/, ''));
+  if (exact !== undefined) {
+    return compareVersions(resolved, exact) === 0;
+  }
+  const operator = normalizedSpec[0];
+  if (operator !== '^' && operator !== '~') {
+    return false;
+  }
+  const base = parseVersion(normalizedSpec.slice(1));
+  if (base === undefined || compareVersions(resolved, base) < 0) {
+    return false;
+  }
+  if (operator === '~') {
+    return resolved.major === base.major && resolved.minor === base.minor;
+  }
+  if (base.major > 0) {
+    return resolved.major === base.major;
+  }
+  if (base.minor > 0) {
+    return resolved.major === 0 && resolved.minor === base.minor;
+  }
+  return resolved.major === 0 && resolved.minor === 0 && resolved.patch === base.patch;
+}
+
+function isVersionInAffectedRange(version: string, ranges: readonly string[]): boolean {
+  const parsedVersion = parseVersion(version);
+  if (parsedVersion === undefined) {
+    return false;
+  }
+  return ranges.some((range) => {
+    const normalizedRange = range.trim();
+    if (normalizedRange === '*' || normalizedRange === '') {
+      return normalizedRange === '*';
+    }
+    if (normalizedRange.includes('||')) {
+      return false;
+    }
+    const tokens = normalizedRange.split(/\s+/).filter(Boolean);
+    return tokens.length > 0 && tokens.every(token => matchesComparator(parsedVersion, token));
+  });
+}
+
+function matchesComparator(version: ParsedVersion, token: string): boolean {
+  const match = /^(<=|>=|<|>|=)?(\d+\.\d+\.\d+)$/.exec(token);
+  if (match === null) {
+    return false;
+  }
+  const expected = parseVersion(match[2]);
+  if (expected === undefined) {
+    return false;
+  }
+  const comparison = compareVersions(version, expected);
+  switch (match[1] ?? '=') {
+    case '<':
+      return comparison < 0;
+    case '<=':
+      return comparison <= 0;
+    case '>':
+      return comparison > 0;
+    case '>=':
+      return comparison >= 0;
+    default:
+      return comparison === 0;
+  }
+}
+
+function parseVersion(value: string): ParsedVersion | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
+  if (match === null) {
+    return undefined;
+  }
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+}
+
+function compareVersions(left: ParsedVersion, right: ParsedVersion): number {
+  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
+}
+
+function cloneAdvisorySnapshot(advisory: AuditAdvisory): AuditAdvisory {
+  return {
+    ...advisory,
+    sources: [...advisory.sources],
+    titles: [...advisory.titles],
+    urls: [...advisory.urls],
+    affectedRanges: [...advisory.affectedRanges],
+    resolvedPaths: [...advisory.resolvedPaths],
+    resolvedVersions: [...advisory.resolvedVersions],
+    via: advisory.via.map(via => ({ ...via })),
+    fixAvailable: typeof advisory.fixAvailable === 'object' && advisory.fixAvailable !== null
+      ? { ...advisory.fixAvailable }
+      : advisory.fixAvailable,
+  };
 }

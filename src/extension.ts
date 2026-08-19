@@ -4,6 +4,7 @@ import type { FilterType } from './providers';
 import {
   copyPackageNameCommand,
   installUpdateCommand,
+  openAuditReportCommand,
   openOnNpmCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
@@ -23,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
   const filterManager = new FilterManager(defaultFilter);
   const provider = new PackagesProvider(filterManager);
+  const auditReportOutput = vscode.window.createOutputChannel('Nestro Security Audit');
   const treeView = vscode.window.createTreeView('nestro.packagesView', {
     treeDataProvider: provider,
     showCollapseAll: true,
@@ -36,6 +38,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
     vscode.commands.registerCommand('nestro.runAudit', () => { void provider.runAudit(); }),
+    auditReportOutput,
+    vscode.commands.registerCommand('nestro.openAuditReport', () => {
+      openAuditReportCommand(provider, auditReportOutput);
+    }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: unknown) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pickVersion', (item: unknown) => { void pickVersionCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.switchDepType', (item: unknown) => { void switchDepTypeCommand(item, provider); }),

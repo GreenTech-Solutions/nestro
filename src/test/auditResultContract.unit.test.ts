@@ -44,9 +44,11 @@ vi.mock('../clients', async () => {
 
 vi.mock('../utils', async () => {
   const auditClient = await vi.importActual<typeof import('../utils/auditClient')>('../utils/auditClient');
+  const auditReport = await vi.importActual<typeof import('../utils/auditReport')>('../utils/auditReport');
   const { logger } = await vi.importActual<typeof import('../utils/logger')>('../utils/logger');
   return {
     ...auditClient,
+    ...auditReport,
     fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map()),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
     getUpdateType: vi.fn(() => 'none'),

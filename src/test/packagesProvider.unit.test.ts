@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import {
   FilterBarItem,
@@ -20,11 +23,31 @@ import {
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
+import type { AuditAdvisory, AuditResult } from '../utils';
 import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
 const createClientMock = vi.fn();
 const resolveAuditProjectsMock = vi.fn();
 const getUpdateTypeMock = vi.hoisted(() => vi.fn());
+
+async function createRealAuditProject(packageNames: readonly string[]): Promise<{
+  root: string;
+  manifest: string;
+  cleanup: () => Promise<void>;
+}> {
+  const root = await mkdtemp(join(tmpdir(), 'nestro-aud08-'));
+  const manifest = join(root, 'package.json');
+  await writeFile(manifest, '{}');
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  for (const packageName of packageNames) {
+    await mkdir(join(root, 'node_modules', ...packageName.split('/')), { recursive: true });
+  }
+  return {
+    root,
+    manifest,
+    cleanup: () => rm(root, { recursive: true, force: true }),
+  };
+}
 
 vi.mock('../clients', () => ({
   ClientManager: vi.fn(function (this: { createClient: typeof createClientMock }) {
@@ -38,6 +61,11 @@ vi.mock('../utils', () => ({
   getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
   getWorkspacePackageFilePaths: vi.fn(),
   getUpdateType: getUpdateTypeMock,
+  inferPathAttribution: vi.fn((packageName: string, paths: readonly string[]) => (
+    paths.length === 1 && (paths[0] === packageName || paths[0] === `node_modules/${packageName}`)
+      ? 'direct'
+      : 'unknown'
+  )),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -47,6 +75,7 @@ vi.mock('../utils', () => ({
   readAllWorkspaceDependencies: vi.fn(),
   readWorkspaceDependencies: vi.fn(),
   runNpmAudit: vi.fn(),
+  mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
   showError: vi.fn(),
 }));
 
@@ -848,6 +877,33 @@ describe('PackagesProvider', () => {
       '1 vulnerable package(s) from successful audit roots; failed: /workspace/packages/ui/package.json',
     );
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
+    expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['success', 'failure']);
+    expect(provider.getAuditProjects()[1].failure?.reason).toBe('audit-failed');
+    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+      reason: 'audit-failed',
+      packageFilePaths: ['/workspace/packages/ui/package.json'],
+      project: expect.objectContaining({ projectRoot: '/workspace/packages/ui' }),
+    })]);
+  });
+
+  it('keeps an unrecognized structured client result incomplete instead of clean', async () => {
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue({ unexpected: true }),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(provider.getAuditProjects()[0]).toMatchObject({
+      status: 'failure',
+      failure: { reason: 'audit-failed' },
+      advisories: [],
+    });
+    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+      reason: 'audit-failed',
+      packageFilePaths: ['/workspace/package.json'],
+    })]);
   });
 
   it('shows every failed package path when all audits fail', async () => {
@@ -1163,6 +1219,345 @@ describe('PackagesProvider', () => {
     expect(summary.vulnerabilities.get('react')).toBe('high');
   });
 
+  it('projects one proven direct path and installed version onto exactly one manifest row', async () => {
+    const advisory = {
+      identity: 'npm\0npm-v2-vulnerabilities\0react\0GHSA-react',
+      identityStability: 'stable' as const,
+      packageName: 'react',
+      severity: 'high' as const,
+      manager: 'npm' as const,
+      schema: 'npm-v2-vulnerabilities' as const,
+      advisoryId: 'GHSA-react',
+      sources: ['npm'],
+      titles: ['React issue'],
+      urls: ['https://example.test/react'],
+      affectedRanges: ['<19.0.0'],
+      resolvedPaths: ['node_modules/react'],
+      resolvedVersions: ['18.0.0'],
+      attribution: 'direct' as const,
+      via: [],
+      fixAvailable: false,
+    };
+    const report: AuditResult = {
+      vulnerabilities: new Map([['react', 'high']]),
+      total: 1,
+      advisories: [advisory],
+      manager: 'npm',
+      schema: 'npm-v2-vulnerabilities',
+    };
+    createClientMock.mockReturnValue({ runAuditReport: vi.fn().mockResolvedValue(report) });
+    const fixture = await createRealAuditProject(['react']);
+    try {
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: fixture.manifest,
+      }]);
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.runAudit();
+
+      expect(provider.getAuditProjects()[0]).toMatchObject({
+        status: 'success',
+        advisories: [advisory],
+        failure: undefined,
+      });
+      expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBe('high');
+    }
+    finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('suppresses a badge when one manifest has the package in both dependency sections', async () => {
+    const fixture = await createRealAuditProject(['react']);
+    const advisory: AuditAdvisory = {
+      identity: 'audit-section-version', identityStability: 'stable', packageName: 'react',
+      severity: 'high', manager: 'npm', schema: 'npm-v2-vulnerabilities', advisoryId: 'audit-section-version',
+      sources: [], titles: [], urls: [], affectedRanges: ['<19.0.0'],
+      resolvedPaths: ['node_modules/react'], resolvedVersions: ['18.0.0'], attribution: 'direct', via: [],
+    };
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue({
+        vulnerabilities: new Map([['react', 'high']]), total: 1, advisories: [advisory],
+        manager: 'npm', schema: 'npm-v2-vulnerabilities',
+      } satisfies AuditResult),
+    });
+    try {
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+        {
+          name: 'react', current: '18.0.0', dev: false, versionPrefix: '',
+          packageFilePath: fixture.manifest,
+        },
+        {
+          name: 'react', current: '17.0.0', dev: true, versionPrefix: '',
+          packageFilePath: fixture.manifest,
+        },
+      ]);
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.runAudit();
+
+      const rows = getPackageItems(provider).filter(item => item.packageName === 'react');
+      expect(rows).toHaveLength(2);
+      expect(rows.every(row => row.vulnerabilitySeverity === undefined)).toBe(true);
+    }
+    finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('suppresses a badge when a resolved dependency symlink escapes the project root', async () => {
+    const fixture = await createRealAuditProject(['react']);
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'nestro-aud08-outside-'));
+    try {
+      const outsidePackage = join(outsideRoot, 'react');
+      await mkdir(outsidePackage, { recursive: true });
+      await rm(join(fixture.root, 'node_modules', 'react'), { recursive: true, force: true });
+      await symlink(outsidePackage, join(fixture.root, 'node_modules', 'react'), 'dir');
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: fixture.manifest,
+      }]);
+      const advisory: AuditAdvisory = {
+        identity: 'audit-symlink-escape', identityStability: 'stable', packageName: 'react',
+        severity: 'high', manager: 'npm', schema: 'npm-v2-vulnerabilities', advisoryId: 'audit-symlink-escape',
+        sources: [], titles: [], urls: [], affectedRanges: ['<19.0.0'],
+        resolvedPaths: ['node_modules/react'], resolvedVersions: ['18.0.0'], attribution: 'direct', via: [],
+      };
+      createClientMock.mockReturnValue({
+        runAuditReport: vi.fn().mockResolvedValue({
+          vulnerabilities: new Map([['react', 'high']]), total: 1, advisories: [advisory],
+          manager: 'npm', schema: 'npm-v2-vulnerabilities',
+        } satisfies AuditResult),
+      });
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.runAudit();
+
+      expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+      expect(provider.getAuditProjects()[0].advisories).toHaveLength(1);
+    }
+    finally {
+      await fixture.cleanup();
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['missing resolved version', { resolvedVersions: [] }],
+    ['transitive attribution', { attribution: 'transitive' }],
+    ['nested node_modules path', { resolvedPaths: ['node_modules/dependency/node_modules/react'] }],
+    ['virtual Yarn locator', { resolvedPaths: [], resolvedVersions: ['18.0.0'], attribution: 'unknown', manager: 'yarn', schema: 'yarn-modern-npm-audit' }],
+  ] as const)('keeps %s in the project report without a row badge', async (_label, overrides) => {
+    const advisory = {
+      identity: 'audit-structured',
+      identityStability: 'stable' as const,
+      packageName: 'react',
+      severity: 'high' as const,
+      manager: 'npm' as const,
+      schema: 'npm-v2-vulnerabilities' as const,
+      sources: [],
+      titles: ['React issue'],
+      urls: [],
+      affectedRanges: ['<19.0.0'],
+      resolvedPaths: ['node_modules/react'],
+      resolvedVersions: ['18.0.0'],
+      attribution: 'direct' as const,
+      via: [],
+      ...overrides,
+    } as const;
+    const report: AuditResult = {
+      vulnerabilities: new Map([['react', 'high']]),
+      total: 1,
+      advisories: [advisory],
+      manager: advisory.manager,
+      schema: advisory.schema,
+    };
+    createClientMock.mockReturnValue({ runAuditReport: vi.fn().mockResolvedValue(report) });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+    expect(provider.getAuditProjects()[0].advisories).toHaveLength(1);
+  });
+
+  it('requires manifest and affected-range evidence across exact, caret and tilde specs', async () => {
+    const namesAndSpecs = [
+      ['exact', '1.2.3', '1.2.3'],
+      ['caret', '^1.2.3', '1.3.0'],
+      ['tilde', '~1.2.3', '1.2.4'],
+      ['zero-major', '^0.2.3', '0.2.4'],
+      ['zero-minor', '^0.0.3', '0.0.4'],
+      ['workspace', 'workspace:*', '1.0.0'],
+      ['empty-range', '1.0.0', '1.0.0'],
+      ['bad-version', '1.0.0', 'not-a-version'],
+      ['bad-range', '1.0.0', '1.0.0'],
+    ] as const;
+    const fixture = await createRealAuditProject(namesAndSpecs.map(([name]) => name));
+    try {
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(namesAndSpecs.map(([name, current]) => ({
+        name,
+        current,
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: fixture.manifest,
+      })));
+      const ranges: Record<string, string> = {
+        exact: '<=1.2.3',
+        caret: '>=1.0.0 <2.0.0',
+        tilde: '>1.2.0 <=1.2.4',
+        'zero-major': '0.2.4',
+        'zero-minor': '*',
+        workspace: '||',
+        'empty-range': '',
+        'bad-version': '*',
+        'bad-range': 'not-a-range',
+      };
+      const makeAdvisory = (name: string, resolvedVersion: string): AuditAdvisory => ({
+        identity: `audit-${name}`,
+        identityStability: 'stable',
+        packageName: name,
+        severity: 'high',
+        manager: 'npm',
+        schema: 'npm-v2-vulnerabilities',
+        advisoryId: `audit-${name}`,
+        sources: [],
+        titles: [],
+        urls: [],
+        affectedRanges: [ranges[name]],
+        resolvedPaths: [`node_modules/${name}`],
+        resolvedVersions: [resolvedVersion],
+        attribution: 'direct',
+        via: [],
+      });
+      const report: AuditResult = {
+        vulnerabilities: new Map(namesAndSpecs.map(([name]) => [name, 'high' as const])),
+        total: namesAndSpecs.length,
+        advisories: namesAndSpecs.map(([name, , resolvedVersion]) => makeAdvisory(name, resolvedVersion)),
+        manager: 'npm',
+        schema: 'npm-v2-vulnerabilities',
+      };
+      createClientMock.mockReturnValue({ runAuditReport: vi.fn().mockResolvedValue(report) });
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.runAudit();
+
+      const items = getPackageItems(provider);
+      expect(items.filter(item => item.vulnerabilitySeverity !== undefined).map(item => item.packageName)).toEqual(
+        expect.arrayContaining(['caret', 'exact', 'tilde', 'zero-major']),
+      );
+      expect(items.filter(item => item.vulnerabilitySeverity !== undefined)).toHaveLength(4);
+      expect(items.find(item => item.packageName === 'zero-minor')?.vulnerabilitySeverity).toBeUndefined();
+    }
+    finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('does not infer manifest ownership from an outside or ambiguous resolved path', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react', current: '18.0.0', dev: false, versionPrefix: '',
+        packageFilePath: '/workspace/packages/api/package.json',
+      },
+      {
+        name: 'react', current: '18.0.0', dev: false, versionPrefix: '',
+        packageFilePath: '/workspace/packages/ui/package.json',
+      },
+    ]);
+    resolveAuditProjectsMock.mockResolvedValueOnce({
+      projects: [{
+        projectRoot: '/workspace',
+        workspaceFolder: '/workspace',
+        packageManager: 'npm',
+        lockfilePath: '/workspace/package-lock.json',
+        originManifests: ['/workspace/packages/api/package.json', '/workspace/packages/ui/package.json'],
+      }],
+      rejected: [],
+    });
+    const advisory: AuditAdvisory = {
+      identity: 'audit-ambiguous',
+      identityStability: 'stable',
+      packageName: 'react',
+      severity: 'high',
+      manager: 'npm',
+      schema: 'npm-v2-vulnerabilities',
+      advisoryId: 'audit-ambiguous',
+      sources: [], titles: [], urls: [], affectedRanges: ['<19.0.0'],
+      resolvedPaths: ['/workspace/packages/api/node_modules/react'],
+      resolvedVersions: ['18.0.0'], attribution: 'direct', via: [],
+    };
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue({
+        vulnerabilities: new Map([['react', 'high']]), total: 1, advisories: [advisory],
+        manager: 'npm', schema: 'npm-v2-vulnerabilities',
+      } satisfies AuditResult),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+    expect(provider.getAuditProjects()[0].advisories).toHaveLength(1);
+  });
+
+  it('returns mutation-safe nested project snapshots', async () => {
+    const advisory = {
+      identity: 'audit-snapshot',
+      identityStability: 'stable' as const,
+      packageName: 'react',
+      severity: 'high' as const,
+      manager: 'npm' as const,
+      schema: 'npm-v2-vulnerabilities' as const,
+      sources: ['source'],
+      titles: ['title'],
+      urls: [],
+      affectedRanges: ['<19.0.0'],
+      resolvedPaths: ['node_modules/react'],
+      resolvedVersions: ['18.0.0'],
+      attribution: 'direct' as const,
+      via: [{ identity: 'via' }],
+    };
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue({
+        vulnerabilities: new Map([['react', 'high']]),
+        total: 1,
+        advisories: [advisory],
+        manager: 'npm',
+        schema: 'npm-v2-vulnerabilities',
+      } satisfies AuditResult),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    const snapshot = provider.getAuditProjects();
+    (snapshot[0].vulnerabilities as Map<string, 'critical'>).set('injected', 'critical');
+    (snapshot[0].advisories[0].resolvedPaths as string[]).push('injected');
+    (snapshot[0].project.originManifests as string[]).push('injected');
+
+    const fresh = provider.getAuditProjects()[0];
+    expect(fresh.vulnerabilities.has('injected')).toBe(false);
+    expect(fresh.advisories[0].resolvedPaths).toEqual(['node_modules/react']);
+    expect(fresh.project.originManifests).toEqual(['/workspace/package.json']);
+    const report = provider.getAuditReport();
+    expect(report.projects).toHaveLength(1);
+    expect(report.failures).toEqual([]);
+  });
+
   it('suppresses the badge for a package name duplicated across dependencies and devDependencies', async () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
@@ -1263,11 +1658,17 @@ describe('PackagesProvider', () => {
     await provider.loadPackages();
     await provider.runAudit();
     expect(provider.getAuditProjects()).toHaveLength(1);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBe('high');
 
     resolveAuditProjectsMock.mockRejectedValueOnce(new Error('resolution exploded'));
     await provider.runAudit();
 
     expect(provider.getAuditProjects()).toEqual([]);
+    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+      packageFilePaths: [],
+      reason: 'audit-failed',
+    })]);
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
     expect(showError).toHaveBeenCalled();
   });
 
@@ -1289,6 +1690,10 @@ describe('PackagesProvider', () => {
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
     expect(auditStatus?.description).toContain('/workspace/package.json');
+    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+      packageFilePaths: ['/workspace/package.json'],
+      reason: 'workspace-escape',
+    })]);
   });
 });
 

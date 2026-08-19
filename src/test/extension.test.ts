@@ -162,6 +162,15 @@ suite('Extension Test Suite', () => {
     assert.ok(commands.includes('nestro.runAudit'), 'Run audit command should be registered');
   });
 
+  test('nestro.openAuditReport command is registered', async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('nestro.openAuditReport'), 'Open audit report command should be registered');
+  });
+
+  test('nestro.openAuditReport executes safely when no audit has run', async () => {
+    assert.strictEqual(await vscode.commands.executeCommand('nestro.openAuditReport'), undefined);
+  });
+
   test('nestro.removePackage command is registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('nestro.removePackage'), 'Remove package command should be registered');
@@ -653,8 +662,8 @@ suite('Shell Task Lifecycle: package update busy state', function () {
 });
 
 suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 18 entries the Проблема section counted', () => {
-    assert.strictEqual(getManifest().contributes.commands.length, 18);
+  test('contributes.commands has exactly the 19 entries the AUD-08 report contract requires', () => {
+    assert.strictEqual(getManifest().contributes.commands.length, 19);
   });
 
   test('capabilities.untrustedWorkspaces / virtualWorkspaces are not declared — implicit VS Code default today', () => {
@@ -760,6 +769,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     'nestro.refresh',
     'nestro.checkUpdates',
     'nestro.runAudit',
+    'nestro.openAuditReport',
     'nestro.installUpdate',
     'nestro.pickVersion',
     'nestro.switchDepType',
@@ -804,8 +814,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
   });
 
-  test('contributes.commands still has exactly the 18 entries this suite enumerates', () => {
-    assert.strictEqual(commandIds.length, 18, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
+  test('contributes.commands still has exactly the 19 entries this suite enumerates', () => {
+    assert.strictEqual(commandIds.length, 19, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
     const localeCompare = (left: string, right: string): number => left.localeCompare(right);
     assert.deepStrictEqual([...commandIds].sort(localeCompare), [...COMMAND_IDS_UNDER_TEST].sort(localeCompare));
   });
@@ -843,7 +853,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     });
   }
 
-  test('the Extension Host is still fully responsive after invoking all 18 commands with no arguments', async () => {
+  test('the Extension Host is still fully responsive after invoking all 19 commands with no arguments', async () => {
     const registered = await vscode.commands.getCommands(true);
     for (const commandId of commandIds) {
       assert.ok(registered.includes(commandId), `${commandId} should still be registered`);
