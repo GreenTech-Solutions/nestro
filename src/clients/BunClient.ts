@@ -18,7 +18,7 @@ export class BunClient extends Client {
     return { command: 'bun', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    return (await runBunAudit(this.cwd)).vulnerabilities;
+  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
+    return (await runBunAudit(this.cwd, signal)).vulnerabilities;
   }
 }

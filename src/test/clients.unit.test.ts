@@ -1,42 +1,37 @@
-import { execFile } from 'node:child_process';
-import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { BunClient, ClientManager, NpmClient, PnpmClient, YarnClient } from '../clients';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../utils';
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
 }));
 
-type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
-
 function mockExecSuccess(stdout: string): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
-    }
-    callback(null, stdout, '');
-    return {} as ChildProcess;
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
   });
 }
 
-function mockExecFailure(error: Error & { stdout?: string }): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
+function mockExecFailure(error: Error & { code?: unknown; stdout?: string; stderr?: string }): void {
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    if (typeof error.code === 'number') {
+      return Promise.resolve({
+        kind: 'exit',
+        stdout: error.stdout ?? '',
+        stderr: error.stderr ?? '',
+        exitCode: error.code,
+      });
     }
-    callback(error as ExecFileException, '', '');
-    return {} as ChildProcess;
+    return Promise.resolve({
+      kind: 'spawn-error',
+      reason: error.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
+      detail: `command could not run: ${error.message}`,
+      message: error.message,
+      cause: error,
+    });
   });
 }
 
@@ -172,7 +167,7 @@ describe('runAudit()', () => {
     const vulnerabilities = await new NpmClient('/workspace').runAudit();
 
     expect(vulnerabilities.get('react')).toBe('high');
-    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('npm');
+    expect(runBoundedProcessMock.mock.calls[0][0]).toBe('npm');
   });
 
   it('delegates pnpm audit to the package audit runner', async () => {
@@ -181,7 +176,7 @@ describe('runAudit()', () => {
     const vulnerabilities = await new PnpmClient('/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
-    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('pnpm');
+    expect(runBoundedProcessMock.mock.calls[0][0]).toBe('pnpm');
   });
 
   it('delegates bun audit to the Bun bulk advisory adapter', async () => {
@@ -201,7 +196,7 @@ describe('runAudit()', () => {
     const vulnerabilities = await new BunClient('/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
-    expect(vi.mocked(execFile).mock.calls[0][0]).toBe('bun');
+    expect(runBoundedProcessMock.mock.calls[0][0]).toBe('bun');
   });
 
   it('parses strict Yarn Classic NDJSON and merges duplicate package advisories', async () => {
@@ -306,11 +301,15 @@ describe('ClientManager', () => {
     const client = await new ClientManager().getClient('/workspace/packages/app');
     await client.runAudit();
 
-    expect(execFile).toHaveBeenCalledWith(
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',
       ['npm', 'audit', '--all', '--recursive', '--json'],
-      { cwd: '/workspace' },
-      expect.any(Function),
+      {
+        cwd: '/workspace',
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
     );
   });
 
@@ -328,11 +327,15 @@ describe('ClientManager', () => {
     const client = await new ClientManager().getClient('/workspace/packages/app');
     await client.runAudit();
 
-    expect(execFile).toHaveBeenCalledWith(
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'npm',
       ['audit', '--json'],
-      { cwd: '/workspace/packages/app' },
-      expect.any(Function),
+      {
+        cwd: '/workspace/packages/app',
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
     );
   });
 

@@ -1,10 +1,23 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { logger } from './logger';
-
-const execFileAsync = promisify(execFile);
+import { runBoundedProcess } from './processRunner';
+import type { BoundedProcessOutcome } from './processRunner';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
+
+/**
+ * Audit processes are given a generous but finite timeout: Yarn's full-graph recursive
+ * audit and slow registries can legitimately take a while, but Node's own default
+ * (`timeout: 0`, i.e. unbounded) is what let a stalled process hold `Running audit…`
+ * forever (`ARC-07`).
+ */
+export const AUDIT_PROCESS_TIMEOUT_MS = 120_000;
+
+/**
+ * A large monorepo's audit JSON can comfortably exceed Node's 1MB `maxBuffer` default,
+ * which otherwise turns a perfectly valid large report into a false `overflow`. 20MB
+ * stays a real, enforced bound rather than the previous implicit/undocumented default.
+ */
+export const AUDIT_PROCESS_MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 
 export interface AuditResult {
   vulnerabilities: Map<string, AuditSeverity>;
@@ -29,7 +42,12 @@ export type AuditIncompleteReason
     | 'unrecognized-schema'
     | 'unexpected-exit'
     | 'summary-mismatch'
-    | 'unknown-yarn-family';
+    | 'unknown-yarn-family'
+    // The process was terminated before it produced a complete result (`ARC-07`): none
+    // of these three ever carry inspectable output, so they can never become `clean`.
+    | 'timeout'
+    | 'aborted'
+    | 'output-overflow';
 
 /** Why the audit process itself never produced output that could be inspected. */
 export type AuditErrorReason = 'command-not-found' | 'process-failed';
@@ -106,43 +124,76 @@ interface RecognizedAuditPayload {
   summaryTotal: number | undefined;
 }
 
-export async function runNpmAudit(cwd: string): Promise<AuditResult> {
+export async function runNpmAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
   logger.info(`Running npm audit in ${cwd}.`);
-  return toAuditResult(await runAuditOutcome('npm', ['audit', '--json'], cwd));
+  return toAuditResult(await runAuditOutcome('npm', ['audit', '--json'], cwd, signal));
 }
 
-export async function runPackageAudit(packageManager: string, cwd: string): Promise<AuditResult> {
+export async function runPackageAudit(
+  packageManager: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<AuditResult> {
   logger.info(`Running ${packageManager} audit in ${cwd}.`);
-  return toAuditResult(await runAuditOutcome(packageManager, ['audit', '--json'], cwd));
+  return toAuditResult(await runAuditOutcome(packageManager, ['audit', '--json'], cwd, signal));
 }
 
 /**
- * Runs an npm/pnpm-shaped audit command and classifies the run as clean, advisories,
+ * Runs an npm/pnpm-shaped audit command, bounded by a timeout, output cap and optional
+ * cancellation `signal` (`ARC-07`), and classifies the run as clean, advisories,
  * incomplete or error. Advisory exit codes are accepted, but only together with a
- * recognized schema.
+ * recognized schema; a process that was terminated before it exited is always
+ * incomplete or error, never clean.
  */
 export async function runAuditOutcome(
   command: string,
   args: readonly string[],
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<AuditOutcome> {
-  try {
-    const result = await execFileAsync(command, [...args], { cwd }) as { stdout: string } | string;
-    const stdout = typeof result === 'string' ? result : result.stdout;
-    return parseAuditOutcome({ command, stdout, exitCode: 0 });
+  const outcome = await runBoundedProcess(command, args, {
+    cwd,
+    timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+    maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+    signal,
+  });
+  if (outcome.kind !== 'exit') {
+    return describeBoundedProcessFailure(command, outcome);
   }
-  catch (err) {
-    const exitCode = getExecExitCode(err);
-    if (exitCode !== undefined) {
-      return parseAuditOutcome({ command, stdout: getExecStdout(err) ?? '', exitCode });
-    }
-    const detail = `${command} audit could not run: ${describeError(err)}`;
-    logger.error(detail, err);
-    return {
-      kind: 'error',
-      reason: isCommandNotFound(err) ? 'command-not-found' : 'process-failed',
-      detail,
-    };
+  return parseAuditOutcome({ command, stdout: outcome.stdout, exitCode: outcome.exitCode });
+}
+
+/**
+ * Translates every non-`exit` runner outcome into the matching incomplete/error audit
+ * outcome. Shared by every manager-specific runner (npm/pnpm, Yarn, Bun) so the timeout,
+ * cancel, overflow and spawn-error mapping is defined — and tested — exactly once.
+ */
+export function describeBoundedProcessFailure(
+  command: string,
+  outcome: Exclude<BoundedProcessOutcome, { kind: 'exit' }>,
+): AuditIncompleteOutcome | AuditErrorOutcome {
+  switch (outcome.kind) {
+    case 'timeout':
+      return incompleteOutcome(
+        'timeout',
+        `${command} audit timed out after ${outcome.timeoutMs}ms and was terminated.`,
+      );
+    case 'aborted':
+      return incompleteOutcome('aborted', `${command} audit was cancelled before it produced a result.`);
+    case 'overflow':
+      return incompleteOutcome(
+        'output-overflow',
+        `${command} audit output exceeded the ${outcome.maxBufferBytes}-byte limit and was terminated; `
+        + 'partial output is never treated as a result.',
+      );
+    case 'spawn-error':
+      // The only log call for this event (N5): runBoundedProcess() itself stays silent
+      // so the domain layer — the only place that knows what a failure here actually
+      // means to the user — is the single source of truth for every bounded-process
+      // failure message, instead of the runner and its caller each logging their own
+      // near-duplicate line.
+      logger.error(outcome.detail, outcome.cause);
+      return { kind: 'error', reason: outcome.reason, detail: outcome.detail };
   }
 }
 
@@ -233,28 +284,6 @@ export function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditS
 
 export function parseSeverity(value: string | undefined): AuditSeverity | undefined {
   return severityOrder.find(severity => severity === value);
-}
-
-export function getExecStdout(err: unknown): string | undefined {
-  const { stdout } = readErrorProperties(err);
-  return typeof stdout === 'string' ? stdout : undefined;
-}
-
-/** Exit code of a rejected child process, or `undefined` for spawn/signal failures. */
-export function getExecExitCode(err: unknown): number | undefined {
-  const { code } = readErrorProperties(err);
-  return typeof code === 'number' ? code : undefined;
-}
-
-function isCommandNotFound(err: unknown): boolean {
-  return readErrorProperties(err).code === 'ENOENT';
-}
-
-function readErrorProperties(err: unknown): { code?: unknown; stdout?: unknown } {
-  if (typeof err !== 'object' || err === null) {
-    return {};
-  }
-  return err as { code?: unknown; stdout?: unknown };
 }
 
 function incompleteOutcome(reason: AuditIncompleteReason, detail: string): AuditIncompleteOutcome {

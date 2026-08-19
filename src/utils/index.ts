@@ -7,6 +7,7 @@ export * from './notify';
 export * from './logger';
 export * from './auditClient';
 export * from './bunAuditClient';
+export * from './processRunner';
 export * from './shellTask';
 export * from './yarnAuditClient';
 export * from './yarnFamily';

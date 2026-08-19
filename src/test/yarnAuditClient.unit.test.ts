@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process';
-import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  AUDIT_PROCESS_TIMEOUT_MS,
   parseYarnAuditOutcome,
   runYarnAudit,
   runYarnAuditOutcome,
@@ -17,11 +17,11 @@ import type {
   YarnFamily,
 } from '../utils';
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
-}));
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
-type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
+}));
 
 const cwd = '/workspace/yarn-app';
 
@@ -109,17 +109,29 @@ function expectIncomplete(outcome: AuditOutcome, reason: AuditIncompleteReason):
 }
 
 function mockAuditProcess(err: unknown, stdout: string): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    if (err === null) {
+      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
     }
-    callback(err as ExecFileException, stdout, '');
-    return {} as ChildProcess;
+    const properties = typeof err === 'object' && err !== null
+      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
+      : {};
+    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
+    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
+    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
+    }
+    if (typeof properties.code === 'number') {
+      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return Promise.resolve({
+      kind: 'spawn-error',
+      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
+      detail: `yarn could not run: ${message}`,
+      message,
+      cause: err,
+    });
   });
 }
 
@@ -385,11 +397,15 @@ describe('Yarn audit runner', () => {
     mockAuditSuccess('');
 
     expectClean(await runYarnAuditOutcome(cwd));
-    expect(execFile).toHaveBeenCalledWith(
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',
       ['npm', 'audit', '--all', '--recursive', '--json'],
-      { cwd },
-      expect.any(Function),
+      {
+        cwd,
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
     );
   });
 
@@ -401,7 +417,16 @@ describe('Yarn audit runner', () => {
 
     const outcome = expectAdvisories(await runYarnAuditOutcome(cwd));
     expect(outcome.vulnerabilities.get('lodash')).toBe('high');
-    expect(execFile).toHaveBeenCalledWith('yarn', ['audit', '--json'], { cwd }, expect.any(Function));
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'yarn',
+      ['audit', '--json'],
+      {
+        cwd,
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
+    );
   });
 
   it('does not spawn an audit command when conflicting markers leave the family unknown', async () => {
@@ -416,7 +441,7 @@ describe('Yarn audit runner', () => {
     });
 
     expectIncomplete(await runYarnAuditOutcome(cwd), 'unknown-yarn-family');
-    expect(execFile).not.toHaveBeenCalled();
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
   });
 
   it('classifies a missing executable after a recognized family as a command-not-found error', async () => {
@@ -424,6 +449,23 @@ describe('Yarn audit runner', () => {
 
     await expect(runYarnAuditOutcome(cwd)).resolves.toMatchObject({
       kind: 'error', reason: 'command-not-found',
+    });
+  });
+
+  it.each([
+    ['classic', 'yarn@1.22.19', 'ENOENT', 'command-not-found', 'yarn classic audit could not run: spawn yarn ENOENT'],
+    ['berry', 'yarn@4.6.0', 'EACCES', 'process-failed', 'yarn berry audit could not run: spawn yarn EACCES'],
+  ] as const)('keeps the %s family and first error line in spawn-error text', async (_label, packageManager, code, reason, detail) => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager })),
+    );
+    const message = `spawn yarn ${code}\nstderr line 2`;
+    mockAuditProcess(Object.assign(new Error(message), { code }), '');
+
+    await expect(runYarnAuditOutcome(cwd)).resolves.toEqual({
+      kind: 'error',
+      reason,
+      detail,
     });
   });
 

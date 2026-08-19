@@ -28,8 +28,8 @@ export abstract class Client {
   abstract buildInstallCommand(): ShellTaskCommand;
   abstract buildRemoveCommand(packages: readonly string[]): ShellTaskCommand;
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    const result: AuditResult = await runNpmAudit(this.cwd);
+  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
+    const result: AuditResult = await runNpmAudit(this.cwd, signal);
     return result.vulnerabilities;
   }
 

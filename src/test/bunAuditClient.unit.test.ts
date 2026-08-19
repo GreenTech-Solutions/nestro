@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process';
-import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  AUDIT_PROCESS_TIMEOUT_MS,
   parseBunAuditOutcome,
   runBunAudit,
   runBunAuditOutcome,
@@ -15,26 +15,38 @@ import type {
   AuditOutcome,
 } from '../utils';
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
-}));
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
-type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
+}));
 
 const cwd = '/workspace/bun-app';
 
 function mockAuditProcess(err: unknown, stdout: string): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    if (err === null) {
+      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
     }
-    callback(err as ExecFileException, stdout, '');
-    return {} as ChildProcess;
+    const properties = typeof err === 'object' && err !== null
+      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
+      : {};
+    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
+    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
+    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
+    }
+    if (typeof properties.code === 'number') {
+      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return Promise.resolve({
+      kind: 'spawn-error',
+      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
+      detail: `bun could not run: ${message}`,
+      message,
+      cause: err,
+    });
   });
 }
 
@@ -330,11 +342,15 @@ describe('runBunAuditOutcome()', () => {
 
     expectClean(await runBunAuditOutcome(cwd));
 
-    expect(vi.mocked(execFile)).toHaveBeenCalledWith(
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'bun',
       ['audit', '--json'],
-      { cwd },
-      expect.any(Function),
+      {
+        cwd,
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
     );
   });
 

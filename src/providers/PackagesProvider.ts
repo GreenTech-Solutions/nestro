@@ -56,6 +56,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private checkState: 'idle' | 'running' | 'done' = 'idle';
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
+  /**
+   * Owns cancellation for the in-flight `runAudit()` run (`ARC-07`). Set for the duration
+   * of one run only, so `cancelAudit()`/`dispose()` can never abort a *future* run that
+   * happens to start after this one already finished.
+   */
+  private auditAbortController: AbortController | undefined;
   private lastAuditCount: number | undefined;
   private lastAuditSuccessfulRootCount: number | undefined;
   private failedAuditPaths: string[] = [];
@@ -397,8 +403,24 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     this.writeSuppressionTimers.clear();
     this.writeSuppressionDepth = 0;
+    this.cancelAudit();
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
+  }
+
+  /**
+   * Cancels the in-flight audit run, if any (`ARC-07`). Resets the busy state
+   * synchronously — before the aborted `client.runAudit()` call has actually settled —
+   * so a caller never observes a stale "running" state while process teardown is still
+   * happening in the background. A no-op when no audit is running.
+   */
+  cancelAudit(): void {
+    if (this.auditState !== 'running' || this.auditAbortController === undefined) {
+      return;
+    }
+    this.auditAbortController.abort();
+    this.auditState = 'idle';
+    this.emitTreeChanged();
   }
 
   async runAudit(): Promise<void> {
@@ -413,6 +435,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     // contract — never hands back a previous run's stale projects while this run is
     // in progress, after an early exit with no package files, or after an exception (N10).
     this.auditProjects = [];
+    const abortController = new AbortController();
+    this.auditAbortController = abortController;
     this.emitTreeChanged();
 
     try {
@@ -436,9 +460,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
       let successfulAuditRootCount = 0;
       for (const project of projects) {
+        // Cancelled mid-loop (dispose() or cancelAudit()): stop starting new audit
+        // processes. cancelAudit() already reset the busy state, so this only prevents
+        // the loop from continuing to spawn work for a run nobody is waiting on anymore.
+        if (abortController.signal.aborted) {
+          break;
+        }
         try {
           const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
-          const vulnerabilities = await client.runAudit();
+          const vulnerabilities = await client.runAudit(abortController.signal);
           successfulAuditRootCount += 1;
           auditProjects.push({ project, vulnerabilities });
           this.applyProjectAuditResults(project, vulnerabilities, auditResults);
@@ -448,6 +478,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           logger.error(`Audit failed for project root ${project.projectRoot}.`, err);
         }
       }
+
+      if (abortController.signal.aborted) {
+        return;
+      }
+
       this.auditResults = auditResults;
       this.auditProjects = auditProjects;
       this.failedAuditPaths = failedAuditPaths;
@@ -463,10 +498,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.rebuildPackageItems();
     }
     catch (err) {
-      this.auditState = 'idle';
-      showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+      if (!abortController.signal.aborted) {
+        this.auditState = 'idle';
+        showError(`package audit failed — ${err instanceof Error ? err.message : String(err)}`, err);
+      }
     }
     finally {
+      if (this.auditAbortController === abortController) {
+        this.auditAbortController = undefined;
+      }
       this.emitTreeChanged();
     }
   }

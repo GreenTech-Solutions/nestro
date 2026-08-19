@@ -17,7 +17,7 @@ export class PnpmClient extends Client {
     return { command: 'pnpm', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    return (await runPackageAudit('pnpm', this.cwd)).vulnerabilities;
+  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
+    return (await runPackageAudit('pnpm', this.cwd, signal)).vulnerabilities;
   }
 }

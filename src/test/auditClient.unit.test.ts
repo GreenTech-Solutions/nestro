@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
-import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  getExecExitCode,
-  getExecStdout,
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  AUDIT_PROCESS_TIMEOUT_MS,
+  describeBoundedProcessFailure,
   mergeSeverity,
   parseAuditOutcome,
   parseSeverity,
@@ -16,6 +15,7 @@ import {
 import type {
   AuditAdvisoriesOutcome,
   AuditCleanOutcome,
+  AuditErrorOutcome,
   AuditIncompleteOutcome,
   AuditIncompleteReason,
   AuditOutcome,
@@ -23,27 +23,47 @@ import type {
   AuditSeverity,
 } from '../utils';
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+const loggerMock = vi.hoisted(() => ({
+  debug: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
 }));
 
-type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
+}));
+
+vi.mock('../utils/logger', () => ({ logger: loggerMock }));
 
 const cwd = '/workspace';
 const auditArgs = ['audit', '--json'];
 
 function mockAuditProcess(err: unknown, stdout: string): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    if (err === null) {
+      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
     }
-    callback(err as ExecFileException, stdout, '');
-    return {} as ChildProcess;
+    const properties = typeof err === 'object' && err !== null
+      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
+      : {};
+    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
+    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
+    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
+    }
+    if (typeof properties.code === 'number') {
+      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return Promise.resolve({
+      kind: 'spawn-error',
+      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
+      detail: `audit command could not run: ${message}`,
+      message,
+      cause: err,
+    });
   });
 }
 
@@ -175,7 +195,7 @@ describe.each(managerFixtures)('$manager audit result contract', (fixture) => {
     expect(outcome.exitCode).toBe(0);
     expect(outcome.vulnerabilities.get('react')).toBe('high');
     expect(outcome.vulnerabilities.get('eslint')).toBe('moderate');
-    expect(vi.mocked(execFile).mock.calls[0][0]).toBe(fixture.manager);
+    expect(runBoundedProcessMock.mock.calls[0][0]).toBe(fixture.manager);
   });
 
   it('recognizes advisories reported through the advisory exit code', async () => {
@@ -454,6 +474,132 @@ describe('runAuditOutcome() process failures', () => {
   });
 });
 
+/** Minimal valid npm v2 clean report: no findings, with its version and summary markers. */
+function npmCleanReport(): string {
+  return JSON.stringify({
+    auditReportVersion: 2,
+    vulnerabilities: {},
+    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } },
+  });
+}
+
+describe('runAuditOutcome() bounded-process termination (ARC-07)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('never reports clean for output truncated by the buffer limit', async () => {
+    mockAuditProcess(
+      Object.assign(new Error('stdout maxBuffer length exceeded'), {
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+        // A truncated prefix of a real clean report — proves the (possibly still
+        // syntactically valid) partial stdout is never inspected once the runner
+        // reports overflow, not just that a full clean report is rejected.
+        stdout: npmCleanReport().slice(0, 20),
+      }),
+      '',
+    );
+
+    const outcome = expectIncomplete(await runAuditOutcome('npm', auditArgs, cwd), 'output-overflow');
+    expect(outcome.detail).toContain(String(AUDIT_PROCESS_MAX_BUFFER_BYTES));
+  });
+
+  it('never reports clean for a run cancelled before it produced a result', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    runBoundedProcessMock.mockResolvedValueOnce({ kind: 'aborted' });
+
+    const outcome = await runAuditOutcome('npm', auditArgs, cwd, controller.signal);
+
+    expectIncomplete(outcome, 'aborted');
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'npm',
+      auditArgs,
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it('passes maxBuffer, timeout-backed signal and cwd through to the child process', async () => {
+    mockAuditSuccess(npmCleanReport());
+
+    await runAuditOutcome('npm', auditArgs, cwd);
+
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'npm',
+      auditArgs,
+      {
+        cwd,
+        timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+        maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+        signal: undefined,
+      },
+    );
+  });
+});
+
+describe('describeBoundedProcessFailure()', () => {
+  it('maps a timeout to an incomplete outcome that names the bound', () => {
+    const outcome = describeBoundedProcessFailure('npm', { kind: 'timeout', timeoutMs: 120_000 });
+
+    expect(outcome).toMatchObject({ kind: 'incomplete', reason: 'timeout' });
+    expect((outcome as AuditIncompleteOutcome).detail).toContain('120000');
+  });
+
+  it('maps an external cancellation to an incomplete outcome', () => {
+    const outcome = describeBoundedProcessFailure('npm', { kind: 'aborted' });
+
+    expect(outcome).toMatchObject({ kind: 'incomplete', reason: 'aborted' });
+  });
+
+  it('logs a bounded timeout exactly once at the audit domain boundary', () => {
+    loggerMock.warn.mockClear();
+    loggerMock.error.mockClear();
+
+    describeBoundedProcessFailure('npm', { kind: 'timeout', timeoutMs: 120_000 });
+
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    expect(loggerMock.error).not.toHaveBeenCalled();
+  });
+
+  it('maps a buffer overflow to an incomplete outcome that names the limit', () => {
+    const outcome = describeBoundedProcessFailure('npm', { kind: 'overflow', maxBufferBytes: 1024 });
+
+    expect(outcome).toMatchObject({ kind: 'incomplete', reason: 'output-overflow' });
+    expect((outcome as AuditIncompleteOutcome).detail).toContain('1024');
+  });
+
+  it.each(['command-not-found', 'process-failed'] as const)(
+    'maps a %s spawn error to an error outcome',
+    (reason) => {
+      const outcome = describeBoundedProcessFailure('npm', {
+        kind: 'spawn-error',
+        reason,
+        detail: 'boom',
+        message: 'boom',
+        cause: undefined,
+      });
+
+      expect(outcome).toEqual<AuditErrorOutcome>({ kind: 'error', reason, detail: 'boom' });
+    },
+  );
+
+  it('logs a bounded spawn error exactly once at the audit domain boundary', () => {
+    loggerMock.warn.mockClear();
+    loggerMock.error.mockClear();
+
+    describeBoundedProcessFailure('npm', {
+      kind: 'spawn-error',
+      reason: 'process-failed',
+      detail: 'npm could not run: boom',
+      message: 'boom',
+      cause: undefined,
+    });
+
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+    expect(loggerMock.error).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('toAuditResult()', () => {
   it('passes a clean outcome through as an empty result', () => {
     const result = toAuditResult({
@@ -515,29 +661,5 @@ describe('parseSeverity()', () => {
     [undefined, undefined],
   ] as [string | undefined, AuditSeverity | undefined][])('parses %s as %s', (value, expected) => {
     expect(parseSeverity(value)).toBe(expected);
-  });
-});
-
-describe('getExecStdout()', () => {
-  it.each([
-    ['a plain string error', 'not an object', undefined],
-    ['null', null, undefined],
-    ['an object without a stdout property', {}, undefined],
-    ['an object with a non-string stdout property', { stdout: Buffer.from('audit output') }, undefined],
-    ['an object with a string stdout property', { stdout: 'audit output' }, 'audit output'],
-  ] as [string, unknown, string | undefined][])('handles %s', (_label, err, expected) => {
-    expect(getExecStdout(err)).toBe(expected);
-  });
-});
-
-describe('getExecExitCode()', () => {
-  it.each([
-    ['a plain string error', 'not an object', undefined],
-    ['null', null, undefined],
-    ['an object without a code property', {}, undefined],
-    ['a spawn error code', { code: 'ENOENT' }, undefined],
-    ['a numeric exit code', { code: 2 }, 2],
-  ] as [string, unknown, number | undefined][])('handles %s', (_label, err, expected) => {
-    expect(getExecExitCode(err)).toBe(expected);
   });
 });

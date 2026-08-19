@@ -944,6 +944,156 @@ describe('PackagesProvider', () => {
     expect(react?.vulnerabilitySeverity).toBe('moderate');
   });
 
+  it('does nothing when cancelling with no audit running', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    provider.cancelAudit();
+
+    expect(createClientMock).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('resets the busy state synchronously when the audit is cancelled, discarding the run', async () => {
+    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+      resolveAudit = resolve;
+    }));
+    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const audit = provider.runAudit();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runAuditMock).toHaveBeenCalledWith(expect.any(AbortSignal));
+    const [signal] = runAuditMock.mock.calls[0] as [AbortSignal];
+    expect(signal.aborted).toBe(false);
+
+    provider.cancelAudit();
+
+    // Synchronous: gone the instant cancelAudit() returns, before the aborted
+    // client.runAudit() call has actually settled in the background.
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Running audit…')).toBe(false);
+    expect(signal.aborted).toBe(true);
+
+    resolveAudit(new Map([['react', 'high']]));
+    await audit;
+
+    // The cancelled run's result is discarded rather than surfaced as a finished audit.
+    expect(provider.getChildren().some(item =>
+      item instanceof StatusItem && (item.label === 'Audit complete' || item.label === 'Audit incomplete'))).toBe(false);
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('keeps a replacement audit controller alive after the cancelled run finally settles', async () => {
+    let resolveOldAudit: (value: Map<string, 'high'>) => void = () => {};
+    let resolveNewAudit: (value: Map<string, 'high'>) => void = () => {};
+    let oldSignal!: AbortSignal;
+    let newSignal!: AbortSignal;
+    const oldRunAudit = vi.fn().mockImplementation((signal: AbortSignal) => {
+      oldSignal = signal;
+      return new Promise<Map<string, 'high'>>((resolve) => {
+        resolveOldAudit = resolve;
+      });
+    });
+    const newRunAudit = vi.fn().mockImplementation((signal: AbortSignal) => {
+      newSignal = signal;
+      return new Promise<Map<string, 'high'>>((resolve) => {
+        resolveNewAudit = resolve;
+      });
+    });
+    createClientMock
+      .mockReturnValueOnce({ runAudit: oldRunAudit })
+      .mockReturnValueOnce({ runAudit: newRunAudit });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const oldAudit = provider.runAudit();
+    await vi.waitFor(() => expect(oldRunAudit).toHaveBeenCalledTimes(1));
+    provider.cancelAudit();
+    expect(oldSignal.aborted).toBe(true);
+
+    const newAudit = provider.runAudit();
+    await vi.waitFor(() => expect(newRunAudit).toHaveBeenCalledTimes(1));
+    expect(newSignal.aborted).toBe(false);
+
+    // The old finally block must take the false side of the identity guard and leave
+    // the replacement controller installed. A mutation that unconditionally clears it
+    // makes the next cancel a no-op, leaving this second process alive (ARC-07/N3).
+    resolveOldAudit(new Map());
+    await oldAudit;
+    expect(newSignal.aborted).toBe(false);
+
+    provider.cancelAudit();
+    expect(newSignal.aborted).toBe(true);
+    resolveNewAudit(new Map());
+    await newAudit;
+  });
+
+  it('stops auditing further projects once cancelled mid-run', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/apps/web/package.json' },
+      { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/packages/ui/package.json' },
+    ]);
+    let provider!: PackagesProvider;
+    createClientMock
+      .mockReturnValueOnce({
+        runAudit: vi.fn().mockImplementation(() => {
+          // Cancellation lands mid-loop, after the first project's own audit already
+          // succeeded — proves the loop stops *starting new* work rather than
+          // discarding a project that had already finished.
+          provider.cancelAudit();
+          return Promise.resolve(new Map<string, never>());
+        }),
+      })
+      .mockReturnValueOnce({
+        runAudit: vi.fn().mockResolvedValue(new Map()),
+      });
+    provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    await provider.runAudit();
+
+    expect(createClientMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an in-flight audit process on dispose', async () => {
+    // The mock never settles on its own — it stands in for a real, still-running child
+    // process. dispose() must not need it to settle: cancellation is proven directly by
+    // the signal it was called with flipping to aborted, matching what a real
+    // execFile(..., { signal }) call would then react to (see processRunner.unit.test.ts
+    // for that real-process proof).
+    const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>(() => {}));
+    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    void provider.runAudit();
+    await Promise.resolve();
+    await Promise.resolve();
+    const [signal] = runAuditMock.mock.calls[0] as [AbortSignal];
+    expect(signal.aborted).toBe(false);
+
+    provider.dispose();
+
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('does not surface an error for an exception that races a cancellation', async () => {
+    let provider!: PackagesProvider;
+    resolveAuditProjectsMock.mockImplementationOnce(() => {
+      provider.cancelAudit();
+      throw new Error('resolver raced with cancellation');
+    });
+    provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    await provider.runAudit();
+
+    expect(showError).not.toHaveBeenCalled();
+  });
+
   it('allows a later manual audit when package file discovery fails', async () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([]);
     vi.mocked(getWorkspacePackageFilePaths)

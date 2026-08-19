@@ -18,7 +18,7 @@ export class YarnClient extends Client {
     return { command: 'yarn', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    return (await runYarnAudit(this.cwd)).vulnerabilities;
+  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
+    return (await runYarnAudit(this.cwd, signal)).vulnerabilities;
   }
 }

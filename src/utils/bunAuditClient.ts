@@ -1,8 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import {
-  getExecExitCode,
-  getExecStdout,
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  AUDIT_PROCESS_TIMEOUT_MS,
+  describeBoundedProcessFailure,
   mergeSeverity,
   parseSeverity,
   toAuditResult,
@@ -16,37 +15,32 @@ import type {
   AuditSeverity,
 } from './auditClient';
 import { logger } from './logger';
+import { runBoundedProcess } from './processRunner';
 
-const execFileAsync = promisify(execFile);
 const bunSchema = 'bun-bulk-advisory' as const;
 const compatibleExitCodes: readonly number[] = [0, 1];
 
 /** Runs Bun's raw-registry JSON audit contract in one package root. */
-export async function runBunAudit(cwd: string): Promise<AuditResult> {
+export async function runBunAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
   logger.info(`Running bun audit in ${cwd}.`);
-  return toAuditResult(await runBunAuditOutcome(cwd));
+  return toAuditResult(await runBunAuditOutcome(cwd, signal));
 }
 
-/** Runs `bun audit --json` and preserves advisory exit 1 for the Bun parser. */
-export async function runBunAuditOutcome(cwd: string): Promise<AuditOutcome> {
-  try {
-    const result = await execFileAsync('bun', ['audit', '--json'], { cwd }) as { stdout: string } | string;
-    const stdout = typeof result === 'string' ? result : result.stdout;
-    return parseBunAuditOutcome({ command: 'bun', stdout, exitCode: 0 });
+/**
+ * Runs `bun audit --json`, bounded by a timeout, output cap and optional cancellation
+ * `signal` (`ARC-07`), and preserves advisory exit 1 for the Bun parser.
+ */
+export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
+  const outcome = await runBoundedProcess('bun', ['audit', '--json'], {
+    cwd,
+    timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+    maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+    signal,
+  });
+  if (outcome.kind !== 'exit') {
+    return describeBoundedProcessFailure('bun', outcome);
   }
-  catch (err) {
-    const exitCode = getExecExitCode(err);
-    if (exitCode !== undefined) {
-      return parseBunAuditOutcome({ command: 'bun', stdout: getExecStdout(err) ?? '', exitCode });
-    }
-    const detail = `bun audit could not run: ${describeError(err)}`;
-    logger.error(detail, err);
-    return {
-      kind: 'error',
-      reason: isCommandNotFound(err) ? 'command-not-found' : 'process-failed',
-      detail,
-    };
-  }
+  return parseBunAuditOutcome({ command: 'bun', stdout: outcome.stdout, exitCode: outcome.exitCode });
 }
 
 /**
@@ -188,17 +182,6 @@ function incompleteOutcome(
 ): AuditIncompleteOutcome {
   logger.warn(detail);
   return { kind: 'incomplete', reason, detail };
-}
-
-function isCommandNotFound(err: unknown): boolean {
-  return readErrorCode(err) === 'ENOENT';
-}
-
-function readErrorCode(err: unknown): unknown {
-  if (typeof err !== 'object' || err === null) {
-    return undefined;
-  }
-  return (err as { code?: unknown }).code;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

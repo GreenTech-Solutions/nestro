@@ -1,8 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import {
-  getExecExitCode,
-  getExecStdout,
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  AUDIT_PROCESS_TIMEOUT_MS,
+  describeBoundedProcessFailure,
   mergeSeverity,
   parseSeverity,
   toAuditResult,
@@ -16,10 +15,10 @@ import type {
   AuditSeverity,
 } from './auditClient';
 import { logger } from './logger';
+import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
 
-const execFileAsync = promisify(execFile);
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
 const severityBits: Readonly<Record<AuditSeverity, number>> = {
@@ -53,12 +52,16 @@ interface YarnAuditExecution extends AuditExecution {
 }
 
 /** Resolves the Yarn family lazily, runs its exact command, and returns only recognized results. */
-export async function runYarnAudit(cwd: string): Promise<AuditResult> {
-  return toAuditResult(await runYarnAuditOutcome(cwd));
+export async function runYarnAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
+  return toAuditResult(await runYarnAuditOutcome(cwd, signal));
 }
 
-/** Runs the family-specific Yarn audit command without ever guessing Classic behavior. */
-export async function runYarnAuditOutcome(cwd: string): Promise<AuditOutcome> {
+/**
+ * Runs the family-specific Yarn audit command without ever guessing Classic behavior.
+ * Bounded by a timeout, output cap and optional cancellation `signal` (`ARC-07`); a
+ * process that was terminated before it exited is always incomplete or error.
+ */
+export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
   const { family, source } = await resolveYarnFamily(cwd);
   if (family === 'unknown') {
     return incompleteOutcome(
@@ -69,30 +72,31 @@ export async function runYarnAuditOutcome(cwd: string): Promise<AuditOutcome> {
 
   const args = family === 'classic' ? classicArgs : modernArgs;
   logger.info(`Running Yarn ${family} audit in ${cwd}.`);
-  try {
-    const result = await execFileAsync('yarn', [...args], { cwd }) as { stderr: string; stdout: string } | string;
-    const stdout = typeof result === 'string' ? result : result.stdout;
-    const stderr = typeof result === 'string' ? '' : result.stderr;
-    return parseYarnAuditOutcome(family, { command: 'yarn', stderr, stdout, exitCode: 0 });
+  const outcome = await runBoundedProcess('yarn', args, {
+    cwd,
+    timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
+    maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
+    signal,
+  });
+  if (outcome.kind === 'spawn-error') {
+    // The shared, family-agnostic describeBoundedProcessFailure() can only produce a
+    // generic "yarn could not run…" message. Restores the pre-`ARC-07` shape (explicit
+    // Classic/Berry family, message truncated to its first line) that AUD-05B established and that a
+    // shared runner cannot reproduce on its own (N6) — and is this event's one log call.
+    const familyLabel = family === 'classic' ? 'classic' : 'berry';
+    const detail = `yarn ${familyLabel} audit could not run: ${describeError(outcome.message)}`;
+    logger.error(detail, outcome.cause);
+    return { kind: 'error', reason: outcome.reason, detail };
   }
-  catch (err) {
-    const exitCode = getExecExitCode(err);
-    if (exitCode !== undefined) {
-      return parseYarnAuditOutcome(family, {
-        command: 'yarn',
-        stderr: getExecStderr(err) ?? '',
-        stdout: getExecStdout(err) ?? '',
-        exitCode,
-      });
-    }
-    const detail = `yarn ${family} audit could not run: ${describeError(err)}`;
-    logger.error(`yarn ${family} audit could not run.`);
-    return {
-      kind: 'error',
-      reason: readErrorCode(err) === 'ENOENT' ? 'command-not-found' : 'process-failed',
-      detail,
-    };
+  if (outcome.kind !== 'exit') {
+    return describeBoundedProcessFailure('yarn', outcome);
   }
+  return parseYarnAuditOutcome(family, {
+    command: 'yarn',
+    stderr: outcome.stderr,
+    stdout: outcome.stdout,
+    exitCode: outcome.exitCode,
+  });
 }
 
 /** Parses only the schema documented for the family selected before command execution. */
@@ -388,18 +392,6 @@ function isNonEmptyStringArray(value: unknown): boolean {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
-}
-
-function readErrorCode(err: unknown): unknown {
-  return typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
-}
-
-function getExecStderr(err: unknown): string | undefined {
-  if (typeof err !== 'object' || err === null) {
-    return undefined;
-  }
-  const { stderr } = err as { stderr?: unknown };
-  return typeof stderr === 'string' ? stderr : undefined;
 }
 
 function describeError(err: unknown): string {

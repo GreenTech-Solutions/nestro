@@ -1,15 +1,19 @@
-import { execFile } from 'node:child_process';
-import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilterManager, PackagesProvider, StatusItem } from '../providers';
-import { getWorkspacePackageFilePaths, readAllWorkspaceDependencies } from '../utils';
+import {
+  AUDIT_PROCESS_MAX_BUFFER_BYTES,
+  getWorkspacePackageFilePaths,
+  readAllWorkspaceDependencies,
+} from '../utils';
 
 // End-to-end guard for ARC-02: the audit runner, the package manager client and the tree
 // status row are wired together with only the child process mocked, so an unrecognized
 // audit result can never reach the user as "No vulnerabilities".
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
 }));
 
 vi.mock('../clients', async () => {
@@ -54,20 +58,30 @@ vi.mock('../utils', async () => {
   };
 });
 
-type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
-
 function mockAuditProcess(err: unknown, stdout: string): void {
-  vi.mocked(execFile).mockImplementationOnce((
-    _file: string,
-    _args: readonly string[] | null | undefined,
-    _options: ExecFileOptions | null | undefined,
-    callback: ExecFileCallback | null | undefined,
-  ) => {
-    if (callback === undefined || callback === null) {
-      throw new Error('Expected execFile callback.');
+  runBoundedProcessMock.mockImplementationOnce(() => {
+    if (err === null) {
+      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
     }
-    callback(err as ExecFileException, stdout, '');
-    return {} as ChildProcess;
+    const properties = typeof err === 'object' && err !== null
+      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
+      : {};
+    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
+    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
+    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
+    }
+    if (typeof properties.code === 'number') {
+      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return Promise.resolve({
+      kind: 'spawn-error',
+      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
+      detail: `npm could not run: ${message}`,
+      message,
+      cause: err,
+    });
   });
 }
 
