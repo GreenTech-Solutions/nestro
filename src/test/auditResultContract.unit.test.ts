@@ -15,8 +15,25 @@ vi.mock('node:child_process', () => ({
 vi.mock('../clients', async () => {
   const { NpmClient } = await vi.importActual<typeof import('../clients/NpmClient')>('../clients/NpmClient');
   return {
-    ClientManager: vi.fn(function (this: { getClient: () => Promise<InstanceType<typeof NpmClient>> }) {
+    ClientManager: vi.fn(function (this: {
+      getClient: () => Promise<InstanceType<typeof NpmClient>>;
+      createClient: () => InstanceType<typeof NpmClient>;
+    }) {
       this.getClient = () => Promise.resolve(new NpmClient('/workspace'));
+      this.createClient = () => new NpmClient('/workspace');
+    }),
+    // Every known package file resolves to one project rooted at its own directory —
+    // this suite's fixtures are all single-manifest, so real project-graph dedupe
+    // (`ARC-07`) is not what's under test here; only the audit-result contract is.
+    resolveAuditProjects: (packageFilePaths: readonly string[]) => Promise.resolve({
+      projects: packageFilePaths.map(packageFilePath => ({
+        projectRoot: '/workspace',
+        workspaceFolder: '/workspace',
+        packageManager: 'npm' as const,
+        lockfilePath: undefined,
+        originManifests: [packageFilePath],
+      })),
+      rejected: [],
     }),
   };
 });

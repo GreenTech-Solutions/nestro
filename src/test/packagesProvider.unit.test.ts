@@ -22,13 +22,15 @@ import {
 } from '../utils';
 import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
-const getClientMock = vi.fn();
+const createClientMock = vi.fn();
+const resolveAuditProjectsMock = vi.fn();
 const getUpdateTypeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../clients', () => ({
-  ClientManager: vi.fn(function (this: { getClient: typeof getClientMock }) {
-    this.getClient = getClientMock;
+  ClientManager: vi.fn(function (this: { createClient: typeof createClientMock }) {
+    this.createClient = createClientMock;
   }),
+  resolveAuditProjects: (packageFilePaths: readonly string[]) => resolveAuditProjectsMock(packageFilePaths),
 }));
 
 vi.mock('../utils', () => ({
@@ -72,7 +74,22 @@ describe('PackagesProvider', () => {
       ['react', '19.0.0'],
     ]));
     vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/package.json']);
-    getClientMock.mockReset();
+    createClientMock.mockReset();
+    resolveAuditProjectsMock.mockReset();
+    // Default: every package file is its own independent project (no shared
+    // ancestor lockfile), matching the real resolver when no manager signal is
+    // shared between manifests. Tests that need a merged multi-manifest project
+    // override this per test.
+    resolveAuditProjectsMock.mockImplementation((packageFilePaths: readonly string[]) => ({
+      projects: packageFilePaths.map(packageFilePath => ({
+        projectRoot: packageFilePath.replace(/\/package\.json$/, ''),
+        workspaceFolder: '/workspace',
+        packageManager: 'npm' as const,
+        lockfilePath: undefined,
+        originManifests: [packageFilePath],
+      })),
+      rejected: [],
+    }));
   });
 
   it('shows a loading indicator before packages finish loading', () => {
@@ -800,11 +817,11 @@ describe('PackagesProvider', () => {
         packageFilePath: '/workspace/packages/ui/package.json',
       },
     ]);
-    getClientMock
-      .mockResolvedValueOnce({
+    createClientMock
+      .mockReturnValueOnce({
         runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
       })
-      .mockResolvedValueOnce({
+      .mockReturnValueOnce({
         runAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')),
       });
 
@@ -817,8 +834,8 @@ describe('PackagesProvider', () => {
     const groups = folders.flatMap(folder => folder.children);
     const packages = groups.flatMap(group => group.children).filter((item): item is PackageItem => item instanceof PackageItem);
 
-    expect(getClientMock).toHaveBeenCalledWith('/workspace/apps/web');
-    expect(getClientMock).toHaveBeenCalledWith('/workspace/packages/ui');
+    expect(createClientMock).toHaveBeenCalledWith('npm', '/workspace/apps/web');
+    expect(createClientMock).toHaveBeenCalledWith('npm', '/workspace/packages/ui');
     expect(showError).not.toHaveBeenCalled();
     expect(packages.map(item => [item.packageFilePath, item.vulnerabilitySeverity])).toEqual([
       ['/workspace/apps/web/package.json', 'high'],
@@ -850,11 +867,11 @@ describe('PackagesProvider', () => {
         packageFilePath: '/workspace/packages/ui/package.json',
       },
     ]);
-    getClientMock
-      .mockResolvedValueOnce({
+    createClientMock
+      .mockReturnValueOnce({
         runAudit: vi.fn().mockRejectedValue(new Error('web audit unavailable')),
       })
-      .mockResolvedValueOnce({
+      .mockReturnValueOnce({
         runAudit: vi.fn().mockRejectedValue(new Error('ui audit unavailable')),
       });
 
@@ -863,7 +880,7 @@ describe('PackagesProvider', () => {
     await provider.loadPackages();
     await provider.runAudit();
 
-    expect(getClientMock).toHaveBeenCalledTimes(2);
+    expect(createClientMock).toHaveBeenCalledTimes(2);
     expect(showError).not.toHaveBeenCalled();
     expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
 
@@ -876,7 +893,7 @@ describe('PackagesProvider', () => {
   });
 
   it('preserves complete audit wording when all roots succeed', async () => {
-    getClientMock.mockResolvedValue({
+    createClientMock.mockReturnValue({
       runAudit: vi.fn().mockResolvedValue(new Map()),
     });
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -896,7 +913,7 @@ describe('PackagesProvider', () => {
         resolveAudit = resolve;
       }))
       .mockResolvedValueOnce(new Map([['react', 'moderate']]));
-    getClientMock.mockResolvedValue({
+    createClientMock.mockReturnValue({
       runAudit: runAuditMock,
     });
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -908,7 +925,7 @@ describe('PackagesProvider', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(getClientMock).toHaveBeenCalledTimes(1);
+    expect(createClientMock).toHaveBeenCalledTimes(1);
     expect(runAuditMock).toHaveBeenCalledTimes(1);
 
     resolveAudit(new Map([['react', 'high']]));
@@ -922,7 +939,7 @@ describe('PackagesProvider', () => {
       .filter((item): item is PackageItem => item instanceof PackageItem);
     const react = packages.find(item => item.packageName === 'react');
 
-    expect(getClientMock).toHaveBeenCalledTimes(2);
+    expect(createClientMock).toHaveBeenCalledTimes(2);
     expect(runAuditMock).toHaveBeenCalledTimes(2);
     expect(react?.vulnerabilitySeverity).toBe('moderate');
   });
@@ -933,7 +950,7 @@ describe('PackagesProvider', () => {
       .mockRejectedValueOnce(new Error('workspace scan failed'))
       .mockResolvedValueOnce(['/workspace/package.json']);
     const runAuditMock = vi.fn().mockResolvedValue(new Map([['react', 'high']]));
-    getClientMock.mockResolvedValue({
+    createClientMock.mockReturnValue({
       runAudit: runAuditMock,
     });
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -942,8 +959,186 @@ describe('PackagesProvider', () => {
     await provider.runAudit();
     await provider.runAudit();
 
-    expect(getClientMock).toHaveBeenCalledTimes(1);
+    expect(createClientMock).toHaveBeenCalledTimes(1);
     expect(runAuditMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('audits a shared lock file graph exactly once and suppresses row badges across its manifests', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/packages/api/package.json',
+      },
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/packages/ui/package.json',
+      },
+    ]);
+    resolveAuditProjectsMock.mockResolvedValue({
+      projects: [{
+        projectRoot: '/workspace',
+        workspaceFolder: '/workspace',
+        packageManager: 'pnpm',
+        lockfilePath: '/workspace/pnpm-lock.yaml',
+        originManifests: [
+          '/workspace/packages/api/package.json',
+          '/workspace/packages/ui/package.json',
+        ],
+      }],
+      rejected: [],
+    });
+    const runAuditMock = vi.fn().mockResolvedValue(new Map([['react', 'high']]));
+    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(createClientMock).toHaveBeenCalledTimes(1);
+    expect(createClientMock).toHaveBeenCalledWith('pnpm', '/workspace');
+    expect(runAuditMock).toHaveBeenCalledTimes(1);
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+
+    const [summary] = provider.getAuditProjects();
+    expect(summary.project.originManifests).toEqual([
+      '/workspace/packages/api/package.json',
+      '/workspace/packages/ui/package.json',
+    ]);
+    expect(summary.vulnerabilities.get('react')).toBe('high');
+  });
+
+  it('suppresses the badge for a package name duplicated across dependencies and devDependencies', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'react',
+        current: '17.0.0',
+        dev: true,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+    });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+  });
+
+  it('never attaches a badge for a transitive-only advisory that matches no direct dependency row', async () => {
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(new Map([['left-pad', 'critical']])),
+    });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+  });
+
+  it('returns a fresh array from getAuditProjects on each call rather than the live internal state', async () => {
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(new Map()),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.runAudit();
+    const first = provider.getAuditProjects();
+    const second = provider.getAuditProjects();
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+  });
+
+  it('clears audit projects for the duration of a new audit run', async () => {
+    let resolveSecondAudit: (value: Map<string, string>) => void = () => {};
+    const runAuditMock = vi.fn()
+      .mockResolvedValueOnce(new Map([['react', 'high']]))
+      .mockReturnValueOnce(new Promise<Map<string, string>>((resolve) => {
+        resolveSecondAudit = resolve;
+      }));
+    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    await provider.runAudit();
+    expect(provider.getAuditProjects()).toHaveLength(1);
+
+    const secondAudit = provider.runAudit();
+    expect(provider.getAuditProjects()).toEqual([]);
+
+    resolveSecondAudit(new Map());
+    await secondAudit;
+  });
+
+  it('clears stale audit projects after an early exit with no package files', async () => {
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+    expect(provider.getAuditProjects()).toHaveLength(1);
+
+    (provider as unknown as { allEntries: unknown[] }).allEntries = [];
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([]);
+    await provider.runAudit();
+
+    expect(provider.getAuditProjects()).toEqual([]);
+  });
+
+  it('clears stale audit projects after an exception during project resolution', async () => {
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+    expect(provider.getAuditProjects()).toHaveLength(1);
+
+    resolveAuditProjectsMock.mockRejectedValueOnce(new Error('resolution exploded'));
+    await provider.runAudit();
+
+    expect(provider.getAuditProjects()).toEqual([]);
+    expect(showError).toHaveBeenCalled();
+  });
+
+  it('treats a rejected project resolution as a failed audit root without calling a client', async () => {
+    resolveAuditProjectsMock.mockResolvedValue({
+      projects: [],
+      rejected: [{
+        packageFilePath: '/workspace/package.json',
+        reason: 'workspace-escape',
+        detail: '/workspace/package.json resolves outside its owning workspace folder.',
+      }],
+    });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(createClientMock).not.toHaveBeenCalled();
+    const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toContain('/workspace/package.json');
   });
 });
 

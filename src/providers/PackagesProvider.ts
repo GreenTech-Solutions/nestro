@@ -1,9 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ClientManager } from '../clients';
+import { ClientManager, resolveAuditProjects } from '../clients';
+import type { AuditProject } from '../clients';
 import {
   fetchAllLatestVersions,
-  getPackageDirectory,
   getUpdateType,
   getWorkspacePackageFilePaths,
   logger,
@@ -27,6 +27,18 @@ export interface PackageStateIdentity {
   section: 'dependencies' | 'devDependencies';
 }
 
+/**
+ * One resolved audit project (canonical root, lockfile, origin manifests) together with
+ * the raw vulnerability map its audit run produced. Kept project-level, not flattened
+ * into row badges, so the full result and origin manifest set survive even when row
+ * attribution is suppressed below — this is the input `AUD-08` will read from to build a
+ * structured, resolved-path-aware report.
+ */
+export interface AuditProjectSummary {
+  readonly project: AuditProject;
+  readonly vulnerabilities: ReadonlyMap<string, AuditSeverity>;
+}
+
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -40,6 +52,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly writeSuppressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
+  private auditProjects: AuditProjectSummary[] = [];
   private checkState: 'idle' | 'running' | 'done' = 'idle';
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
@@ -123,6 +136,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }, 600);
       this.writeSuppressionTimers.add(timer);
     }
+  }
+
+  /**
+   * Project-level audit results from the most recent run, keyed by canonical project
+   * root rather than by row. Row badges may be suppressed for ambiguous multi-manifest
+   * or duplicate-name matches (see `applyProjectAuditResults()`), but the underlying
+   * project result and its origin manifest set are always kept here.
+   */
+  getAuditProjects(): readonly AuditProjectSummary[] {
+    return [...this.auditProjects];
   }
 
   getVisibleOutdatedPackages(): PackageItem[] {
@@ -221,6 +244,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     logger.info('Loading workspace packages.');
     this.loading = true;
     this.auditResults = new Map();
+    this.auditProjects = [];
     this.auditState = 'idle';
     this.lastAuditCount = undefined;
     this.lastAuditSuccessfulRootCount = undefined;
@@ -385,6 +409,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditState = 'running';
     this.lastAuditSuccessfulRootCount = undefined;
     this.failedAuditPaths = [];
+    // Cleared here, not just on success below, so getAuditProjects() — the AUD-08
+    // contract — never hands back a previous run's stale projects while this run is
+    // in progress, after an early exit with no package files, or after an exception (N10).
+    this.auditProjects = [];
     this.emitTreeChanged();
 
     try {
@@ -394,24 +422,34 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
 
+      // Canonical project graph (ARC-07): manifests that share the same lock file
+      // resolve to the same project root and are audited exactly once. Rejected
+      // manifests (no owning workspace, or a workspace-escaping root — SEC-05) never
+      // reach a client at all and are treated the same as a failed audit root.
+      const { projects, rejected } = await resolveAuditProjects(packageFilePaths);
+      for (const rejection of rejected) {
+        logger.error(`Audit project resolution failed for ${rejection.packageFilePath}: ${rejection.detail}`);
+      }
+
       const auditResults = new Map<string, AuditSeverity>();
-      const failedAuditPaths: string[] = [];
+      const auditProjects: AuditProjectSummary[] = [];
+      const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
       let successfulAuditRootCount = 0;
-      for (const packageFilePath of packageFilePaths) {
+      for (const project of projects) {
         try {
-          const client = await this.clientManager.getClient(getPackageDirectory(packageFilePath));
-          const fileResults = await client.runAudit();
+          const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
+          const vulnerabilities = await client.runAudit();
           successfulAuditRootCount += 1;
-          for (const [packageName, severity] of fileResults) {
-            auditResults.set(this.entryKey(packageName, packageFilePath), severity);
-          }
+          auditProjects.push({ project, vulnerabilities });
+          this.applyProjectAuditResults(project, vulnerabilities, auditResults);
         }
         catch (err) {
-          failedAuditPaths.push(packageFilePath);
-          logger.error(`Audit failed for ${packageFilePath}.`, err);
+          failedAuditPaths.push(...project.originManifests);
+          logger.error(`Audit failed for project root ${project.projectRoot}.`, err);
         }
       }
       this.auditResults = auditResults;
+      this.auditProjects = auditProjects;
       this.failedAuditPaths = failedAuditPaths;
       this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
       this.lastAuditCount = this.auditResults.size;
@@ -560,6 +598,38 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const entries = await readAllWorkspaceDependencies();
     this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
     return entries;
+  }
+
+  /**
+   * Attributes a project-level audit result to individual rows only when the match is
+   * provably unique (AUD-06 brief / plan.md decision 25). A project audit result is
+   * project-scoped, not row-scoped, until `AUD-08` adds resolved path/version
+   * projection, so:
+   * - a project spanning more than one origin manifest never gets row badges — there is
+   *   no safe way yet to say which manifest (or none, if the finding is transitive-only
+   *   for all of them) a given package name belongs to;
+   * - within a single-manifest project, a package name that appears in exactly one row
+   *   (not duplicated across `dependencies`/`devDependencies`, and not transitive-only)
+   *   still gets its badge, matching the pre-existing single-project behavior.
+   */
+  private applyProjectAuditResults(
+    project: AuditProject,
+    vulnerabilities: ReadonlyMap<string, AuditSeverity>,
+    auditResults: Map<string, AuditSeverity>,
+  ): void {
+    if (project.originManifests.length !== 1) {
+      return;
+    }
+
+    const [packageFilePath] = project.originManifests;
+    for (const [packageName, severity] of vulnerabilities) {
+      const matchingRows = this.allEntries.filter(entry => (
+        entry.packageFilePath === packageFilePath && entry.item.packageName === packageName
+      ));
+      if (matchingRows.length === 1) {
+        auditResults.set(this.entryKey(packageName, packageFilePath), severity);
+      }
+    }
   }
 
   private entryKey(packageName: string, packageFilePath: string): string {

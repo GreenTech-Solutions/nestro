@@ -1,29 +1,24 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { BunClient } from './BunClient';
 import { Client } from './Client';
 import { NpmClient } from './NpmClient';
 import { PnpmClient } from './PnpmClient';
+import {
+  detectPackageManagerFromLockfile,
+  detectPackageManagerFromManifest,
+  detectPackageManagerSignalFromAncestors,
+} from './projectResolver';
+import type { PackageManager } from './projectResolver';
 import { YarnClient } from './YarnClient';
 import { logger } from '../utils/logger';
 
-export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
-
-interface PackageJson {
-  packageManager?: string;
-}
-
-interface PackageManagerSignal {
-  packageManager: PackageManager;
-  signalRoot: string;
-}
-
-const packageManagerNames = ['npm', 'pnpm', 'yarn', 'bun'] as const;
+export type { PackageManager } from './projectResolver';
 
 export class ClientManager {
   async getClient(cwd: string): Promise<Client> {
     try {
-      const signal = await this.detectPackageManagerFromAncestors(cwd);
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
+      const signal = await detectPackageManagerSignalFromAncestors(cwd, workspaceFolder?.uri.fsPath);
       const packageManager = signal?.packageManager ?? 'npm';
       const clientCwd = signal?.packageManager === 'yarn' ? signal.signalRoot : cwd;
       return this.createClient(packageManager, clientCwd);
@@ -50,15 +45,16 @@ export class ClientManager {
   async detectPackageManager(cwd?: string): Promise<PackageManager> {
     try {
       if (cwd !== undefined) {
-        const fromAncestor = await this.detectPackageManagerFromAncestors(cwd);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
+        const fromAncestor = await detectPackageManagerSignalFromAncestors(cwd, workspaceFolder?.uri.fsPath);
         return fromAncestor?.packageManager ?? 'npm';
       }
 
-      const fromManifest = await this.detectPackageManagerFromManifest(cwd);
+      const fromManifest = await detectPackageManagerFromManifest(cwd);
       if (fromManifest !== undefined) {
         return fromManifest;
       }
-      const fromLockfile = await this.detectPackageManagerFromLockfile(cwd);
+      const fromLockfile = await detectPackageManagerFromLockfile();
       return fromLockfile ?? 'npm';
     }
     catch (err) {
@@ -66,109 +62,4 @@ export class ClientManager {
       throw err;
     }
   }
-
-  private async detectPackageManagerFromAncestors(cwd: string): Promise<PackageManagerSignal | undefined> {
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
-    const directories = getAncestorDirectories(cwd, workspaceFolder?.uri.fsPath);
-
-    for (const directory of directories) {
-      const fromManifest = await this.detectPackageManagerFromManifest(directory);
-      if (fromManifest !== undefined) {
-        return { packageManager: fromManifest, signalRoot: directory };
-      }
-
-      const fromLockfile = await this.detectPackageManagerFromLockfile(directory);
-      if (fromLockfile !== undefined) {
-        return { packageManager: fromLockfile, signalRoot: directory };
-      }
-    }
-
-    return undefined;
-  }
-
-  private async detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
-    if (cwd !== undefined) {
-      try {
-        const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
-        const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJson;
-        const packageManager = manifest.packageManager?.split('@')[0];
-        return parsePackageManager(packageManager);
-      }
-      catch {
-        return undefined;
-      }
-    }
-
-    const files = await vscode.workspace.findFiles('**/package.json', '**/node_modules/**', 1);
-    if (files.length === 0) {
-      return undefined;
-    }
-
-    const raw = await vscode.workspace.fs.readFile(files[0]);
-    const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJson;
-    const packageManager = manifest.packageManager?.split('@')[0];
-    return parsePackageManager(packageManager);
-  }
-
-  private async detectPackageManagerFromLockfile(cwd: string | undefined): Promise<PackageManager | undefined> {
-    const lockfiles = [
-      { fileName: 'pnpm-lock.yaml', pattern: '**/pnpm-lock.yaml', packageManager: 'pnpm' },
-      { fileName: 'yarn.lock', pattern: '**/yarn.lock', packageManager: 'yarn' },
-      { fileName: 'bun.lock', pattern: '**/bun.lock', packageManager: 'bun' },
-      { fileName: 'bun.lockb', pattern: '**/bun.lockb', packageManager: 'bun' },
-      { fileName: 'package-lock.json', pattern: '**/package-lock.json', packageManager: 'npm' },
-      { fileName: 'npm-shrinkwrap.json', pattern: '**/npm-shrinkwrap.json', packageManager: 'npm' },
-    ] as const;
-
-    for (const lockfile of lockfiles) {
-      if (cwd !== undefined) {
-        try {
-          await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, lockfile.fileName)));
-          return lockfile.packageManager;
-        }
-        catch {
-          continue;
-        }
-      }
-      const files = await vscode.workspace.findFiles(lockfile.pattern, '**/node_modules/**', 1);
-      if (files.length > 0) {
-        return lockfile.packageManager;
-      }
-    }
-    return undefined;
-  }
-}
-
-function parsePackageManager(value: string | undefined): PackageManager | undefined {
-  return packageManagerNames.find(name => name === value);
-}
-
-function getAncestorDirectories(cwd: string, workspaceFolderPath: string | undefined): string[] {
-  if (workspaceFolderPath === undefined) {
-    return [cwd];
-  }
-
-  const normalizedCwd = path.resolve(cwd);
-  const normalizedWorkspaceFolderPath = path.resolve(workspaceFolderPath);
-  const relativePath = path.relative(normalizedWorkspaceFolderPath, normalizedCwd);
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return [];
-  }
-
-  const directories: string[] = [];
-  let current = normalizedCwd;
-  while (true) {
-    directories.push(current);
-    if (current === normalizedWorkspaceFolderPath) {
-      break;
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
-    current = parent;
-  }
-
-  return directories;
 }
