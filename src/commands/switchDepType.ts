@@ -4,6 +4,7 @@ import {
   showError,
   switchDependencyType,
 } from '../utils';
+import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
 export async function switchDepTypeCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
@@ -11,10 +12,24 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
     return;
   }
 
+  const capability = await resolveCommandPackageItem(item, provider);
+  if (capability === undefined) {
+    return;
+  }
+
+  const checked = await revalidateCommandPackageItem(capability, provider);
+  if (checked === undefined) {
+    return;
+  }
+
   try {
-    logger.info(`Switching ${item.packageName} dependency type.`);
+    logger.info(`Switching ${checked.item.packageName} dependency type.`);
     await provider.withWriteSuppressed(async () => {
-      await switchDependencyType(item.packageFilePath, item.packageName, item.dev);
+      await switchDependencyType(
+        checked.packageFilePath,
+        checked.item.packageName,
+        checked.identity.section === 'devDependencies',
+      );
     });
     await provider.loadPackages();
   }

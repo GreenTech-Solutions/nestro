@@ -1,7 +1,7 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClientManager } from '../clients';
-import { isPackageItem, PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PackagesProvider, sanitizePackageText } from '../providers';
+import type { ResolvedPackageItem } from '../providers';
 import {
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -9,6 +9,11 @@ import {
   runShellTaskAndWait,
   showError,
 } from '../utils';
+import {
+  resolveCommandPackageItem,
+  resolveUnambiguousManifestEntry,
+  revalidateCommandPackageItem,
+} from './packageIdentity';
 
 const clientManager = new ClientManager();
 
@@ -18,8 +23,14 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
     return;
   }
 
+  const capability = await resolveCommandPackageItem(item, provider);
+  if (capability === undefined) {
+    return;
+  }
+
+  const current = capability.item;
   const confirmed = await vscode.window.showWarningMessage(
-    `Remove ${item.packageName} from ${item.dev ? 'devDependencies' : 'dependencies'}?`,
+    `Remove ${sanitizePackageText(current.packageName)} from ${capability.identity.section}?`,
     { modal: true },
     'Remove Package',
   );
@@ -27,47 +38,40 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
     return;
   }
 
+  const checked = await resolveUnambiguousManifestEntry(capability, provider);
+  if (checked === undefined) {
+    return;
+  }
+
+  let activeCapability: ResolvedPackageItem | undefined = checked;
   try {
-    const cwd = getPackageCwd(item);
-    provider.markPackageUpdating({
-      packageName: item.packageName,
-      packageFilePath: item.packageFilePath,
-      section: item.dev ? 'devDependencies' : 'dependencies',
-    }, true);
-    const client = await clientManager.getClient(cwd);
-    const command = client.buildRemoveCommand([item.packageName]);
+    const client = await clientManager.getClient(checked.packageDirectory);
+    const beforeTask = await revalidateCommandPackageItem(checked, provider);
+    if (beforeTask === undefined) {
+      activeCapability = undefined;
+      return;
+    }
+    activeCapability = provider.markPackageUpdatingForCapability(beforeTask, true);
+    if (activeCapability === undefined) {
+      return;
+    }
+    const command = client.buildRemoveCommand([beforeTask.item.packageName]);
     logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
-    const taskName = `Remove ${item.packageName}`;
-    const exitCode = await runShellTaskAndWait(command, taskName, cwd);
+    const taskName = `Remove ${beforeTask.item.packageName}`;
+    const exitCode = await runShellTaskAndWait(command, taskName, beforeTask.packageDirectory);
     provider.invalidateUpdateCache();
     if (exitCode === 0) {
       await provider.loadPackages();
       return;
     }
-    provider.markPackageUpdating({
-      packageName: item.packageName,
-      packageFilePath: item.packageFilePath,
-      section: item.dev ? 'devDependencies' : 'dependencies',
-    }, false);
+    provider.markPackageUpdatingForCapability(activeCapability, false);
     showError(formatShellTaskFailureMessage(taskName, exitCode));
     await provider.loadPackages();
   }
   catch (err) {
-    if (item.packageFilePath !== '') {
-      provider.markPackageUpdating({
-        packageName: item.packageName,
-        packageFilePath: item.packageFilePath,
-        section: item.dev ? 'devDependencies' : 'dependencies',
-      }, false);
+    if (activeCapability !== undefined) {
+      provider.markPackageUpdatingForCapability(activeCapability, false);
     }
     showError(`failed to remove package — ${err instanceof Error ? err.message : String(err)}`, err);
   }
-}
-
-function getPackageCwd(item: PackageItem): string {
-  if (item.packageFilePath === '') {
-    throw new Error(`No package.json path found for ${item.packageName}.`);
-  }
-
-  return path.dirname(item.packageFilePath);
 }

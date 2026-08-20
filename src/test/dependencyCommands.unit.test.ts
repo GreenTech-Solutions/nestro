@@ -6,6 +6,40 @@ import { switchDepTypeCommand } from '../commands/switchDepType';
 import { PackageItem, PackagesProvider } from '../providers';
 import { setVersionPin, showError, switchDependencyType } from '../utils';
 
+const identityMocks = vi.hoisted(() => {
+  const makeCapability = (item: {
+    packageName: string;
+    packageFilePath: string;
+    dev: boolean;
+    versionPrefix?: string;
+  }) => ({
+    item,
+    identity: {
+      packageName: item.packageName,
+      packageFilePath: item.packageFilePath,
+      section: item.dev ? 'devDependencies' : 'dependencies',
+    },
+    packageFilePath: item.packageFilePath,
+    packageDirectory: item.packageFilePath.replace(/\/package\.json$/, ''),
+    workspaceFolderPath: '/workspace',
+    fileStamp: { dev: 1, ino: 1, size: 1, mtimeMs: 1 },
+    manifestDigest: 'digest',
+    snapshotGeneration: 1,
+  });
+  return {
+    resolveCommandPackageItem: vi.fn((item: {
+      packageName: string;
+      packageFilePath: string;
+      dev: boolean;
+      versionPrefix?: string;
+    }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
+    resolveUnambiguousManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
+    revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
+  };
+});
+
+vi.mock('../commands/packageIdentity', () => identityMocks);
+
 const executeTaskMock = vi.mocked(vscode.tasks.executeTask);
 const onDidEndTaskProcessMock = vi.mocked(vscode.tasks.onDidEndTaskProcess);
 const onDidEndTaskMock = vi.mocked(vscode.tasks.onDidEndTask);
@@ -81,6 +115,32 @@ describe('switchDepTypeCommand()', () => {
     await switchDepTypeCommand(item, provider);
 
     expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+  });
+
+  it('stops before a write when the provider cannot resolve the current row', async () => {
+    identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined);
+    const provider = makeProvider();
+
+    await switchDepTypeCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(switchDependencyType).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+  });
+
+  it('stops before a write when final dependency-type revalidation fails', async () => {
+    identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
+    const provider = makeProvider();
+
+    await switchDepTypeCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(switchDependencyType).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -165,6 +225,19 @@ describe('pinVersionCommand()', () => {
     await pinVersionCommand(item, provider);
 
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+  });
+
+  it('stops before pinning when identity or manifest validation fails', async () => {
+    identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined);
+    const provider = makeProvider();
+    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+
+    await pinVersionCommand(item, provider);
+    expect(setVersionPin).not.toHaveBeenCalled();
+
+    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+    await pinVersionCommand(item, provider);
+    expect(setVersionPin).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -329,7 +402,35 @@ describe('removePackageCommand()', () => {
     }, true);
   });
 
-  it('shows an error without touching update state when the package file path is unknown', async () => {
+  it('rejects removal when the manifest entry is ambiguous or the final row is stale', async () => {
+    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+    const provider = makeProvider();
+    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+
+    await removePackageCommand(item, provider);
+    expect(executeTaskMock).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+
+    identityMocks.resolveUnambiguousManifestEntry.mockImplementationOnce(capability => capability);
+    identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
+    await removePackageCommand(item, provider);
+    expect(executeTaskMock).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+  });
+
+  it('stops removal before task launch when progress marking loses the row', async () => {
+    const provider = makeProvider();
+    provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
+
+    await removePackageCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(executeTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an item without a canonical package file path before any side effect', async () => {
     const provider = makeProvider();
 
     await removePackageCommand(
@@ -337,11 +438,9 @@ describe('removePackageCommand()', () => {
       provider,
     );
 
-    expect(showError).toHaveBeenCalledWith(
-      'failed to remove package — No package.json path found for orphan.',
-      expect.any(Error),
-    );
+    expect(showError).not.toHaveBeenCalled();
     expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+    expect(executeTaskMock).not.toHaveBeenCalled();
   });
 
   it('shows a fallback error message when removal fails with a non-Error value', async () => {
@@ -377,12 +476,22 @@ describe('removePackageCommand()', () => {
 });
 
 function makeProvider(): PackagesProvider {
-  return {
+  const provider = {
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
     loadPackages: vi.fn(),
     invalidateUpdateCache: vi.fn(),
     markPackageUpdating: vi.fn(),
   } as unknown as PackagesProvider;
+  provider.refreshPackageBaselineForCapability = vi.fn(capability => Promise.resolve(capability));
+  provider.markPackageUpdated = vi.fn();
+  provider.markPackageUpdatedForCapability = vi.fn((capability, version) => {
+    provider.markPackageUpdated(capability.identity, version);
+  });
+  provider.markPackageUpdatingForCapability = vi.fn((capability, installing) => {
+    provider.markPackageUpdating(capability.identity, installing);
+    return capability;
+  });
+  return provider;
 }
 
 function mockTaskListeners(): void {

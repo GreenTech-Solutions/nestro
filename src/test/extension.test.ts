@@ -28,6 +28,7 @@ import {
   removeScriptFixture,
   resolveFixturePath,
   ROOT_MANIFEST_NESTED_PACKAGE,
+  setNestroConfigValue,
   SINGLE_ROOT_FIXTURES,
   trackedFixtureRoots,
   waitUntil,
@@ -208,6 +209,52 @@ suite('Workspace Isolation', () => {
   test('Baseline workspace exposes no package manifest', async () => {
     const folders = vscode.workspace.workspaceFolders ?? [];
     assert.deepStrictEqual(await findManifests(folders[0]), []);
+  });
+});
+
+suite('AUD-04B command boundary smoke', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+
+  suiteSetup(async () => {
+    opened = await openTrackedFixture(fixture);
+  });
+
+  suiteTeardown(async () => {
+    await closeIfOpen(opened);
+    opened = undefined;
+  });
+
+  test('registered install command rejects a forged row without writing the real manifest', async () => {
+    const workspace = requireOpen(opened);
+    const packageFilePath = resolveFixturePath(workspace.rootPath, 'npm-app/package.json');
+    const original = readFileSync(packageFilePath, 'utf8');
+    const restoreDeferredInstall = await setNestroConfigValue('deferInstallAfterUpdate', true);
+    try {
+      await vscode.commands.executeCommand('nestro.refresh');
+      const forged = new PackageItem(
+        'left-pad',
+        '^1.3.0',
+        '99.99.99',
+        'breaking',
+        false,
+        undefined,
+        packageFilePath,
+        false,
+        '^',
+      );
+      await vscode.commands.executeCommand('nestro.installUpdate', forged);
+
+      // Command registrations intentionally fire-and-forget their async handlers;
+      // allow that real Extension Host invocation to settle before checking bytes.
+      await new Promise<void>(resolve => setTimeout(resolve, 250));
+      assert.strictEqual(readFileSync(packageFilePath, 'utf8'), original);
+    }
+    finally {
+      await restoreDeferredInstall();
+    }
   });
 });
 

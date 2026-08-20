@@ -67,7 +67,12 @@ export function sanitizePackageText(value: string): string {
  * of dereferencing a missing/malformed argument.
  */
 export function isPackageItem(value: unknown): value is PackageItem {
-  return value instanceof PackageItem;
+  try {
+    return value instanceof PackageItem;
+  }
+  catch {
+    return false;
+  }
 }
 
 function getVulnerabilityIcon(severity: AuditSeverity): vscode.ThemeIcon {

@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
-import { isPackageItem, PackageItem, PackagesProvider } from '../providers';
+import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
+import type { ResolvedPackageItem } from '../providers';
 import {
   fetchPackageVersions,
-  getUpdateType,
   logger,
   selectVersionsForPicker,
+  showError,
 } from '../utils';
-import { installUpdateCommand } from './installUpdate';
+import { runResolvedPackageVersion } from './installUpdate';
+import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
 export async function pickVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
@@ -14,9 +16,15 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     return;
   }
 
-  logger.info(`Fetching versions for ${item.packageName}.`);
+  let capability = await resolveCommandPackageItem(item, provider);
+  if (capability === undefined) {
+    return;
+  }
+  let current = capability.item;
+
+  logger.info(`Fetching versions for ${current.packageName}.`);
   const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
-  quickPick.title = `Select version for ${item.packageName}`;
+  quickPick.title = `Select version for ${current.packageName}`;
   quickPick.placeholder = 'Loading versions...';
   quickPick.busy = true;
   const disposables: vscode.Disposable[] = [];
@@ -36,10 +44,19 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   quickPick.show();
 
   try {
-    const { tags, versions } = await fetchPackageVersions(item.packageName, item.packageFilePath);
+    const { tags, versions } = await fetchPackageVersions(current.packageName, capability.packageFilePath);
     if (disposed) {
       return;
     }
+
+    const fetchedCapability = await revalidateCommandPackageItem(capability, provider);
+    if (fetchedCapability === undefined) {
+      quickPick.hide();
+      return;
+    }
+    capability = fetchedCapability;
+    current = capability.item;
+    const pickerCapability = fetchedCapability;
 
     const includePreReleases = vscode.workspace
       .getConfiguration('nestro')
@@ -47,11 +64,11 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     const selectedVersions = selectVersionsForPicker(
       versions,
       tags,
-      item.currentVersion,
+      current.currentVersion,
       includePreReleases,
     );
     const tagByVersion = new Map(Object.entries(tags).map(([tag, version]) => [version, tag]));
-    const normalizedCurrent = normalizeCurrentVersion(item.currentVersion);
+    const normalizedCurrent = normalizeCurrentVersion(current.currentVersion);
 
     quickPick.items = selectedVersions.map(version => ({
       label: version === normalizedCurrent ? `★ ${version}` : version,
@@ -60,8 +77,9 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     }));
     quickPick.busy = false;
     quickPick.placeholder = 'Type to filter versions...';
+    const allowedVersions = new Set(selectedVersions);
     const acceptListener = quickPick.onDidAccept(() => {
-      void handleVersionSelection(quickPick, item, provider, normalizedCurrent);
+      void handleVersionSelection(quickPick, pickerCapability, allowedVersions, provider);
     });
     disposables.push(acceptListener);
   }
@@ -71,39 +89,42 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     }
 
     quickPick.hide();
-    showVersionPickerError(item.packageName, err);
+    showVersionPickerError(current.packageName, err);
   }
 }
 
 async function handleVersionSelection(
   quickPick: vscode.QuickPick<vscode.QuickPickItem>,
-  item: PackageItem,
+  capability: ResolvedPackageItem,
+  allowedVersions: ReadonlySet<string>,
   provider: PackagesProvider,
-  normalizedCurrent: string,
 ): Promise<void> {
-  const choice = quickPick.selectedItems[0];
-  quickPick.hide();
-  if (choice === undefined) {
-    return;
-  }
+  try {
+    const choice = quickPick.selectedItems[0];
+    quickPick.hide();
+    if (choice === undefined) {
+      return;
+    }
 
-  const selectedVersion = choice.label.replace(/^★ /, '');
-  if (selectedVersion === normalizedCurrent) {
-    return;
-  }
+    const selectedVersion = choice.label.replace(/^★ /, '');
+    if (!allowedVersions.has(selectedVersion)) {
+      showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
+      return;
+    }
+    const checked = await revalidateCommandPackageItem(capability, provider);
+    if (checked === undefined) {
+      return;
+    }
+    if (selectedVersion === normalizeCurrentVersion(checked.item.currentVersion)) {
+      return;
+    }
 
-  const syntheticItem = new PackageItem(
-    item.packageName,
-    item.currentVersion,
-    selectedVersion,
-    getUpdateType(normalizedCurrent, selectedVersion),
-    false,
-    item.vulnerabilitySeverity,
-    item.packageFilePath,
-    item.dev,
-    item.versionPrefix,
-  );
-  await installUpdateCommand(syntheticItem, provider);
+    await runResolvedPackageVersion(checked, selectedVersion, provider);
+  }
+  catch (err) {
+    logger.error('Failed to apply the selected package version.', err);
+    showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
+  }
 }
 
 function normalizeCurrentVersion(currentVersion: string): string {
@@ -111,6 +132,7 @@ function normalizeCurrentVersion(currentVersion: string): string {
 }
 
 function showVersionPickerError(packageName: string, err: unknown): void {
-  void vscode.window.showErrorMessage(`Failed to fetch versions for ${packageName}.`);
-  logger.error(`Failed to fetch versions for ${packageName}.`, err);
+  const safePackageName = sanitizePackageText(packageName);
+  void vscode.window.showErrorMessage(`Failed to fetch versions for ${safePackageName}.`);
+  logger.error(`Failed to fetch versions for ${safePackageName}.`, err);
 }
