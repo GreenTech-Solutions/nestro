@@ -1,6 +1,8 @@
+import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider } from '../providers';
 import {
   logger,
+  mutationCoordinator,
   showError,
   switchDependencyType,
 } from '../utils';
@@ -17,23 +19,28 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
     return;
   }
 
-  const checked = await revalidateCommandPackageItem(capability, provider);
-  if (checked === undefined) {
-    return;
-  }
+  // Locked from the pre-write revalidation through the reload (`AUD-09`) so a
+  // concurrent Update/Pin/Remove on the same project root cannot interleave with it.
+  const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
+  await mutationCoordinator.runExclusive(projectKey, async () => {
+    const checked = await revalidateCommandPackageItem(capability, provider);
+    if (checked === undefined) {
+      return;
+    }
 
-  try {
-    logger.info(`Switching ${checked.item.packageName} dependency type.`);
-    await provider.withWriteSuppressed(async () => {
-      await switchDependencyType(
-        checked.packageFilePath,
-        checked.item.packageName,
-        checked.identity.section === 'devDependencies',
-      );
-    });
-    await provider.loadPackages();
-  }
-  catch (err) {
-    showError(`failed to switch dependency type — ${err instanceof Error ? err.message : String(err)}`, err);
-  }
+    try {
+      logger.info(`Switching ${checked.item.packageName} dependency type.`);
+      await provider.withWriteSuppressed(async () => {
+        await switchDependencyType(
+          checked.packageFilePath,
+          checked.item.packageName,
+          checked.identity.section === 'devDependencies',
+        );
+      });
+      await provider.loadPackages();
+    }
+    catch (err) {
+      showError(`failed to switch dependency type — ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+  });
 }

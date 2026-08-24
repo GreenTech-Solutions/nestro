@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ClientManager } from '../clients';
+import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import {
   isPackageItem,
   PackagesProvider,
@@ -12,6 +12,8 @@ import {
   getPackageDirectory,
   getWorkspacePackageFilePaths,
   logger,
+  mutationCoordinator,
+  PackageFileDependencyUpdates,
   runShellTaskAndWait,
   ShellTaskCommand,
   showError,
@@ -53,73 +55,85 @@ export async function runResolvedPackageVersion(
   version: string,
   provider: PackagesProvider,
 ): Promise<void> {
-  const checked = await revalidateCommandPackageItem(capability, provider);
-  if (checked === undefined) {
-    return;
-  }
+  // Locked from the pre-write/pre-task revalidation through the write or task and the
+  // reconciliation that follows it (`AUD-09`); the key is derived from the capability's
+  // already-canonical `packageFilePath` before any lock is requested.
+  const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
+  await mutationCoordinator.runExclusive(projectKey, async () => {
+    const checked = await revalidateCommandPackageItem(capability, provider);
+    if (checked === undefined) {
+      return;
+    }
 
-  const current = checked.item;
-  let activeCapability: ResolvedPackageItem | undefined;
-  try {
-    logger.info(`Preparing update for ${current.packageName} to ${version}.`);
-    if (isDeferredInstallEnabled()) {
-      activeCapability = provider.markPackageUpdatingForCapability(checked, true);
-      if (activeCapability === undefined) {
+    const current = checked.item;
+    let activeCapability: ResolvedPackageItem | undefined;
+    try {
+      logger.info(`Preparing update for ${current.packageName} to ${version}.`);
+      if (isDeferredInstallEnabled()) {
+        activeCapability = provider.markPackageUpdatingForCapability(checked, true);
+        if (activeCapability === undefined) {
+          return;
+        }
+        await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(checked.packageFilePath, [
+          { name: current.packageName, version, section: checked.identity.section },
+        ]));
+        const refreshed = await provider.refreshPackageBaselineForCapability(
+          activeCapability,
+          `${current.versionPrefix}${version}`,
+        );
+        if (refreshed === undefined) {
+          await provider.loadPackages();
+          throw new Error('Package update could not be verified. Refresh the package list and try again.');
+        }
+        provider.markPackageUpdatedForCapability(refreshed, version);
         return;
       }
-      await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(checked.packageFilePath, [
-        { name: current.packageName, version, section: checked.identity.section },
-      ]));
-      const refreshed = await provider.refreshPackageBaselineForCapability(
-        activeCapability,
-        `${current.versionPrefix}${version}`,
-      );
-      if (refreshed === undefined) {
-        await provider.loadPackages();
-        throw new Error('Package update could not be verified. Refresh the package list and try again.');
-      }
-      provider.markPackageUpdatedForCapability(refreshed, version);
-      return;
-    }
 
-    const cwd = checked.packageDirectory;
-    const client = await clientManager.getClient(cwd);
-    const beforeTask = await revalidateCommandPackageItem(checked, provider);
-    if (beforeTask === undefined) {
-      return;
+      const cwd = checked.packageDirectory;
+      const client = await clientManager.getClient(cwd);
+      const beforeTask = await revalidateCommandPackageItem(checked, provider);
+      if (beforeTask === undefined) {
+        return;
+      }
+      const taskItem = beforeTask.item;
+      await runPackageUpdateTask(
+        [{ capability: beforeTask, version }],
+        client.buildUpdateCommand([{
+          name: taskItem.packageName,
+          version,
+          section: beforeTask.identity.section,
+        }]),
+        `Update ${taskItem.packageName}`,
+        provider,
+        beforeTask.packageDirectory,
+      );
     }
-    const taskItem = beforeTask.item;
-    await runPackageUpdateTask(
-      [{ capability: beforeTask, version }],
-      client.buildUpdateCommand([{
-        name: taskItem.packageName,
-        version,
-        section: beforeTask.identity.section,
-      }]),
-      `Update ${taskItem.packageName}`,
-      provider,
-      beforeTask.packageDirectory,
-    );
-  }
-  catch (err) {
-    if (activeCapability !== undefined) {
-      provider.markPackageUpdatingForCapability(activeCapability, false);
+    catch (err) {
+      if (activeCapability !== undefined) {
+        provider.markPackageUpdatingForCapability(activeCapability, false);
+      }
+      showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
-    showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
-  }
+  });
 }
 
 export async function runInstallCommand(): Promise<void> {
   try {
     const packageFilePath = await resolveInstallPackageFilePath();
-    const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
-    const command = client.buildInstallCommand();
-    logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
-    const taskName = 'Install Dependencies';
-    const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
-    if (exitCode !== 0) {
-      showError(formatShellTaskFailureMessage(taskName, exitCode));
-    }
+    // Locked for the full task run (`AUD-09`) so a concurrent Update/Pin/Remove/Switch
+    // on the same project root cannot start a second package-manager process, or write
+    // the manifest, while this install is running.
+    const projectKey = await resolveMutationCoordinatorKey(packageFilePath);
+    await mutationCoordinator.runExclusive(projectKey, async () => {
+      const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
+      const command = client.buildInstallCommand();
+      logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
+      const taskName = 'Install Dependencies';
+      const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
+      if (exitCode !== 0) {
+        showError(formatShellTaskFailureMessage(taskName, exitCode));
+      }
+    });
   }
   catch (err) {
     showError(`failed to run install — ${err instanceof Error ? err.message : String(err)}`, err);
@@ -162,80 +176,82 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
     capability,
     version: capability.item.latest as string,
   }));
-  let activeDeferredUpdates: { capability: ResolvedPackageItem; version: string }[] = [];
 
-  try {
-    // Confirm every selected row after the modal confirmation and before any
-    // progress mark, write, or task. Group-level checks below close the async
-    // window again immediately before each individual task.
-    const prevalidatedUpdates = await revalidateUpdates(updates, provider);
-    if (prevalidatedUpdates === undefined) {
-      return;
-    }
-    if (isDeferredInstallEnabled()) {
-      const checkedUpdates = await revalidateUpdates(prevalidatedUpdates, provider);
-      if (checkedUpdates === undefined) {
+  // Update All can span multiple project roots in one call (the deferred branch
+  // writes every touched manifest in one atomic multi-file write below). All of them
+  // are locked together for the whole operation (`AUD-09`) — a concurrent single-row
+  // command on any of these manifests waits behind this bulk update instead of
+  // racing it, and this bulk update never partially holds a subset of its roots.
+  const projectKeys = await Promise.all(
+    updates.map(update => resolveMutationCoordinatorKey(update.capability.packageFilePath)),
+  );
+
+  await mutationCoordinator.runManyExclusive(projectKeys, async () => {
+    let activeDeferredUpdates: { capability: ResolvedPackageItem; version: string }[] = [];
+    try {
+      // Confirm every selected row after the modal confirmation and before any
+      // progress mark, write, or task. Group-level checks below close the async
+      // window again immediately before each individual task.
+      const prevalidatedUpdates = await revalidateUpdates(updates, provider);
+      if (prevalidatedUpdates === undefined) {
         return;
       }
-      const activeUpdates = checkedUpdates.map(update => ({
-        ...update,
-        capability: provider.markPackageUpdatingForCapability(update.capability, true),
-      }));
-      if (activeUpdates.some(update => update.capability === undefined)) {
-        resetActiveCapabilities(activeUpdates, provider);
+      if (isDeferredInstallEnabled()) {
+        const checkedUpdates = await revalidateUpdates(prevalidatedUpdates, provider);
+        if (checkedUpdates === undefined) {
+          return;
+        }
+        const activeUpdates = checkedUpdates.map(update => ({
+          ...update,
+          capability: provider.markPackageUpdatingForCapability(update.capability, true),
+        }));
+        if (activeUpdates.some(update => update.capability === undefined)) {
+          resetActiveCapabilities(activeUpdates, provider);
+          return;
+        }
+        const active = activeUpdates as { capability: ResolvedPackageItem; version: string }[];
+        activeDeferredUpdates = active;
+        await provider.withWriteSuppressed(async () => {
+          await updateDependencyVersionsInFilesAtomically(toDeferredUpdateFileGroups(active));
+        });
+        const refreshed = await refreshUpdatedCapabilities(active, provider);
+        if (refreshed === undefined) {
+          await provider.loadPackages();
+          throw new Error('Package update could not be verified. Refresh the package list and try again.');
+        }
+        refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
         return;
       }
-      const active = activeUpdates as { capability: ResolvedPackageItem; version: string }[];
-      activeDeferredUpdates = active;
-      await provider.withWriteSuppressed(async () => {
-        await updateDependencyVersionsInFilesAtomically(
-          groupDeferredUpdatesByPackageFile(active).map(group => ({
-            packageFilePath: group.packageFilePath,
-            updates: group.updates.map(update => ({
-              name: update.capability.item.packageName,
-              version: update.version,
-              section: update.capability.identity.section,
-            })),
+
+      for (const group of groupImmediateUpdatesByPackageFile(prevalidatedUpdates)) {
+        const checkedUpdates = await revalidateUpdates(group.updates, provider);
+        if (checkedUpdates === undefined) {
+          return;
+        }
+        const cwd = checkedUpdates[0].capability.packageDirectory;
+        const client = await clientManager.getClient(cwd);
+        const beforeTaskUpdates = await revalidateUpdates(checkedUpdates, provider);
+        if (beforeTaskUpdates === undefined) {
+          return;
+        }
+        const command = client.buildUpdateCommand(
+          beforeTaskUpdates.map(update => ({
+            name: update.capability.item.packageName,
+            version: update.version,
+            section: update.capability.identity.section,
           })),
         );
-      });
-      const refreshed = await refreshUpdatedCapabilities(active, provider);
-      if (refreshed === undefined) {
-        await provider.loadPackages();
-        throw new Error('Package update could not be verified. Refresh the package list and try again.');
-      }
-      refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
-      return;
-    }
-
-    for (const group of groupImmediateUpdatesByPackageFile(prevalidatedUpdates)) {
-      const checkedUpdates = await revalidateUpdates(group.updates, provider);
-      if (checkedUpdates === undefined) {
-        return;
-      }
-      const cwd = checkedUpdates[0].capability.packageDirectory;
-      const client = await clientManager.getClient(cwd);
-      const beforeTaskUpdates = await revalidateUpdates(checkedUpdates, provider);
-      if (beforeTaskUpdates === undefined) {
-        return;
-      }
-      const command = client.buildUpdateCommand(
-        beforeTaskUpdates.map(update => ({
-          name: update.capability.item.packageName,
-          version: update.version,
-          section: update.capability.identity.section,
-        })),
-      );
-      const completed = await runPackageUpdateTask(beforeTaskUpdates, command, 'Update All Packages', provider, cwd);
-      if (!completed) {
-        return;
+        const completed = await runPackageUpdateTask(beforeTaskUpdates, command, 'Update All Packages', provider, cwd);
+        if (!completed) {
+          return;
+        }
       }
     }
-  }
-  catch (err) {
-    activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
-    showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
-  }
+    catch (err) {
+      activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
+      showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+  });
 }
 
 function isDeferredInstallEnabled(): boolean {
@@ -324,6 +340,23 @@ function groupDeferredUpdatesByPackageFile(
   updates: readonly PackageUpdate[],
 ): { packageFilePath: string; updates: PackageUpdate[] }[] {
   return groupUpdatesByPackageFile(updates, update => update.capability.packageFilePath);
+}
+
+/**
+ * Shape `active` deferred updates for `updateDependencyVersionsInFilesAtomically()`.
+ * Kept as its own top-level function (rather than inline) so the write call site
+ * inside `mutationCoordinator.runManyExclusive()` stays within the project's nested-
+ * function-depth limit.
+ */
+function toDeferredUpdateFileGroups(active: readonly PackageUpdate[]): PackageFileDependencyUpdates[] {
+  return groupDeferredUpdatesByPackageFile(active).map(group => ({
+    packageFilePath: group.packageFilePath,
+    updates: group.updates.map(update => ({
+      name: update.capability.item.packageName,
+      version: update.version,
+      section: update.capability.identity.section,
+    })),
+  }));
 }
 
 function groupImmediateUpdatesByPackageFile(

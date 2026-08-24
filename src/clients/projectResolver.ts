@@ -387,3 +387,57 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
     rejected: [...rejected].sort((a, b) => a.packageFilePath.localeCompare(b.packageFilePath)),
   };
 }
+
+/**
+ * Resolve the key a mutation command coordinator (`AUD-09`) locks on for one manifest:
+ * the same canonical project root `resolveAuditProjects()` computes (`AUD-06`), so
+ * mutation coordination and audit project resolution key identically — manifests that
+ * share one lock file are one project graph for both purposes, not one lock per
+ * manifest. Falls back to the manifest's own directory when no workspace folder owns it
+ * or canonicalization fails; every command argument reaching this point has already
+ * passed the `AUD-04B` identity boundary, so that fallback is not expected to trigger in
+ * practice, but a lock keyed on *something* stable is always safer than skipping the
+ * lock outright.
+ */
+/** Deepest workspace folder whose realpath contains `canonicalDir`, matched by canonical path rather than a lexical prefix. */
+async function resolveCanonicalOwningWorkspaceFolder(canonicalDir: string): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const canonicalFolders = await Promise.all(folders.map(async (folder) => {
+    try {
+      return await realpath(folder.uri.fsPath);
+    }
+    catch {
+      return undefined;
+    }
+  }));
+  const owners = canonicalFolders
+    .filter((folderPath): folderPath is string => folderPath !== undefined && isPathContained(folderPath, canonicalDir))
+    .sort((left, right) => right.length - left.length);
+  return owners[0];
+}
+
+export async function resolveMutationCoordinatorKey(packageFilePath: string): Promise<string> {
+  const manifestDir = path.dirname(packageFilePath);
+
+  let canonicalPackageFilePath: string;
+  try {
+    canonicalPackageFilePath = await realpath(packageFilePath);
+  }
+  catch (err) {
+    logger.error(`Could not resolve a canonical path for ${packageFilePath}; locking on its directory instead.`, err);
+    return manifestDir;
+  }
+
+  const owningWorkspaceFolder = await resolveCanonicalOwningWorkspaceFolder(path.dirname(canonicalPackageFilePath));
+  if (owningWorkspaceFolder === undefined) {
+    logger.warn(`No workspace folder canonically owns ${packageFilePath}; locking on its directory instead.`);
+    return manifestDir;
+  }
+
+  const resolution = await resolveManifestProject(canonicalPackageFilePath, owningWorkspaceFolder);
+  if (!resolution.ok) {
+    logger.warn(`Falling back to ${manifestDir} as the coordination key: ${resolution.detail}`);
+    return manifestDir;
+  }
+  return resolution.project.projectRoot;
+}

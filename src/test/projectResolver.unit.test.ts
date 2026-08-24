@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { resolveAuditProjects } from '../clients';
+import { resolveAuditProjects, resolveMutationCoordinatorKey } from '../clients';
 
 const fsMock = vi.hoisted(() => ({ realpath: vi.fn((value: string) => Promise.resolve(value)) }));
 
@@ -355,5 +355,148 @@ describe('resolveAuditProjects()', () => {
     expect(forward.rejected).toEqual(reversed.rejected);
     expect(forward.projects).toEqual(reversed.projects);
     expect(forward.rejected[0]?.packageFilePath).toBe('/workspace-b/package.json');
+  });
+});
+
+describe('resolveMutationCoordinatorKey()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fsMock.realpath.mockImplementation((value: string) => Promise.resolve(value));
+    setWorkspaceFolders(['/workspace']);
+    vi.mocked(vscode.workspace.fs.readFile).mockRejectedValue(new Error('not mocked'));
+  });
+
+  it('keys by the ancestor lockfile project root, not the manifest\'s own directory (AUD-09/AUD-06 parity)', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': '{}',
+      '/workspace/pnpm-lock.yaml': '',
+      '/workspace/packages/app/package.json': '{}',
+    });
+
+    const key = await resolveMutationCoordinatorKey('/workspace/packages/app/package.json');
+
+    expect(key).toBe('/workspace');
+  });
+
+  it('gives two manifests sharing one ancestor lockfile graph the same key', async () => {
+    mockWorkspaceFiles({
+      '/workspace/package.json': '{}',
+      '/workspace/pnpm-lock.yaml': '',
+      '/workspace/packages/api/package.json': '{}',
+      '/workspace/packages/ui/package.json': '{}',
+    });
+
+    const apiKey = await resolveMutationCoordinatorKey('/workspace/packages/api/package.json');
+    const uiKey = await resolveMutationCoordinatorKey('/workspace/packages/ui/package.json');
+
+    expect(apiKey).toBe(uiKey);
+    expect(apiKey).toBe('/workspace');
+  });
+
+  it('gives two manifests with no shared ancestor lockfile signal independent keys', async () => {
+    mockWorkspaceFiles({
+      '/workspace/packages/app-a/package.json': '{}',
+      '/workspace/packages/app-b/package.json': '{}',
+    });
+
+    const keyA = await resolveMutationCoordinatorKey('/workspace/packages/app-a/package.json');
+    const keyB = await resolveMutationCoordinatorKey('/workspace/packages/app-b/package.json');
+
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).toBe('/workspace/packages/app-a');
+    expect(keyB).toBe('/workspace/packages/app-b');
+  });
+
+  it('falls back to the manifest directory when no workspace folder owns it', async () => {
+    setWorkspaceFolders([]);
+    mockWorkspaceFiles({ '/elsewhere/package.json': '{}' });
+
+    const key = await resolveMutationCoordinatorKey('/elsewhere/package.json');
+
+    expect(key).toBe('/elsewhere');
+  });
+
+  it('falls back to the manifest directory when canonicalization fails (workspace escape)', async () => {
+    mockWorkspaceFiles({ '/workspace/vendor/package.json': '{}' });
+    fsMock.realpath.mockImplementation((value: string) => Promise.resolve(
+      value.startsWith('/workspace/vendor') ? `/outside${value}` : value,
+    ));
+
+    const key = await resolveMutationCoordinatorKey('/workspace/vendor/package.json');
+
+    expect(key).toBe('/workspace/vendor');
+  });
+
+  it('picks the deepest workspace folder when a manifest is canonically contained by more than one', async () => {
+    setWorkspaceFolders(['/workspace', '/workspace/nested']);
+    mockWorkspaceFiles({
+      '/workspace/pnpm-lock.yaml': '',
+      '/workspace/nested/pkg/package.json': '{}',
+    });
+
+    const key = await resolveMutationCoordinatorKey('/workspace/nested/pkg/package.json');
+
+    // If the shallower '/workspace' folder had won, the ancestor walk would reach
+    // '/workspace/pnpm-lock.yaml' and key on '/workspace' instead.
+    expect(key).toBe('/workspace/nested/pkg');
+  });
+
+  it('ignores a workspace folder whose own path cannot be canonicalized and still matches on the rest', async () => {
+    setWorkspaceFolders(['/workspace', '/broken-folder']);
+    mockWorkspaceFiles({ '/workspace/pkg/package.json': '{}' });
+    fsMock.realpath.mockImplementation((value: string) => (
+      value === '/broken-folder' ? Promise.reject(new Error('ENOENT')) : Promise.resolve(value)
+    ));
+
+    const key = await resolveMutationCoordinatorKey('/workspace/pkg/package.json');
+
+    expect(key).toBe('/workspace/pkg');
+  });
+
+  it('falls back to the manifest directory when a found owning workspace folder still fails project resolution', async () => {
+    mockWorkspaceFiles({ '/workspace/broken/package.json': '{}' });
+    // The manifest file resolves fine, but its own directory does not (e.g. removed
+    // between the two `realpath` calls) — a failure distinct from having no owner at all.
+    fsMock.realpath.mockImplementation((value: string) => (
+      value === '/workspace/broken' ? Promise.reject(new Error('ELOOP')) : Promise.resolve(value)
+    ));
+
+    const key = await resolveMutationCoordinatorKey('/workspace/broken/package.json');
+
+    expect(key).toBe('/workspace/broken');
+  });
+
+  it('gives the same key for a canonical manifest path and a raw path reached through a symlinked workspace folder', async () => {
+    // The workspace folder is opened at a symlinked path (e.g. macOS `/tmp` ->
+    // `/private/tmp`, or a project symlink); VS Code reports it lexically as opened,
+    // never resolved. One call site already has a realpath-resolved manifest path
+    // (`packageIdentity.ts`); another has a raw path straight from `findFiles()`. Both
+    // must resolve to the same project root, not just the same manifest.
+    const lexicalRoot = '/Users/me/proj';
+    const canonicalRoot = '/Volumes/Code/proj';
+    const toCanonical = (value: string): string =>
+      value === lexicalRoot || value.startsWith(`${lexicalRoot}/`)
+        ? canonicalRoot + value.slice(lexicalRoot.length)
+        : value;
+
+    fsMock.realpath.mockImplementation((value: string) => Promise.resolve(toCanonical(value)));
+    setWorkspaceFolders([lexicalRoot]);
+    const canonicalFiles: Record<string, string> = {
+      [`${canonicalRoot}/package.json`]: '{}',
+      [`${canonicalRoot}/pnpm-lock.yaml`]: '',
+      [`${canonicalRoot}/packages/api/package.json`]: '{}',
+    };
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
+      const value = canonicalFiles[toCanonical(uri.fsPath)];
+      return value === undefined
+        ? Promise.reject(new Error(`File not found: ${uri.fsPath}`))
+        : Promise.resolve(Buffer.from(value));
+    });
+
+    const canonicalKey = await resolveMutationCoordinatorKey(`${canonicalRoot}/packages/api/package.json`);
+    const rawKey = await resolveMutationCoordinatorKey(`${lexicalRoot}/packages/api/package.json`);
+
+    expect(rawKey).toBe(canonicalKey);
+    expect(canonicalKey).toBe(canonicalRoot);
   });
 });

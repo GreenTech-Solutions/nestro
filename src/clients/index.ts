@@ -9,5 +9,5 @@ export * from './BunClient';
 // are module-internal helpers `ClientManager.ts` imports directly within this folder —
 // only `resolveAuditProjects()` and the `AuditProject` type are part of the public
 // surface consumed outside `src/clients/` (N8).
-export { resolveAuditProjects } from './projectResolver';
+export { resolveAuditProjects, resolveMutationCoordinatorKey } from './projectResolver';
 export type { AuditProject } from './projectResolver';

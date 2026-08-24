@@ -55,6 +55,11 @@ vi.mock('../clients', () => ({
     this.createClient = createClientMock;
   }),
   resolveAuditProjects: (packageFilePaths: readonly string[]) => resolveAuditProjectsMock(packageFilePaths),
+  // Test double for the AUD-09 coordinator key: each manifest's own directory,
+  // matching resolveAuditProjectsMock's default "no shared ancestor lockfile" shape.
+  resolveMutationCoordinatorKey: vi.fn((packageFilePath: string) => Promise.resolve(
+    packageFilePath.replace(/\/package\.json$/, ''),
+  )),
 }));
 
 vi.mock('../utils', () => ({
@@ -72,6 +77,14 @@ vi.mock('../utils', () => ({
     error: vi.fn(),
     warn: vi.fn(),
     dispose: vi.fn(),
+  },
+  // Test double for the AUD-09 coordinator: runs the given operation immediately
+  // without real cross-key exclusion — this file's provider-level tests only need
+  // installUpdateCommand's control flow, not coordinator concurrency semantics
+  // (those are covered directly in operationCoordinator.unit.test.ts).
+  mutationCoordinator: {
+    runExclusive: vi.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+    runManyExclusive: vi.fn((_keys: readonly string[], fn: () => Promise<unknown>) => fn()),
   },
   readAllWorkspaceDependencies: vi.fn(),
   readWorkspaceDependencies: vi.fn(),

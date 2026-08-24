@@ -62,6 +62,23 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(showError).toHaveBeenCalledWith('Failed to pin all versions — pin boom', 'pin boom');
   });
+
+  it('resolves an AUD-09 project-root key for every discovered workspace manifest before pinning', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/workspace/package.json' },
+      { fsPath: '/workspace/apps/web/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce(2);
+    const provider = makeProvider();
+
+    await pinAllVersionsCommand(provider);
+
+    // The bulk write and reload still ran, locked behind whichever project-root keys
+    // resolveMutationCoordinatorKey() derived from the two discovered manifests.
+    expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package version(s).');
+  });
 });
 
 function makeProvider(): PackagesProvider {
