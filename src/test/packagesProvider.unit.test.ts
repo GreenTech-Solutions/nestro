@@ -1709,6 +1709,164 @@ describe('PackagesProvider', () => {
       reason: 'workspace-escape',
     })]);
   });
+
+  describe('stale-safe reload', () => {
+    it('does not let an older load overwrite a newer one that already finished', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+      resolveOld([{
+        name: 'old-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await oldLoad;
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['new-package']);
+    });
+
+    it('does not let an older load with no discovered packages overwrite a newer one that already finished', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+      resolveOld([]);
+      await oldLoad;
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['new-package']);
+    });
+
+    it('keeps only the later of two reloads started back to back, such as a watcher tick racing a manual refresh', async () => {
+      let resolveWatcherRead: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies).mockReturnValueOnce(new Promise((resolve) => {
+        resolveWatcherRead = resolve;
+      }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const watcherReload = provider.loadPackages();
+      const manualRefresh = provider.loadPackages();
+      resolveWatcherRead([{
+        name: 'stale-watcher-result',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await Promise.all([watcherReload, manualRefresh]);
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['react', 'eslint']);
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(false);
+    });
+
+    it('discards a load that finishes after the provider has been disposed', async () => {
+      let resolveRead: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies).mockReturnValueOnce(new Promise((resolve) => {
+        resolveRead = resolve;
+      }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const loadPromise = provider.loadPackages();
+      provider.dispose();
+      resolveRead([{
+        name: 'late-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await loadPromise;
+
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(true);
+    });
+
+    it('keeps the current cancellation token when an older, already-superseded load finishes first', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveOld([{
+        name: 'old-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await oldLoad;
+      provider.dispose();
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(true);
+    });
+
+    it('does not open a second audit guard when a reload runs while an audit is in progress', async () => {
+      let resolveFirstAudit: (value: Map<string, string>) => void = () => {};
+      const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, string>>((resolve) => {
+        resolveFirstAudit = resolve;
+      }));
+      createClientMock.mockReturnValue({ runAudit: runAuditMock });
+      const provider = new PackagesProvider(new FilterManager('all'));
+      await provider.loadPackages();
+
+      const firstAudit = provider.runAudit();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(createClientMock).toHaveBeenCalledTimes(1);
+
+      await provider.loadPackages();
+      void provider.runAudit();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(createClientMock).toHaveBeenCalledTimes(1);
+
+      resolveFirstAudit(new Map([['react', 'high']]));
+      await firstAudit;
+    });
+  });
 });
 
 function mockNestroConfiguration(values: Record<string, unknown>): void {

@@ -103,6 +103,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }>();
 
   private packageSnapshotGeneration = 0;
+  /**
+   * Owns cancellation for the in-flight `loadPackages()` run. A new run aborts the
+   * previous one immediately; `dispose()` aborts it too, which the snapshot generation
+   * alone cannot express since disposal does not advance the generation counter.
+   */
+  private loadAbortController: AbortController | undefined;
   private loading = true;
   private writeSuppressionDepth = 0;
   private readonly writeSuppressionTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -645,15 +651,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     logger.info('Loading workspace packages.');
     const snapshotGeneration = this.packageSnapshotGeneration + 1;
     this.packageSnapshotGeneration = snapshotGeneration;
+    this.loadAbortController?.abort();
+    const abortController = new AbortController();
+    this.loadAbortController = abortController;
     this.packageLocationBaselines = new Map();
     this.loading = true;
-    this.auditResults = new Map();
-    this.auditProjects = [];
-    this.auditFailures = [];
-    this.auditState = 'idle';
-    this.lastAuditCount = undefined;
-    this.lastAuditSuccessfulRootCount = undefined;
-    this.failedAuditPaths = [];
+    // A reload must not clear another operation's own running guard; only reset audit
+    // state when no audit is currently in flight for it to own.
+    if (this.auditState !== 'running') {
+      this.auditResults = new Map();
+      this.auditProjects = [];
+      this.auditFailures = [];
+      this.auditState = 'idle';
+      this.lastAuditCount = undefined;
+      this.lastAuditSuccessfulRootCount = undefined;
+      this.failedAuditPaths = [];
+    }
     this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
@@ -663,7 +676,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const collidingManifestPaths = new Set<string>();
       for (const packageFilePath of new Set(entries.map(entry => entry.packageFilePath))) {
         const location = await resolveCanonicalPackageLocation(packageFilePath);
-        if (snapshotGeneration !== this.packageSnapshotGeneration) {
+        if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
           return;
         }
         if (location.ok) {
@@ -681,7 +694,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           }
         }
       }
-      if (snapshotGeneration !== this.packageSnapshotGeneration) {
+      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
       this.packageLocationBaselines = baselines;
@@ -731,16 +744,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       });
     }
     catch (err) {
-      if (snapshotGeneration !== this.packageSnapshotGeneration) {
+      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
       this.packageLocationBaselines = new Map();
       showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
     }
     finally {
-      if (snapshotGeneration === this.packageSnapshotGeneration) {
+      if (!this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         this.loading = false;
         this.emitTreeChanged();
+      }
+      if (this.loadAbortController === abortController) {
+        this.loadAbortController = undefined;
       }
     }
   }
@@ -840,6 +856,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     this.writeSuppressionTimers.clear();
     this.writeSuppressionDepth = 0;
+    this.loadAbortController?.abort();
     this.cancelAudit();
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
@@ -1006,6 +1023,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }
       this.emitTreeChanged();
     }
+  }
+
+  /** A load is outdated once a newer load has started or the provider has been disposed. */
+  private isLoadOutdated(snapshotGeneration: number, abortSignal: AbortSignal): boolean {
+    return snapshotGeneration !== this.packageSnapshotGeneration || abortSignal.aborted;
   }
 
   private emitTreeChanged(): void {
