@@ -212,7 +212,7 @@ suite('Workspace Isolation', () => {
   });
 });
 
-suite('AUD-04B command boundary smoke', function () {
+suite('command boundary smoke', function () {
   this.timeout(30000);
 
   const fixture = SINGLE_ROOT_FIXTURES[0];
@@ -709,13 +709,13 @@ suite('Shell Task Lifecycle: package update busy state', function () {
 });
 
 suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 19 entries the AUD-08 report contract requires', () => {
+  test('contributes.commands has exactly the 19 documented entries', () => {
     assert.strictEqual(getManifest().contributes.commands.length, 19);
   });
 
   test('capabilities.untrustedWorkspaces / virtualWorkspaces are not declared — implicit VS Code default today', () => {
-    // AUD-30 (UX-04) will declare these explicitly; this documents the
-    // present (absent) state so that future card has a red baseline to flip.
+    // These will eventually be declared explicitly; this documents the present (absent)
+    // state as a baseline to flip later.
     assert.strictEqual(getManifest().capabilities, undefined);
   });
 
@@ -730,9 +730,8 @@ suite('Manifest Contracts', () => {
 
     const requiredViewItem = /viewItem == ([\w-]+)/.exec(installUpdateEntry.when)?.[1];
     assert.strictEqual(requiredViewItem, 'outdated');
-    // AUD-29 (UX-02) fixes this: the exact-match `when` clause used by the
-    // inline Update button does not match an outdated+vulnerable
-    // contextValue, so the action that matters most silently disappears.
+    // The exact-match `when` clause used by the inline Update button does not match an
+    // outdated+vulnerable contextValue, so the action that matters most silently disappears.
     assert.notStrictEqual(item.contextValue, requiredViewItem);
 
     // Contrast: the other row actions use a regex `when` clause and do keep
@@ -744,9 +743,8 @@ suite('Manifest Contracts', () => {
     assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
   });
 
-  // AUD-04A (UX-01): row-only and contextual commands have no meaningful
-  // effect when triggered outside their row/context, so they are excluded
-  // from the Command Palette entirely via a `when: false` menu entry.
+  // Row-only and contextual commands have no meaningful effect when triggered outside their
+  // row/context, so they are excluded from the Command Palette entirely via a `when: false` menu entry.
   const PALETTE_HIDDEN_COMMAND_IDS = [
     'nestro.setFilter',
     'nestro.showFilterPicker',
@@ -794,23 +792,10 @@ suite('Contributed Command Surface: invocation without arguments', function () {
   this.timeout(30000);
 
   /**
-   * AUD-04A (UX-01) gave every row-only command handler (`installUpdate`,
-   * `pickVersion`, `switchDepType`, `pinVersion`, `removePackage`,
-   * `openOnNpm`, `copyPackageName`) a typed `isPackageItem()` guard —
-   * `src/providers/PackageItem.ts` — as its first statement, before any
-   * dereference of the (possibly absent) argument; `openOnNpm`/
-   * `copyPackageName` were extracted out of inline `extension.ts` lambdas
-   * into guarded command functions of their own (`src/commands/openOnNpm.ts`,
-   * `src/commands/copyPackageName.ts`) so the guard lives in one place per
-   * command instead of at the registration boundary.
-   *
-   * Every contributed command — global or row-only — therefore resolves
-   * `executeCommand()` and leaves no unhandled background rejection when
-   * invoked with no argument. Row-only/contextual commands are additionally
-   * hidden from the Command Palette (see 'Manifest Contracts' above), but
-   * `executeCommand()` still reaches the real handler directly through the
-   * API regardless of Palette visibility, which is exactly what this suite
-   * exercises.
+   * Every row-only command handler has a typed `isPackageItem()` guard as its first statement,
+   * so every contributed command resolves `executeCommand()` with no unhandled rejection when
+   * invoked with no argument — even though hidden from the Palette, `executeCommand()` still
+   * reaches the real handler directly through the API regardless of Palette visibility.
    */
   const COMMAND_IDS_UNDER_TEST: readonly string[] = [
     'nestro.refresh',
@@ -849,11 +834,9 @@ suite('Contributed Command Surface: invocation without arguments', function () {
 
   suiteTeardown(async () => {
     process.off('unhandledRejection', onUnhandledRejection);
-    // nestro.setFilter has no argument guard and silently accepts `undefined`
-    // (see the 'resolves' expectation above, and getFilteredEntries() in
-    // treeBuilder.ts, which tolerates an unrecognized filter by matching
-    // nothing) — restore the default so later runs of this file are not
-    // affected by this suite having executed.
+    // nestro.setFilter has no argument guard and silently accepts `undefined` (getFilteredEntries()
+    // in treeBuilder.ts tolerates an unrecognized filter by matching nothing) — restore the
+    // default so later runs of this file are not affected by this suite having executed.
     await vscode.commands.executeCommand('nestro.setFilter', 'all');
     // nestro.searchPackages opens a real, non-modal InputBox that only
     // resolves on hide/accept; since its handler is fire-and-forget it is
@@ -878,20 +861,17 @@ suite('Contributed Command Surface: invocation without arguments', function () {
         rejection = err;
       }
 
-      // searchPackages/showFilterPicker are fire-and-forget: a QuickPick or
-      // InputBox they open is never awaited by executeCommand() and would
-      // otherwise sit open in the background for the rest of this loop (and
-      // potentially for a stale, not-yet-empty allEntries, showFilterPicker
-      // genuinely can show one even with no argument involved).
+      // searchPackages/showFilterPicker are fire-and-forget: a QuickPick or InputBox they open
+      // is never awaited by executeCommand() and would otherwise sit open in the background for
+      // the rest of this loop, so it is closed explicitly here.
       await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
       if (commandId === 'nestro.openSettings') {
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       }
 
-      // Give a fire-and-forget internal promise a turn of the microtask
-      // queue to reject and be observed by the process-level listener above
-      // before asserting on it — there is no state to poll here, only the
-      // (im)possibility of an event that Node schedules on its own.
+      // Give a fire-and-forget internal promise a turn of the microtask queue to reject and be
+      // observed by the process-level listener above — there is no state to poll here, only the
+      // (im)possibility of an event Node schedules on its own.
       await new Promise(resolve => setImmediate(resolve));
       await new Promise(resolve => setImmediate(resolve));
 
@@ -937,12 +917,9 @@ suite('Native Package Manager Smoke (bun, yarn)', function () {
   });
 
   test('yarn --version reports a version when yarn is available through Corepack', async function () {
-    // Run from the system temp root, not the repository: this repo's own
-    // `packageManager: "pnpm@..."` pin makes Corepack refuse to run `yarn`
-    // at all from inside the working tree (verified manually — `yarn
-    // --version` from the repo root prints "This project is configured to
-    // use pnpm..." and exits non-zero), which would masquerade as "yarn is
-    // not installed" here.
+    // Run from the system temp root, not the repository: this repo's own `packageManager:
+    // "pnpm@..."` pin makes Corepack refuse to run `yarn` at all from inside the working tree,
+    // which would masquerade as "yarn is not installed" here.
     const probe = await probeNativeTool('yarn', ['--version'], await fixtureTempRoot());
     if (!probe.available) {
       console.warn(`[native-smoke] Skipping: yarn is not available on this machine (${probe.reason}).`);

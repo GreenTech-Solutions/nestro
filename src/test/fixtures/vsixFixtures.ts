@@ -2,13 +2,9 @@ import { crc32, deflateRawSync } from 'node:zlib';
 import type { VsixArchiveEntry } from '../../tools';
 
 /**
- * Fixtures for the VSIX package boundary suite.
- *
- * `buildZipFixture()` writes a real ZIP container byte by byte so the archive
- * reader is exercised against actual headers rather than a stub, and so the
- * verifier can be driven end to end without invoking vsce. `cleanVsix*()`
- * describes a package that satisfies every policy layer; each negative case in
- * the suite starts from it and changes exactly one thing.
+ * `buildZipFixture()` writes a real ZIP container byte by byte, so the archive reader is
+ * exercised against actual headers and the verifier can be driven end to end without vsce.
+ * `cleanVsix*()` passes every policy layer; each negative case changes exactly one thing.
  */
 
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;

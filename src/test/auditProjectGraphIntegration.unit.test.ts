@@ -3,13 +3,9 @@ import * as vscode from 'vscode';
 import { FilterManager, PackagesProvider } from '../providers';
 import { readAllWorkspaceDependencies } from '../utils';
 
-// N12 regression guard: every other provider-level suite (packagesProvider.unit.test.ts,
-// auditResultContract.unit.test.ts) mocks `resolveAuditProjects`, so none of them prove
-// that the REAL resolver, wired to the REAL provider, actually collapses several
-// manifests that share one lock file graph into a single audit run — the AUD-06 DoD
-// ("one lock file graph is audited exactly once"). This suite keeps `resolveAuditProjects`
-// and `PackagesProvider.runAudit()` both real; only `ClientManager.createClient()` (the
-// audit subprocess boundary) is stubbed, so no real npm/pnpm process ever runs.
+// Every other provider-level suite mocks `resolveAuditProjects`, so none of them prove that
+// the real resolver, wired to the real provider, collapses several manifests sharing one lock
+// file graph into a single audit run. Only `ClientManager.createClient()` is stubbed here.
 
 const fsMock = vi.hoisted(() => ({ realpath: vi.fn((value: string) => Promise.resolve(value)) }));
 vi.mock('node:fs/promises', () => fsMock);

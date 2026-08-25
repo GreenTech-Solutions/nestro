@@ -30,7 +30,7 @@ export async function runBunAudit(cwd: string, signal?: AbortSignal): Promise<Au
 
 /**
  * Runs `bun audit --json`, bounded by a timeout, output cap and optional cancellation
- * `signal` (`ARC-07`), and preserves advisory exit 1 for the Bun parser.
+ * `signal`, and preserves advisory exit 1 for the Bun parser.
  */
 export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
   const outcome = await runBoundedProcess('bun', ['audit', '--json'], {
@@ -46,10 +46,9 @@ export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Pro
 }
 
 /**
- * Parses Bun's raw npm Bulk Advisory response. Bun 1.3.x pairs `{}` with exit 0 and
- * a non-empty package-to-advisory-array object with exit 1. Any partial or unfamiliar
- * entry invalidates the complete payload so schema evolution cannot silently hide a
- * finding.
+ * Parses Bun's raw npm Bulk Advisory response: Bun 1.3.x pairs `{}` with exit 0 and a
+ * non-empty package-to-advisory-array object with exit 1. Any partial or unfamiliar entry
+ * invalidates the whole payload so schema evolution cannot silently hide a finding.
  */
 export function parseBunAuditOutcome(execution: AuditExecution): AuditOutcome {
   const { command, exitCode, stdout } = execution;

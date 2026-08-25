@@ -11,10 +11,9 @@ import {
 
 export async function pinAllVersionsCommand(provider: PackagesProvider): Promise<void> {
   try {
-    // Pin All can touch every workspace package.json across every project root, so it
-    // locks all of them for the full write + reload (`AUD-09`) rather than one root at
-    // a time — a concurrent single-row Pin/Update/Remove on any of these manifests
-    // waits behind this bulk write instead of racing it.
+    // Pin All can touch every workspace package.json, so it locks every project root for
+    // the full write + reload rather than one at a time: a concurrent single-row
+    // Pin/Update/Remove on any of these manifests waits behind this bulk write.
     const packageFilePaths = await getWorkspacePackageFilePaths();
     const projectKeys = await Promise.all(
       packageFilePaths.map(packageFilePath => resolveMutationCoordinatorKey(packageFilePath)),

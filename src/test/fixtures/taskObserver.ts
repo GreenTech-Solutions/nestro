@@ -1,27 +1,11 @@
 import * as vscode from 'vscode';
 
 /**
- * Mirrors the listener-registration / `settled`-guard / dispose pattern in
- * `runShellTaskAndWait()` (`src/utils/shellTask.ts`), generalized to accept a
- * prebuilt `vscode.Task` instead of a `ShellTaskCommand`.
- *
- * `runShellTaskAndWait()` always builds a `ShellExecution` task internally, so
- * it cannot be driven through a `CustomExecution` task directly. This helper
- * exercises the identical event-race handling against an arbitrary task
- * shape instead, so it can be pointed at `createNoProcessTask()` below.
- *
- * Note: the currently bundled VS Code versions (see `.vscode-test.mjs`) fire
- * `onDidEndTaskProcess` with `exitCode: undefined` even for `CustomExecution`
- * tasks and for `ShellExecution` tasks whose process never spawns at all —
- * contradicting the `tasks.onDidEndTaskProcess` doc comment ("This event
- * will not fire for tasks that don't execute an underlying process"),
- * confirmed empirically against several task shapes. `shellTask.ts`'s
- * `onDidEndTask`-without-a-preceding-`onDidEndTaskProcess` fallback
- * (`shellTask.ts:62-73`) therefore appears unreachable through genuine,
- * safely constructed tasks in these VS Code versions; this helper still
- * proves the outcome that fallback exists for — a task reporting no exit
- * code resolves as `undefined` instead of hanging — just via whichever of
- * the two events actually fires first.
+ * Mirrors `runShellTaskAndWait()`'s listener/dispose pattern for a prebuilt `vscode.Task`,
+ * since that function only builds `ShellExecution` tasks and cannot be pointed at
+ * `createNoProcessTask()` below. The bundled VS Code fires `onDidEndTaskProcess` with
+ * `exitCode: undefined` even for tasks whose process never spawns, so this exercises the
+ * same undefined-exit-code fallback via whichever of the two end events fires first.
  */
 export async function awaitTaskOutcome(task: vscode.Task): Promise<number | undefined> {
   let execution: vscode.TaskExecution | undefined;
@@ -96,19 +80,12 @@ export async function awaitTaskOutcome(task: vscode.Task): Promise<number | unde
 }
 
 /**
- * Resolves with the live `TaskExecution` once the task named `taskName` has an
- * OS process running. Subscribe **before** starting the task, or the event can
- * fire before the listener exists.
+ * Resolves with the live `TaskExecution` once `taskName` has an OS process running. Subscribe
+ * before starting the task, or the event can fire before the listener exists.
  *
- * `vscode.tasks.taskExecutions` is not a safe substitute. That array is the
- * extension host's own view and lists an execution as soon as `executeTask()`
- * is registered there, which happens before the main thread has spawned the
- * terminal. `terminate()` on a handle taken from it that early reaches a task
- * service that does not know the id yet: VS Code logs "Task to terminate not
- * found", the call is a silent no-op, and the process keeps running with no
- * end event ever arriving — the caller then hangs until its own timeout.
- * `onDidStartTaskProcess` is the first point at which both sides agree a live
- * process exists, so a terminate issued after it is always delivered.
+ * `vscode.tasks.taskExecutions` is not a safe substitute: it lists an execution before the
+ * terminal spawns, so a `terminate()` taken from it that early is a silent no-op and the
+ * caller hangs. `onDidStartTaskProcess` is the first point a terminate is reliably delivered.
  */
 export function awaitTaskProcessStart(
   taskName: string,
@@ -136,12 +113,9 @@ export function awaitTaskProcessStart(
 }
 
 /**
- * A task whose execution never spawns an OS process and reports no exit
- * code. `Pseudoterminal.onDidClose` is fired with no argument (`void`), not
- * `0`: a numeric close code is a real exit code as far as VS Code is
- * concerned and would make this fixture indistinguishable from a successful
- * task (see the `awaitTaskOutcome` doc comment above for why this still
- * observably fires `onDidEndTaskProcess`, just with `exitCode: undefined`).
+ * A task whose execution never spawns an OS process and reports no exit code:
+ * `Pseudoterminal.onDidClose` fires with no argument (`void`), not `0`, since a numeric
+ * close code would make this fixture indistinguishable from a successful task.
  */
 export function createNoProcessTask(name: string): vscode.Task {
   const task = new vscode.Task(

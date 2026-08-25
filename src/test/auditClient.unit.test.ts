@@ -262,10 +262,9 @@ describe.each(managerFixtures)('$manager audit result contract', (fixture) => {
     expectIncomplete(await runAuditOutcome(fixture.manager, auditArgs, cwd), 'unexpected-exit');
   });
 
-  // The case above uses a zero-finding report, so it is also rejected by the
-  // separate `exitCode !== 0` guard — widening the compatible exit codes alone
-  // would not turn it green. A report that does carry findings pins the exit
-  // code contract on its own.
+  // The case above uses a zero-finding report, so it's also rejected by the separate
+  // `exitCode !== 0` guard — widening the compatible exit codes alone would not turn it
+  // green. This case carries findings, so it pins the exit code contract on its own.
   it('rejects an unexpected exit code even when the report carries findings', async () => {
     mockAuditExit(2, fixture.advisories);
 
@@ -493,7 +492,7 @@ function npmCleanReport(): string {
   });
 }
 
-describe('runAuditOutcome() bounded-process termination (ARC-07)', () => {
+describe('runAuditOutcome() bounded-process termination', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

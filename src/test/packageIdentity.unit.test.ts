@@ -187,7 +187,7 @@ describe('package identity command helpers', () => {
   });
 
   it('reads only an exact string dependency spec and fails closed on malformed manifests', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-identity-spec-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-spec-'));
     const manifest = join(root, 'package.json');
     const location: CanonicalPackageLocation = {
       packageFilePath: manifest,
@@ -235,7 +235,7 @@ describe('package identity command helpers', () => {
   });
 
   it('rejects invalid manifest names, nested workspace ambiguity, and non-manifest symlink targets', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-identity-path-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-path-'));
     const child = join(root, 'child');
     const manifest = join(child, 'package.json');
     const target = join(child, 'manifest.txt');

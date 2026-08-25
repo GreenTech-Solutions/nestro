@@ -278,13 +278,9 @@ describe('evaluateVsixPolicy() — hashed bundle chunks', () => {
   });
 
   it('admits a chunk named only by a textual require — documented boundary, not a guarantee', () => {
-    // resolveBundleClosure() reads chunk text, it does not parse JavaScript. A
-    // require() spelled inside a comment or a string literal therefore counts as
-    // an edge. Writing into a packaged chunk already means controlling the build
-    // output, so this is a documented boundary rather than a package-boundary
-    // hole; the check remains fail-closed for the accidental leak SUP-03 is
-    // about. This test exists so the boundary is visible in the suite and any
-    // future tightening shows up here as a deliberate change.
+    // resolveBundleClosure() reads chunk text, it does not parse JavaScript: a require()
+    // spelled inside a comment or string literal counts as an edge. Writing into a packaged
+    // chunk already means controlling the build output, so an unreferenced file still fails closed.
     const closure = resolveBundleClosure('out/extension.cjs', new Map([
       ['out/extension.cjs', '// comment mentioning require("./evil-DEADBEEF.cjs")'],
       ['out/evil-DEADBEEF.cjs', 'not javascript at all'],
@@ -347,7 +343,6 @@ describe('evaluateVsixPolicy() — secret scan', () => {
     ['json-web-token', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSM'],
     ['publishing-token-assignment', 'VSCE_PAT=abcdefghijklmnopqrstuvwxyz'],
     ['credential-assignment', 'password: "hunter2hunter2hunter2"'],
-    // Reviewer fix pass 1: four assignment forms that the first revision missed.
     ['credential-assignment', 'MARKETPLACE_TOKEN = "ab12cd34ef56gh78ij90"'],
     ['credential-assignment', 'AUTH_TOKEN=ab12cd34ef56gh78ij90'],
     ['credential-assignment', 'client_secret: "ab12cd34ef56gh78ij90"'],
@@ -365,8 +360,8 @@ describe('evaluateVsixPolicy() — secret scan', () => {
     });
   });
 
-  // Reviewer iteration 2: ordinary code that must never fail a release. A gate
-  // that reddens falsely is a gate people learn to ignore.
+  // Ordinary code that must never fail a release: a gate that reddens falsely is a gate
+  // people learn to ignore.
   it.each([
     ['a dotted member expression', 'this.tokenizer.onToken = this.tokenParser.write.bind(this)'],
     ['a token assigned from an identifier', 'const refreshToken = userSessionIdentifierValue;'],
@@ -545,17 +540,16 @@ describe('evaluateVsixPolicy() — clean tracked checkout', () => {
 
 describe('evaluateVsixPolicy() — budgets', () => {
   it('pins the measured clean baseline, so moving the budget is a deliberate edit', () => {
-    // Measured on the clean allowlist package (refactoring, 0.4.2, 2026-08-08).
-    // Deriving the budget from a constant only guards the arithmetic; without
-    // this pin the constant itself could be raised and the budget would follow
-    // it silently.
+    // Pins the exact numbers rather than deriving them, so raising the underlying constant
+    // is caught here as a deliberate edit instead of silently following through the budget
+    // arithmetic.
     expect(CLEAN_BASELINE_COMPRESSED_BYTES).toBe(717682);
     expect(CLEAN_BASELINE_PACKAGED_FILE_COUNT).toBe(16);
     expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(897102);
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(26);
   });
 
-  it('derives both budgets from the measured clean baseline (plan decision 16)', () => {
+  it('derives both budgets from the measured clean baseline', () => {
     expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(Math.floor(CLEAN_BASELINE_COMPRESSED_BYTES * 1.25));
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(CLEAN_BASELINE_PACKAGED_FILE_COUNT + 10);
   });

@@ -1,27 +1,11 @@
 import type { FixtureFiles, WorkspaceFixture } from './types';
 
 /**
- * Fixture catalogue for the Extension Host integration suite.
- *
- * Every fixture is pure metadata: manifests plus lock files, never a
- * `node_modules` tree and never a package manager invocation. Nothing here
- * reaches a registry, so a run stays hermetic and offline.
- *
- * Package managers are distinguished the same way the extension itself
- * distinguishes them (`ClientManager.detectPackageManager()`): the
- * `packageManager` manifest field first, then lock file detection. npm, pnpm,
- * Yarn Classic and Bun are covered through their lock files; Yarn Modern is
- * covered through both `packageManager` metadata and Berry-format markers.
- *
- * The public package-manager API continues to model Yarn as `yarn`; the audit
- * boundary separately resolves Classic/Modern/unknown from each fixture root.
- *
- * A second group of `SINGLE_ROOT_FIXTURES` entries (the `precedence-*` and
- * `no-manager-signals`/`yarn-modern-no-metadata` ids) combines *competing*
- * signals in one root — a manifest field alongside a contradicting lock file,
- * or several lock files at once — to prove the priority order documented on
- * `ClientManager.detectPackageManager()` rather than assume it from fixtures
- * that each cleanly represent a single manager.
+ * Fixture catalogue for the Extension Host integration suite: pure metadata (manifests plus
+ * lock files, no `node_modules`, no package manager invocation) so runs stay hermetic and
+ * offline. Managers are distinguished the same way `ClientManager.detectPackageManager()`
+ * does — `packageManager` field first, then lock file detection — and the `precedence-*` /
+ * `no-manager-signals` fixtures combine competing signals to prove that priority order.
  */
 
 interface ManifestOptions {
@@ -118,19 +102,15 @@ export const SINGLE_ROOT_FIXTURES: readonly WorkspaceFixture[] = [
     'yarn-ambiguous-app/.yarnrc.yml': YARN_MODERN_RC,
   }),
   // `packageManager` is checked before any lock file at the same directory
-  // (`ClientManager.detectPackageManagerFromManifest` runs first inside the
-  // ancestor loop) — the yarn.lock here is real and present, and must still
-  // lose.
+  // (`ClientManager.detectPackageManagerFromManifest` runs first in the ancestor loop) —
+  // the yarn.lock here is real and present, and must still lose.
   singleRoot('precedence-field-over-lockfile', 'field-over-lockfile-app', 'pnpm', {
     'field-over-lockfile-app/package.json': manifest('field-over-lockfile-app', { packageManager: 'pnpm@9.1.0' }),
     'field-over-lockfile-app/yarn.lock': YARN_CLASSIC_LOCK,
   }),
-  // `detectPackageManagerFromLockfile` checks lock files in a fixed order —
-  // pnpm-lock.yaml, yarn.lock, bun.lock/bun.lockb, package-lock.json/
-  // npm-shrinkwrap.json — and returns on the first match. These three
-  // fixtures each stack every lower-priority lock file behind the winner to
-  // prove the order holds when several are genuinely present at once, not
-  // merely when only one manager's file exists.
+  // `detectPackageManagerFromLockfile` checks lock files in a fixed order (pnpm-lock.yaml,
+  // yarn.lock, bun.lock/bun.lockb, package-lock.json/npm-shrinkwrap.json) and returns on the
+  // first match; these three fixtures stack every lower-priority file behind the winner.
   singleRoot('precedence-pnpm-over-yarn-bun-npm', 'pnpm-wins-app', 'pnpm', {
     'pnpm-wins-app/package.json': manifest('pnpm-wins-app'),
     'pnpm-wins-app/pnpm-lock.yaml': PNPM_LOCK,
@@ -178,10 +158,9 @@ const SAME_BASENAME_FIXTURE: WorkspaceFixture = {
 };
 
 /**
- * A workspace folder that carries a manifest at its own root plus nested
- * package manifests, opened next to an unrelated standalone folder. Covers
- * root-manifest discovery and the ancestor walk performed by
- * `ClientManager.detectPackageManager()` for nested packages.
+ * A workspace folder that carries a manifest at its own root plus nested package manifests,
+ * opened next to an unrelated standalone folder. Covers root-manifest discovery and the
+ * ancestor walk performed by `ClientManager.detectPackageManager()` for nested packages.
  */
 const ROOT_MANIFEST_FIXTURE: WorkspaceFixture = {
   id: 'multi-root-root-manifest',

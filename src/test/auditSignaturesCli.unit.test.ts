@@ -99,13 +99,9 @@ describe('createNodeSignatureAuditCliDependencies()', () => {
   });
 
   /**
-   * The guard is meant to be piped: `pnpm run audit:signatures | head -1` closes
-   * the pipe while the verdict is still being written, and a plain
-   * `stream.write()` turns that into an unhandled EPIPE — a verified run
-   * reported as a crash, and a hard failure under `pipefail`. AUD-12 paid for
-   * this twice, so the tolerant writer is a behaviour of this file, not an
-   * implementation detail borrowed from it: swapping either writer for a direct
-   * `stream.write()` has to fail here.
+   * The guard is meant to be piped (e.g. `| head -1`), which can close the pipe mid-write;
+   * a plain `stream.write()` would then throw an unhandled EPIPE, turning a verified run into
+   * a crash. The tolerant writer is asserted directly here, not borrowed as an implementation detail.
    */
   it.each([
     ['writeOut', process.stdout],

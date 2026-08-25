@@ -13,7 +13,7 @@ const COMMAND = 'pnpm audit signatures --json';
 
 /**
  * Verbatim stdout of `pnpm audit signatures --json` on pnpm 11.20.0 against this
- * repository's own lockfile (846 packages, exit 0). Measured for AUD-11.
+ * repository's own lockfile (846 packages, exit 0).
  */
 const VERIFIED_SIGNATURE_REPORT = `{
   "audited": 846,
@@ -24,9 +24,8 @@ const VERIFIED_SIGNATURE_REPORT = `{
 `;
 
 /**
- * Verbatim stdout of the same command on the previously pinned pnpm 11.0.8,
- * which has no `signatures` subcommand and discards the positional argument.
- * It is an ordinary advisory report and it exits 0 — the defect AUD-11 closes.
+ * Verbatim stdout of the same command on pnpm 11.0.8, which has no `signatures` subcommand
+ * and discards the positional argument: an ordinary advisory report that exits 0.
  */
 const ADVISORY_REPORT_FROM_PNPM_11_0_8 = `{
   "advisories": {},
@@ -263,12 +262,9 @@ describe('evaluateSignatureAudit() rejects everything else', () => {
   });
 
   /**
-   * Shape measured on pnpm 11.20.0 against a proxy that answers 500 for one
-   * packument: the failing entry is pushed onto `invalid` from a catch block
-   * that never runs the `audited++` of the success path, so the classified sum
-   * exceeds `audited`. Both rejection reasons apply; the named one has to win,
-   * because `count-mismatch` would report arithmetic and drop the package names
-   * in precisely the run where they matter.
+   * A failed packument push onto `invalid` without incrementing `audited` makes the classified
+   * sum exceed `audited`, so both rejection reasons could apply here. `invalid-signatures` must
+   * win: `count-mismatch` would report arithmetic and drop the package names that matter most.
    */
   it('names the invalid packages when a failed packument also breaks the counts', () => {
     const outcome = evaluateSignatureAudit(execution({
@@ -290,14 +286,9 @@ describe('evaluateSignatureAudit() rejects everything else', () => {
   });
 
   /**
-   * Characterization of the documented boundary, not an endorsement of it: pnpm
-   * silently drops a package whose packument answers 404, and a registry with no
-   * signing keys, out of the denominator. The report stays self-consistent and
-   * exits 0, so the guard accepts it — `audited` is a floor, never a total.
-   * Measured: a proxy answering 404 for one package took this repository from
-   * 846 audited to 843, with the verdict still green. Closing this needs an
-   * independent count of what should have been audited, which pnpm does not
-   * report; it belongs to the CI step that owns the release boundary.
+   * Characterizes a known boundary, not an endorsement of it: pnpm silently drops a package
+   * whose packument answers 404 (or whose registry has no signing keys) from the denominator
+   * while staying self-consistent and exiting 0 — `audited` is a floor, never a total.
    */
   it('accepts a partial audit, because the report carries no total to compare against', () => {
     const outcome = evaluateSignatureAudit(execution({

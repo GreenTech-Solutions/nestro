@@ -40,8 +40,8 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
   }
 
   // Locked from the pre-task manifest re-read through the remove task and the
-  // reload/rollback that follows it (`AUD-09`) — the confirmation dialog above stays
-  // outside the lock so it never blocks an unrelated project root.
+  // reload/rollback that follows it. The confirmation dialog above stays outside the
+  // lock so it never blocks an unrelated project root.
   const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
   await mutationCoordinator.runExclusive(projectKey, async () => {
     const checked = await resolveUnambiguousManifestEntry(capability, provider);

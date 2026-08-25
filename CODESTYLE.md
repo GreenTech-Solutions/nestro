@@ -124,6 +124,40 @@ src/utils/
 
 ---
 
+## Code Comments
+
+A comment says **what this is**, not the story of how it got here. One line is the
+default, three is the ceiling.
+
+- **No task, audit, or issue identifiers.** `AUD-09`, `ARC-01`, `SEC-05`, ticket keys and
+  PR links never appear in `src/**`. That context belongs to the commit message and the
+  tracker; in code it goes stale and means nothing to a reader who cannot open them.
+- **No narrative.** Benchmark tables, rejected alternatives, "before this change ..." and
+  rationale essays belong in the commit message or a `workflow/` report, not in the source.
+- **Say what the signature cannot.** A comment restating the function name is noise —
+  delete it.
+- A non-obvious constant justifies its value in one clause, not a methodology write-up.
+- English, present tense.
+- A JSDoc block growing past three lines usually means the name is wrong or the unit does
+  too much. Fix that instead of documenting around it.
+
+```ts
+// Good
+/** Serializes package-project mutations by canonical project-root key. */
+
+// Bad — task id
+/** Serializes package-project mutations by canonical project-root key (`ARC-01`). */
+
+// Bad — narrative; this belongs in the commit message
+/**
+ * Chosen by benchmark, not by convention: a synthetic 24-project-root fixture was
+ * driven at caps 1..24 on the implementer's machine (Apple M5, 10 logical cores).
+ * Throughput rose sharply through cap 4-6 and plateaued by cap 8 ...
+ */
+```
+
+---
+
 ## ESLint Rules (active)
 
 | Rule | Level | Effect |
@@ -197,3 +231,5 @@ ghost(test): add unit tests for compareRawVersions
 | `vscode.window.showErrorMessage(...)` directly | Use `showError()` from `src/utils/notify.ts` |
 | Floating promise (unhandled async call) | Prefix with `void` or `await` |
 | Mutating provider state from arbitrary places | Use `markPackage*()` / `invalidateUpdateCache()` methods, then fire `_onDidChangeTreeData` |
+| Task / audit id in a code comment (`AUD-09`, `ARC-01`) | Drop it — that context lives in the commit message and the tracker |
+| Multi-paragraph comment explaining rationale or benchmarks | One-line description; rationale goes in the commit message or a `workflow/` report |

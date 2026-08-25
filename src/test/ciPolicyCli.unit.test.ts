@@ -291,7 +291,7 @@ describe('CI policy CLI', () => {
     }
   });
 
-  it('preserves the exact AUD-14 ci.yml contract while scanning every workflow', async () => {
+  it('preserves the exact ci.yml contract while scanning every workflow', async () => {
     const workflows = await readCanonicalWorkflows();
     const writeError = vi.fn();
     await expect(runCiPolicyCli({

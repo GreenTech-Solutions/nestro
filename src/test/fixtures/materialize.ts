@@ -19,14 +19,9 @@ export async function fixtureTempRoot(): Promise<string> {
 }
 
 /**
- * Copies a fixture into a brand new temporary directory. Every call gets its own
- * root, so two tests using the same fixture never touch the same files, and the
- * repository working tree is never written to.
- *
- * The temp root is resolved through `realpath` because macOS exposes
- * `os.tmpdir()` behind the `/var` -> `/private/var` symlink while VS Code
- * reports workspace folder paths verbatim; comparing the two forms otherwise
- * fails.
+ * Copies a fixture into a brand-new temp directory per call, so tests never share files or
+ * write to the repository working tree. The root is resolved through `realpath` because macOS
+ * exposes `os.tmpdir()` behind the `/var` -> `/private/var` symlink, which VS Code does not follow.
  */
 export async function materializeFixture(fixture: WorkspaceFixture): Promise<MaterializedFixture> {
   const rootPath = await realpath(await mkdtemp(join(tmpdir(), TEMP_ROOT_PREFIX)));

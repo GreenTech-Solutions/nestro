@@ -5,14 +5,9 @@ import type { SignatureAuditCliDependencies, SignatureAuditExecution } from './a
 import { createStreamLineWriter } from './verifyVsixCli';
 
 /**
- * Node bindings for the signature audit guard. Everything that touches the
- * process lives here; the decision in `auditSignatures.ts` stays pure so both
- * the accepting and the rejecting side can be exercised without a registry.
- *
- * The guard spawns pnpm itself rather than being piped its output. A pipe would
- * hand the exit status to the last process in it and drop the audit's own code
- * — the same false-green shape `src/tools/verifyVsix.ts` documents for
- * `check:vsce | grep`.
+ * Node bindings for the signature audit guard: everything touching the process lives here, so
+ * the pure decision in `auditSignatures.ts` can be exercised without a registry. Spawns pnpm
+ * itself rather than being piped its output, which would drop the audit's own exit code.
  */
 
 /** Same child-output ceiling the VSIX verifier uses; a signature report is far smaller. */
@@ -25,12 +20,9 @@ function readString(value: unknown): string {
 }
 
 /**
- * Builds the runner for `pnpm audit signatures --json`.
- *
- * A failing audit is a normal result here, not an exception: the exit code and
- * whatever was written to stdout are handed to the pure evaluator, which is the
- * only place allowed to decide what they mean. Only a spawn failure leaves the
- * exit code undefined, and the evaluator rejects that too.
+ * A failing audit is a normal result here, not an exception: the exit code and stdout are
+ * handed to the pure evaluator, which alone decides what they mean. Only a spawn failure
+ * leaves the exit code undefined, which the evaluator also rejects.
  */
 export function createNodeSignatureAuditRunner(
   cwd: string,

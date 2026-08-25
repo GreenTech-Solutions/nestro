@@ -196,15 +196,14 @@ function isPathContained(basePath: string, candidatePath: string): boolean {
 
 type CanonicalRootResult
   = | { ok: true; root: string; workspaceFolder: string }
-    // Two distinct failure causes, kept apart so callers never label an unreadable path
-    // (a broken symlink, ELOOP, a permissions error) as a proven symlink escape (N4):
     // `unresolvable-path` means `realpath` itself failed; `workspace-escape` means it
-    // succeeded but the resolved path is provably outside the workspace.
+    // resolved outside the workspace. Kept apart so an unreadable path is never
+    // reported as a proven symlink escape.
     | { ok: false; reason: 'unresolvable-path' | 'workspace-escape' };
 
 /**
  * Resolves `candidateDir` to its real (symlink-free) path and confirms it stays inside
- * the real path of `workspaceFolderPath` (`SEC-05`). Returns a failure result — never a
+ * the real path of `workspaceFolderPath`. Returns a failure result — never a
  * partially-trusted path — when the directory cannot be read or escapes the workspace.
  */
 async function canonicalizeRoot(candidateDir: string, workspaceFolderPath: string): Promise<CanonicalRootResult> {
@@ -264,8 +263,8 @@ type ManifestProjectResolution
 
 /**
  * Resolves one manifest to its canonical audit project. An ancestor signal that escapes
- * the owning workspace is never trusted or merged into (`SEC-05`); resolution instead
- * retries using only the manifest's own directory before giving up entirely.
+ * the owning workspace is never trusted or merged into; resolution instead retries
+ * using only the manifest's own directory before giving up entirely.
  */
 async function resolveManifestProject(
   packageFilePath: string,
@@ -294,12 +293,9 @@ async function resolveManifestProject(
     return { ok: false, reason: canonical.reason, detail: rejectionDetail(packageFilePath, canonical.reason) };
   }
 
-  // The ancestor signal's canonical root did not resolve inside the workspace: discard
-  // that untrusted evidence and retry using only the manifest's own directory, never
-  // merging into it. Containment is checked here (SEC-05) before any file is read from
-  // that directory — a directory that itself fails to resolve inside the workspace must
-  // never have its package.json or lock files read, so signal detection only runs once
-  // canonicalization has already proven the directory is safe.
+  // The ancestor signal escaped the workspace: discard it and retry from the manifest's
+  // own directory, never merging into it. Containment is proven before anything in that
+  // directory is read, so signal detection never touches an unproven directory.
   const ownCanonical = await canonicalizeRoot(manifestDir, workspaceFolderPath);
   if (!ownCanonical.ok) {
     return { ok: false, reason: ownCanonical.reason, detail: rejectionDetail(packageFilePath, ownCanonical.reason) };
@@ -324,7 +320,7 @@ async function resolveManifestProject(
  * directory an audit command should run from, the lock file it audits, the owning
  * workspace folder and every origin manifest that shares that project graph. Manifests
  * that resolve to the same canonical root are merged into one project so a single lock
- * file graph is audited exactly once (`ARC-07`).
+ * file graph is audited exactly once.
  */
 export async function resolveAuditProjects(packageFilePaths: readonly string[]): Promise<AuditProjectResolution> {
   const byRoot = new Map<string, { project: ResolvedManifestProject; originManifests: string[] }>();
@@ -389,15 +385,9 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
 }
 
 /**
- * Resolve the key a mutation command coordinator (`AUD-09`) locks on for one manifest:
- * the same canonical project root `resolveAuditProjects()` computes (`AUD-06`), so
- * mutation coordination and audit project resolution key identically — manifests that
- * share one lock file are one project graph for both purposes, not one lock per
- * manifest. Falls back to the manifest's own directory when no workspace folder owns it
- * or canonicalization fails; every command argument reaching this point has already
- * passed the `AUD-04B` identity boundary, so that fallback is not expected to trigger in
- * practice, but a lock keyed on *something* stable is always safer than skipping the
- * lock outright.
+ * Resolves the key a mutation command locks on: the same canonical project root
+ * `resolveAuditProjects()` computes, so manifests sharing one lock file are one graph
+ * for both. Falls back to the manifest's own directory rather than skipping the lock.
  */
 /** Deepest workspace folder whose realpath contains `canonicalDir`, matched by canonical path rather than a lexical prefix. */
 async function resolveCanonicalOwningWorkspaceFolder(canonicalDir: string): Promise<string | undefined> {

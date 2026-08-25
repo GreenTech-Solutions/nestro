@@ -63,7 +63,7 @@ describe('pinAllVersionsCommand()', () => {
     expect(showError).toHaveBeenCalledWith('Failed to pin all versions — pin boom', 'pin boom');
   });
 
-  it('resolves an AUD-09 project-root key for every discovered workspace manifest before pinning', async () => {
+  it('resolves a project-root key for every discovered workspace manifest before pinning', async () => {
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/workspace/package.json' },
       { fsPath: '/workspace/apps/web/package.json' },

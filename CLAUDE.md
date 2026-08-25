@@ -94,6 +94,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ## Conventions
 - Command IDs: `nestro.<camelCase>` — declare in `package.json` `contributes.commands` **and** register in `activate()`
 - TypeScript: strict mode — no `any`, explicit return types on exported functions
+- Code comments: one line by default, three at most; English, present tense; they say what the code is, not how it came to be. No task/audit ids (`AUD-09`, `ARC-01`), no benchmark tables, no rationale essays — that context belongs in the commit message. Rules and examples: **[CODESTYLE.md](CODESTYLE.md)** → Code Comments
 - Disposables: always `context.subscriptions.push(...)` — never leak event listeners or providers
 - Imports: `import * as vscode from 'vscode'` (namespace import, not default)
 - Always import from barrel `index.ts`, never from implementation files directly. Barrels currently use `export *`; the selective named-export contract is a planned change, not the present state

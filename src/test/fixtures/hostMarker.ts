@@ -5,17 +5,9 @@ import { dirname, join } from 'node:path';
 const MARKER_FILE_NAME = 'extension-host-pids.log';
 
 /**
- * Records the current Extension Host process next to the generated
- * `.code-workspace` file.
- *
- * A restart cannot be detected from inside the process it kills. `process.pid`
- * is constant for the lifetime of a process, and a restart re-loads this module
- * from scratch in the new host, so any in-memory copy of the pid is
- * re-initialized along with it — comparing the two can never fail. The evidence
- * therefore has to outlive the process, which is why it goes to disk.
- *
- * `.vscode-test.mjs` removes the channel workspace directory before every run,
- * so the file always starts empty and one recorded line means one host.
+ * Records the current Extension Host pid to disk, since a restart cannot be detected from
+ * inside the process it kills — any in-memory copy of the pid is re-initialized with it.
+ * `.vscode-test.mjs` clears this file before every run, so one line means one host.
  */
 export function recordExtensionHost(): void {
   appendFileSync(markerFilePath(), `${process.pid}\n`, 'utf8');

@@ -36,7 +36,7 @@ async function createRealAuditProject(packageNames: readonly string[]): Promise<
   manifest: string;
   cleanup: () => Promise<void>;
 }> {
-  const root = await mkdtemp(join(tmpdir(), 'nestro-aud08-'));
+  const root = await mkdtemp(join(tmpdir(), 'nestro-audit-'));
   const manifest = join(root, 'package.json');
   await writeFile(manifest, '{}');
   await mkdir(join(root, 'node_modules'), { recursive: true });
@@ -55,7 +55,7 @@ vi.mock('../clients', () => ({
     this.createClient = createClientMock;
   }),
   resolveAuditProjects: (packageFilePaths: readonly string[]) => resolveAuditProjectsMock(packageFilePaths),
-  // Test double for the AUD-09 coordinator key: each manifest's own directory,
+  // Test double for the coordinator key: each manifest's own directory,
   // matching resolveAuditProjectsMock's default "no shared ancestor lockfile" shape.
   resolveMutationCoordinatorKey: vi.fn((packageFilePath: string) => Promise.resolve(
     packageFilePath.replace(/\/package\.json$/, ''),
@@ -78,7 +78,7 @@ vi.mock('../utils', () => ({
     warn: vi.fn(),
     dispose: vi.fn(),
   },
-  // Test double for the AUD-09 coordinator: runs the given operation immediately
+  // Test double for the coordinator: runs the given operation immediately
   // without real cross-key exclusion — this file's provider-level tests only need
   // installUpdateCommand's control flow, not coordinator concurrency semantics
   // (those are covered directly in operationCoordinator.unit.test.ts).
@@ -1090,7 +1090,7 @@ describe('PackagesProvider', () => {
 
     // The old finally block must take the false side of the identity guard and leave
     // the replacement controller installed. A mutation that unconditionally clears it
-    // makes the next cancel a no-op, leaving this second process alive (ARC-07/N3).
+    // makes the next cancel a no-op, leaving this second process alive.
     resolveOldAudit(new Map());
     await oldAudit;
     expect(newSignal.aborted).toBe(false);
@@ -1327,7 +1327,7 @@ describe('PackagesProvider', () => {
 
   it('suppresses a badge when a resolved dependency symlink escapes the project root', async () => {
     const fixture = await createRealAuditProject(['react']);
-    const outsideRoot = await mkdtemp(join(tmpdir(), 'nestro-aud08-outside-'));
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'nestro-audit-outside-'));
     try {
       const outsidePackage = join(outsideRoot, 'react');
       await mkdir(outsidePackage, { recursive: true });
@@ -1741,9 +1741,9 @@ function setProviderState(
   Object.assign(provider as unknown as Record<string, unknown>, state);
 }
 
-describe('AUD-04B package identity boundary', () => {
+describe('package identity boundary', () => {
   it('rejects a manifest replaced after materialization before the first mutation', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-baseline-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-baseline-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -1781,7 +1781,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('rejects an in-place manifest rewrite with the original inode before mutation', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-in-place-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-in-place-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -1822,7 +1822,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('does not issue a progress capability when tree refresh starts a reload synchronously', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-reload-race-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-reload-race-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -1869,7 +1869,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('rejects stale and forged rows while ignoring mutations of a provider-owned row object', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-rows-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-rows-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -1943,7 +1943,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('distinguishes duplicate package names by dependency section', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-sections-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-sections-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -1975,7 +1975,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('rejects a row issued by a different provider instance', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-foreign-provider-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-foreign-provider-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -2008,7 +2008,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('keeps provider-issued capabilities current across progress, baseline refresh, and update marks', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-capability-lifecycle-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-capability-lifecycle-'));
     const manifest = join(root, 'package.json');
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
@@ -2082,7 +2082,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('keeps duplicate names in separate manifests tied to their exact paths', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-duplicate-manifests-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-duplicate-manifests-'));
     const firstRoot = join(root, 'first');
     const secondRoot = join(root, 'second');
     const firstManifest = join(firstRoot, 'package.json');
@@ -2120,7 +2120,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('accepts a case-only manifest alias only when the filesystem resolves it to the owned file', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-case-alias-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-case-alias-'));
     const manifest = join(root, 'package.json');
     const caseAliasRoot = join(dirname(root), basename(root).toUpperCase());
     const caseAlias = join(caseAliasRoot, 'package.json');
@@ -2196,7 +2196,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('accepts an internal symlink while rejecting a symlink into another workspace', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-symlink-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-symlink-'));
     const workspaceRoot = join(root, 'workspace');
     const targetRoot = join(workspaceRoot, 'target');
     const aliasRoot = join(workspaceRoot, 'alias');
@@ -2235,7 +2235,7 @@ describe('AUD-04B package identity boundary', () => {
   });
 
   it('rejects two lexical manifest paths that resolve to one canonical file', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-canonical-collision-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-canonical-collision-'));
     const targetRoot = join(root, 'target');
     const aliasRoot = join(root, 'alias');
     const targetManifest = join(targetRoot, 'package.json');
@@ -2271,8 +2271,8 @@ describe('AUD-04B package identity boundary', () => {
     ['symlink escape', 'workspace-escape'],
     ['broken manifest path', 'unresolvable-path'],
   ] as const)('fails closed for %s', async (_label, reason) => {
-    const root = await mkdtemp(join(tmpdir(), 'nestro-aud04b-path-'));
-    const outside = await mkdtemp(join(tmpdir(), 'nestro-aud04b-outside-'));
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-path-'));
+    const outside = await mkdtemp(join(tmpdir(), 'nestro-identity-outside-'));
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       const manifest = join(root, 'package.json');

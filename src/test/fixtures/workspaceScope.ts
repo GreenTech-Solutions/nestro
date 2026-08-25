@@ -11,13 +11,9 @@ export interface OpenedFixtureWorkspace extends MaterializedFixture {
 }
 
 /**
- * Materializes a fixture and appends its roots to the running Extension Host
- * workspace.
- *
- * Fixture roots are always appended after the anchor folder created by
- * `.vscode-test.mjs`, never inserted at index 0: replacing the first workspace
- * folder restarts the Extension Host, which restarts the whole test file and
- * leaves two hosts racing over the same workspace.
+ * Materializes a fixture and appends its roots to the running Extension Host workspace,
+ * always after the anchor folder created by `.vscode-test.mjs`, never at index 0: replacing
+ * the first workspace folder restarts the Extension Host mid test file.
  */
 export async function openFixtureWorkspace(fixture: WorkspaceFixture): Promise<OpenedFixtureWorkspace> {
   const materialized = await materializeFixture(fixture);
@@ -42,9 +38,8 @@ export async function openFixtureWorkspace(fixture: WorkspaceFixture): Promise<O
 }
 
 /**
- * Rolls back a partially opened fixture. The workspace mutation may have been
- * rejected outright, may have timed out after taking effect, or may have landed
- * while a later step failed, so the registered folders are counted rather than
+ * The workspace mutation may have been rejected outright, timed out after taking effect, or
+ * landed while a later step failed, so the registered folders are counted here rather than
  * assumed.
  */
 async function discardFailedOpen(
@@ -68,11 +63,9 @@ async function discardFailedOpen(
 }
 
 /**
- * Removes the fixture folders from the workspace and deletes the temporary copy,
- * restoring the baseline the test started from.
- *
- * Folders are removed by identity rather than by tail position: a stale folder
- * count would shift the start index and take the anchor folder with it.
+ * Removes the fixture folders from the workspace and deletes the temporary copy. Folders are
+ * removed by identity rather than by tail position: a stale folder count would shift the start
+ * index and take the anchor folder with it.
  */
 export async function closeFixtureWorkspace(opened: OpenedFixtureWorkspace): Promise<void> {
   for (const folder of opened.folders) {

@@ -18,19 +18,10 @@ export interface NativeToolProbe {
 }
 
 /**
- * Spawns a native package-manager binary directly — not through the VS Code
- * Task API, which `Shell Task Lifecycle` (AUD-02C) already covers, and not
- * through `ClientManager`/`Client.buildUpdateCommand()`, which stay hermetic
- * argv-only elsewhere in this file. This is the deliberately non-hermetic
- * half of AUD-02D (plan decision 18/23): it proves the actual `bun`/`yarn`
- * binaries `Client` subclasses would shell out to are genuinely present and
- * runnable in this environment.
- *
- * Any failure — the binary is missing (`ENOENT`), or present but unable to
- * complete (e.g. a Corepack version resolution failing without network) —
- * comes back as `available: false` rather than throwing, so callers can skip
- * the dependent test gracefully instead of failing a machine that simply
- * does not have the tool.
+ * Spawns a native package-manager binary directly, deliberately bypassing the VS Code Task
+ * API and `ClientManager` (which stay hermetic argv-only), to prove the real `bun`/`yarn`
+ * binary is present and runnable. Any failure returns `available: false` instead of throwing,
+ * so callers can skip the dependent test gracefully.
  */
 export async function probeNativeTool(
   command: string,
@@ -51,13 +42,9 @@ export interface PinnedManagerDir {
 }
 
 /**
- * A temp directory whose `package.json` pins `packageManager` — the exact
- * signal Corepack reads to transparently run a specific Yarn release,
- * independent of whatever `yarn` happens to resolve to on PATH. Must live
- * outside the repository: this repo's own `packageManager` field (pinned to
- * pnpm) makes Corepack refuse to run `yarn` at all from inside the working
- * tree (verified manually — `yarn --version` from the repo root prints
- * "This project is configured to use pnpm...").
+ * A temp directory whose `package.json` pins `packageManager` — the signal Corepack reads to
+ * run a specific Yarn release regardless of PATH. Must live outside the repository: this repo's
+ * own `packageManager` (pinned to pnpm) makes Corepack refuse to run `yarn` inside the working tree.
  */
 export async function createPinnedManagerDir(packageManager: string): Promise<PinnedManagerDir> {
   const dir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));

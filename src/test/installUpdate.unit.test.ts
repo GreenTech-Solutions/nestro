@@ -242,7 +242,7 @@ describe('installUpdateCommand()', () => {
 
   it('reloads after a deferred write whose new baseline cannot be verified', async () => {
     mockDeferredInstall(true);
-    // Persistent, not "once": the AUD-09 coordinator key resolution reads this same
+    // Persistent, not "once": coordinator key resolution reads this same
     // manifest (for its own ancestor package-manager signal) before the write below
     // does, so both reads must see this content.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
@@ -286,7 +286,7 @@ describe('installUpdateCommand()', () => {
 
   it('updates package.json without running a task when deferred install is enabled', async () => {
     mockDeferredInstall(true);
-    // Persistent, not "once": the AUD-09 coordinator key resolution reads this same
+    // Persistent, not "once": coordinator key resolution reads this same
     // manifest before the write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from([
       '{',
@@ -318,7 +318,7 @@ describe('installUpdateCommand()', () => {
 
   it('updates the clicked devDependencies row when deferred install is enabled', async () => {
     mockDeferredInstall(true);
-    // Persistent, not "once": the AUD-09 coordinator key resolution reads this same
+    // Persistent, not "once": coordinator key resolution reads this same
     // manifest before the write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
       dependencies: { typescript: '^4.0.0' },
@@ -351,7 +351,7 @@ describe('installUpdateCommand()', () => {
 
   it('keeps duplicate dependency rows independent during a deferred update', async () => {
     mockDeferredInstall(true);
-    // Persistent, not "once": the AUD-09 coordinator key resolution reads this same
+    // Persistent, not "once": coordinator key resolution reads this same
     // manifest before the write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
       dependencies: { typescript: '^4.0.0' },
@@ -590,7 +590,7 @@ describe('runInstallCommand()', () => {
     ['yarn', 'yarn install'],
     ['bun', 'bun install'],
   ] as const)('runs %s install', async (packageManager, command) => {
-    // Persistent, not "once": the AUD-09 coordinator key resolution reads this same
+    // Persistent, not "once": coordinator key resolution reads this same
     // manifest (for its own ancestor package-manager signal) before ClientManager's
     // own detection read does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
@@ -774,7 +774,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('updates package.json for all visible outdated packages in deferred mode', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
-    // Persistent, not "once": the AUD-09 coordinator resolves a project-root key per
+    // Persistent, not "once": the coordinator resolves a project-root key per
     // touched capability (reading this same manifest) before the bulk write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
       dependencies: { react: '^18.0.0' },
@@ -807,7 +807,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('updates duplicate dependency rows independently in a deferred bulk update', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
-    // Persistent, not "once": the AUD-09 coordinator resolves a project-root key per
+    // Persistent, not "once": the coordinator resolves a project-root key per
     // touched capability (reading this same manifest) before the bulk write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
       dependencies: { react: '^18.0.0' },
@@ -834,7 +834,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('prevents partial writes when a deferred bulk update spans files and a write fails', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
-    // Path-aware, not a fixed once-chain: the AUD-09 coordinator resolves a
+    // Path-aware, not a fixed once-chain: the coordinator resolves a
     // project-root key per touched manifest (reading each one) before the bulk write
     // below reads them again, so the same path must return the same content on every
     // call regardless of which caller or how many times it reads.
@@ -1065,7 +1065,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('reloads after a deferred bulk write whose refreshed baseline cannot be verified', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
-    // Persistent, not "once": the AUD-09 coordinator resolves a project-root key
+    // Persistent, not "once": the coordinator resolves a project-root key
     // (reading this same manifest) before the bulk write below does.
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from(JSON.stringify({
       dependencies: { react: '^18.0.0' },
@@ -1225,7 +1225,7 @@ function mockNestroConfiguration(values: Record<string, unknown>): void {
 
 /**
  * Stub `vscode.workspace.fs.readFile` by path rather than by call order. Needed
- * whenever a test spans more than one manifest: the AUD-09 coordinator resolves a
+ * whenever a test spans more than one manifest: the coordinator resolves a
  * project-root key per touched manifest (reading it) before the real read/write flow
  * reads the same file again, so a fixed `mockResolvedValueOnce` chain no longer lines
  * up with which caller reads which file first.

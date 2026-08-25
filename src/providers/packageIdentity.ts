@@ -170,11 +170,9 @@ export async function resolveCanonicalPackageLocation(
       return { ok: false, reason: 'cross-workspace' };
     }
     if (lexicalOwner === undefined) {
-      // A case-insensitive filesystem can resolve a manifest spelling whose
-      // lexical components do not match the workspace URI byte-for-byte. The
-      // canonical path and stat below prove that this is the same existing file;
-      // a symlink into another workspace is not a case-only alias and remains
-      // rejected here.
+      // A case-insensitive filesystem can resolve a manifest spelling that differs from the
+      // workspace URI byte-for-byte; the canonical path and stat below confirm it is the same
+      // file, and a symlink into another workspace is still rejected as not a case-only alias.
       const canonicalRelativePath = path.relative(canonicalOwner.path, canonicalPackageFilePath);
       const expectedLexicalPath = path.join(canonicalOwner.folder.uri.fsPath, canonicalRelativePath);
       if (!isCaseOnlyAlias(packageFilePath, expectedLexicalPath)

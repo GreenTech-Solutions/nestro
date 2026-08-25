@@ -60,11 +60,9 @@ export function sanitizePackageText(value: string): string {
 }
 
 /**
- * Structural guard for commands that only make sense against a real row: the Command
- * Palette can invoke a contributed command with no argument at all, and `executeCommand()`
- * accepts any value from the API regardless of the declared parameter type. This narrows
- * `unknown` down to an actual `PackageItem` instance so callers can safely no-op instead
- * of dereferencing a missing/malformed argument.
+ * Narrows an unknown command argument to `PackageItem`: the Command Palette can invoke a
+ * command with no argument, and `executeCommand()` accepts any value regardless of the
+ * declared parameter type, so callers must not assume the argument is well-formed.
  */
 export function isPackageItem(value: unknown): value is PackageItem {
   try {

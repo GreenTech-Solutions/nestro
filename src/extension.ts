@@ -93,16 +93,7 @@ export function registerWorkspaceFoldersWatcher(
   );
 }
 
-/**
- * How long the package.json watcher coalesces filesystem events before
- * reloading.
- *
- * Every event restarts this timer, so a caller that rewrites a watched file
- * faster than this interval starves the callback and observes no reload at
- * all. Tests that write in a loop must derive their pacing from this value
- * rather than hardcoding one — see `WRITE_RETRY_INTERVAL_MS` in
- * `src/test/fixtures/watcherHarness.ts`.
- */
+/** Filesystem-event coalescing window: each event restarts the timer, so writes faster than this interval never trigger a reload. */
 export const PACKAGE_JSON_WATCHER_DEBOUNCE_MS = 500;
 
 export function registerPackageJsonWatcher(

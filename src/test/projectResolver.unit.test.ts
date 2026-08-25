@@ -366,7 +366,7 @@ describe('resolveMutationCoordinatorKey()', () => {
     vi.mocked(vscode.workspace.fs.readFile).mockRejectedValue(new Error('not mocked'));
   });
 
-  it('keys by the ancestor lockfile project root, not the manifest\'s own directory (AUD-09/AUD-06 parity)', async () => {
+  it('keys by the ancestor lockfile project root, not the manifest\'s own directory', async () => {
     mockWorkspaceFiles({
       '/workspace/package.json': '{}',
       '/workspace/pnpm-lock.yaml': '',

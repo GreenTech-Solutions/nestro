@@ -55,9 +55,9 @@ export async function runResolvedPackageVersion(
   version: string,
   provider: PackagesProvider,
 ): Promise<void> {
-  // Locked from the pre-write/pre-task revalidation through the write or task and the
-  // reconciliation that follows it (`AUD-09`); the key is derived from the capability's
-  // already-canonical `packageFilePath` before any lock is requested.
+  // Locked from the pre-write revalidation through the write or task and the
+  // reconciliation that follows it; the key comes from the capability's already-canonical
+  // `packageFilePath` before any lock is requested.
   const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
   await mutationCoordinator.runExclusive(projectKey, async () => {
     const checked = await revalidateCommandPackageItem(capability, provider);
@@ -120,9 +120,9 @@ export async function runResolvedPackageVersion(
 export async function runInstallCommand(): Promise<void> {
   try {
     const packageFilePath = await resolveInstallPackageFilePath();
-    // Locked for the full task run (`AUD-09`) so a concurrent Update/Pin/Remove/Switch
-    // on the same project root cannot start a second package-manager process, or write
-    // the manifest, while this install is running.
+    // Locked for the full task run so a concurrent Update/Pin/Remove/Switch on the same
+    // project root cannot start a second package-manager process, or write the manifest,
+    // while this install is running.
     const projectKey = await resolveMutationCoordinatorKey(packageFilePath);
     await mutationCoordinator.runExclusive(projectKey, async () => {
       const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
@@ -177,11 +177,9 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
     version: capability.item.latest as string,
   }));
 
-  // Update All can span multiple project roots in one call (the deferred branch
-  // writes every touched manifest in one atomic multi-file write below). All of them
-  // are locked together for the whole operation (`AUD-09`) — a concurrent single-row
-  // command on any of these manifests waits behind this bulk update instead of
-  // racing it, and this bulk update never partially holds a subset of its roots.
+  // Update All can span multiple project roots in one call, so all of them are locked
+  // together for the whole operation: a concurrent single-row command on any of these
+  // manifests waits behind it, and the bulk update never holds a subset of its roots.
   const projectKeys = await Promise.all(
     updates.map(update => resolveMutationCoordinatorKey(update.capability.packageFilePath)),
   );

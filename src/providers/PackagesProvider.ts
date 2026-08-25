@@ -53,8 +53,7 @@ export type { PackageIdentityResolution, ResolvedPackageItem } from './packageId
  * One resolved audit project (canonical root, lockfile, origin manifests) together with
  * the raw vulnerability map its audit run produced. Kept project-level, not flattened
  * into row badges, so the full result and origin manifest set survive even when row
- * attribution is suppressed below — this is the input `AUD-08` will read from to build a
- * structured, resolved-path-aware report.
+ * attribution is suppressed below and can back a structured, resolved-path-aware report.
  */
 export interface AuditProjectSummary {
   readonly project: AuditProject;
@@ -115,9 +114,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   /**
-   * Owns cancellation for the in-flight `runAudit()` run (`ARC-07`). Set for the duration
-   * of one run only, so `cancelAudit()`/`dispose()` can never abort a *future* run that
-   * happens to start after this one already finished.
+   * Owns cancellation for the in-flight `runAudit()` run. Set for the duration of one run
+   * only, so `cancelAudit()`/`dispose()` can never abort a *future* run that happens to
+   * start after this one already finished.
    */
   private auditAbortController: AbortController | undefined;
   private lastAuditCount: number | undefined;
@@ -847,10 +846,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   /**
-   * Cancels the in-flight audit run, if any (`ARC-07`). Resets the busy state
-   * synchronously — before the aborted `client.runAudit()` call has actually settled —
-   * so a caller never observes a stale "running" state while process teardown is still
-   * happening in the background. A no-op when no audit is running.
+   * Cancels the in-flight audit run, if any. Resets the busy state synchronously — before
+   * the aborted `client.runAudit()` call settles — so a caller never observes a stale
+   * "running" state while process teardown is still happening. A no-op when idle.
    */
   cancelAudit(): void {
     if (this.auditState !== 'running' || this.auditAbortController === undefined) {
@@ -869,9 +867,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditState = 'running';
     this.lastAuditSuccessfulRootCount = undefined;
     this.failedAuditPaths = [];
-    // Cleared here, not just on success below, so getAuditProjects() — the AUD-08
-    // contract — never hands back a previous run's stale projects while this run is
-    // in progress, after an early exit with no package files, or after an exception (N10).
+    // Cleared here, not just on success below, so getAuditProjects() never hands back a
+    // previous run's stale projects while this run is in progress, after an early exit
+    // with no package files, or after an exception.
     this.auditProjects = [];
     this.auditFailures = [];
     // Clear row-scoped evidence atomically with the report snapshot. Rebuild before
@@ -889,10 +887,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
 
-      // Canonical project graph (ARC-07): manifests that share the same lock file
-      // resolve to the same project root and are audited exactly once. Rejected
-      // manifests (no owning workspace, or a workspace-escaping root — SEC-05) never
-      // reach a client at all and are treated the same as a failed audit root.
+      // Canonical project graph: manifests sharing a lock file resolve to the same
+      // project root and are audited exactly once. Rejected manifests — no owning
+      // workspace, or a workspace-escaping root — never reach a client at all.
       const { projects, rejected } = await resolveAuditProjects(packageFilePaths);
       if (rejected.length > 0) {
         logger.error('Audit project resolution failed; see the security audit report for redacted details.');
@@ -1187,7 +1184,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return entries;
   }
 
-  /** Legacy Map-only adapters retain AUD-06's conservative single-manifest behavior. */
+  /** Legacy Map-only adapters retain the conservative single-manifest behavior. */
   private applyLegacyProjectAuditResults(
     project: AuditProject,
     vulnerabilities: ReadonlyMap<string, AuditSeverity>,

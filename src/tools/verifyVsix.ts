@@ -13,11 +13,9 @@ import { readVsixArchive } from './vsixArchive';
 import { parseVsixManifestIdentity } from './vsixManifest';
 
 /**
- * `check:vsce` entrypoint. It packages the extension, then verifies the bytes
- * that were actually produced against the allowlist in `vsixPolicy.ts`, and
- * only publishes the verified `.vsix`, its normalized manifest and the SHA-256
- * digests when nothing was flagged. A rejected package is deleted so it can
- * never be mistaken for a verified artifact by a later step.
+ * `check:vsce` entrypoint: packages the extension, verifies the produced bytes against the
+ * allowlist in `vsixPolicy.ts`, and publishes the manifest and SHA-256 digest only when nothing
+ * was flagged. A rejected package is deleted so it cannot be mistaken for a verified artifact.
  */
 
 /** Relative path of the vsce CLI script; both npm and pnpm materialise it here. */
@@ -461,15 +459,9 @@ function formatViolation(violation: PolicyViolation): string {
 }
 
 /**
- * Writes every diagnostic to stderr and the normalized source-path manifest to
- * stdout — but only once the package has been accepted.
- *
- * The ordering is load-bearing, not cosmetic. A consumer that pipes this
- * command and greps the manifest for the entrypoint takes its exit status from
- * the grep, not from this process. Emitting the manifest before the verdict
- * would therefore let a rejected package — one this very run deletes from disk
- * — still answer "out/extension.cjs is present" to that consumer. Stdout means
- * "verified"; a rejection leaves it empty.
+ * Writes diagnostics to stderr and the manifest to stdout, but only stdout once the package is
+ * accepted: a caller piping this into `grep` for the entrypoint takes its exit status from grep,
+ * so emitting the manifest before the verdict would let a rejected, deleted package still "pass".
  */
 export async function runVerifyVsixCli(
   argv: readonly string[],

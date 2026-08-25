@@ -11,10 +11,9 @@ export interface BoundedProcessOptions {
   /** External cancellation; already-aborted signals short-circuit before a process is spawned. */
   signal?: AbortSignal;
   /**
-   * Pause between the initial termination signal (`SIGTERM` on posix, a non-forceful
-   * `taskkill` on win32) sent to the whole process tree and escalating to a forceful
-   * kill (`SIGKILL` / `taskkill /f`) of a child that ignored it. Overridable so tests
-   * don't have to wait out the production default.
+   * Pause between the initial termination signal (`SIGTERM` on posix, a non-forceful `taskkill`
+   * on win32) and escalating to a forceful kill (`SIGKILL` / `taskkill /f`) of a child that
+   * ignored it. Overridable so tests don't have to wait out the production default.
    */
   killGracePeriodMs?: number;
 }
@@ -67,29 +66,17 @@ export type BoundedProcessOutcome
     | BoundedProcessSpawnError;
 
 /**
- * Pause between the initial termination signal and the forceful escalation for a
- * process that ignores it (`ARC-07`/N2). Not itself a reviewed product-facing gate
- * like the audit timeout/buffer bounds — it only governs how long an already-bounded
- * cleanup step may take — so a conservative, generously short default is used and left
- * overridable per call.
+ * Pause between the initial termination signal and the forceful escalation for a process
+ * that ignores it. Governs only how long an already-bounded cleanup step may take, so a
+ * conservative, short default is used and left overridable per call.
  */
 const DEFAULT_KILL_GRACE_PERIOD_MS = 2_000;
 
 /**
- * Runs one child process with an explicit timeout, output cap and cancellation signal,
- * and classifies the result into a typed outcome instead of a raw exit code or thrown
- * error. Every non-`exit` outcome means the process was terminated before it produced a
- * complete, trustworthy result — callers must never treat `timeout`, `aborted` or
- * `overflow` as if they were a successful run, and must never inspect their (possibly
- * truncated) partial output (`ARC-07`).
- *
- * Spawns directly (rather than through `execFile`/`exec`) so the child can be made the
- * leader of its own process group (`detached: true` on posix): `execFile`'s options do
- * not forward `detached` at all, so it can never reach more than the direct child, and
- * package manager commands (`npm`/`pnpm`/`yarn`/`bun`) commonly fork worker processes
- * of their own that would otherwise survive a timeout, abort or overflow untouched.
- * Termination always targets the whole tree, with an escalation to a forceful kill if
- * the initial signal is ignored.
+ * Classifies the run into a typed outcome: a non-`exit` outcome means the process was
+ * terminated, so callers must not treat `timeout`/`aborted`/`overflow` as success or trust
+ * their truncated output. Spawns directly (not via `execFile`) so the child can lead its own
+ * process group, letting termination reach worker processes package managers commonly fork.
  */
 export function runBoundedProcess(
   command: string,
@@ -140,13 +127,9 @@ export function runBoundedProcess(
       resolve(outcome);
     };
 
-    // Sends the initial termination signal to the whole tree immediately, then
-    // escalates to a forceful kill after `killGracePeriodMs` if it's still alive — a
-    // child that ignores the first signal no longer outlives the runner silently
-    // (`ARC-07`/N2). `finish()` only ever fires from `close`, so this function's
-    // returned promise does not settle until the process has actually exited, even
-    // when that takes the full grace period. Idempotent: timeout, external abort and
-    // overflow can all race to call this, but only the first one schedules anything.
+    // Sends the initial termination signal to the whole tree, then escalates to a forceful
+    // kill after `killGracePeriodMs` if still alive. Idempotent — only the first of a racing
+    // timeout/abort/overflow schedules anything — and the promise stays pending until `close`.
     const terminate = (): void => {
       if (terminating) {
         return;
@@ -237,10 +220,9 @@ export function runBoundedProcess(
       });
     });
 
-    // `close` (not `exit`) so stdio has fully flushed before stdout/stderr are read.
-    // Checked in this order deliberately: an explicit caller cancellation is the most
-    // specific and intentional signal available, so it is reported even if the
-    // timeout timer or the buffer cap also happened to trip in the same tick.
+    // `close` (not `exit`) so stdio has fully flushed before stdout/stderr are read. Checked
+    // in this order deliberately: an explicit caller cancellation is reported even if the
+    // timeout timer or buffer cap also tripped in the same tick.
     child.on('close', (code, signal) => {
       childClosed = true;
       if (terminating) {
@@ -293,10 +275,9 @@ function killProcessGroup(child: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): v
     return;
   }
   try {
-    // Negative pid targets the whole process group — not just the direct child — so
-    // grandchildren spawned by npm/pnpm/yarn/bun wrapper scripts are reached too
-    // (`ARC-07`/N1). Relies on `detached: true` at spawn making the child its own
-    // group leader instead of sharing this process's group.
+    // Negative pid targets the whole process group, not just the direct child, so
+    // grandchildren spawned by npm/pnpm/yarn/bun wrapper scripts are reached too. Relies
+    // on `detached: true` at spawn making the child its own group leader.
     process.kill(-child.pid, signal);
   }
   catch {

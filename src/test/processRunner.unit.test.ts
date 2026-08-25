@@ -5,13 +5,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getWindowsTaskkillPath, runBoundedProcess } from '../utils';
 
-// This suite deliberately does NOT mock `node:child_process` (contrast with
-// auditClient.unit.test.ts / yarnAuditClient.unit.test.ts / bunAuditClient.unit.test.ts,
-// which all mock the exec boundary). runBoundedProcess() is the one place a hung/broken
-// audit process actually gets bounded and killed (ARC-07); asserting that against a real
-// `node` child process is the only way to prove the timeout, cancellation and buffer cap
-// genuinely terminate a subprocess rather than merely rejecting a promise while the real
-// process keeps running in the background.
+// This suite deliberately does NOT mock `node:child_process`, unlike the audit client suites
+// that mock the exec boundary: `runBoundedProcess()` is the one place a hung/broken process
+// gets bounded and killed, so only a real `node` child process proves it actually terminates.
 
 const cwd = process.cwd();
 const markerFiles: string[] = [];
@@ -107,12 +103,11 @@ describe('runBoundedProcess() — real child process', () => {
     expect(existsSync(marker)).toBe(false);
   });
 
-  it('kills the whole process tree, not just the direct child, when a timeout fires (N1)', async () => {
+  it('kills the whole process tree, not just the direct child, when a timeout fires', async () => {
     const marker = markerPath();
-    // The direct child forks a grandchild of its own — the shape every real audit
-    // command (npm/pnpm/yarn/bun) can take when they delegate to a worker process.
-    // A direct-pid-only kill (the pre-fix behaviour) terminates the parent but leaves
-    // this grandchild to write its marker once its own 500ms delay elapses.
+    // The direct child forks a grandchild of its own — the shape every real audit command
+    // (npm/pnpm/yarn/bun) can take when delegating to a worker process. Killing only the
+    // direct pid would leave this grandchild to write its marker once its delay elapses.
     const grandchildCode = `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'done'), 500)`;
     const parentCode = `require('node:child_process').spawn('node', ['-e', ${JSON.stringify(grandchildCode)}], `
       + `{ stdio: 'ignore' }); setTimeout(() => {}, 60000);`;
@@ -124,7 +119,7 @@ describe('runBoundedProcess() — real child process', () => {
     expect(existsSync(marker)).toBe(false);
   });
 
-  it('escalates to a forceful kill when a process traps the initial termination signal (N2)', async () => {
+  it('escalates to a forceful kill when a process traps the initial termination signal', async () => {
     const marker = markerPath();
     // Records its own pid, then makes SIGTERM inert — the runner's first termination
     // signal alone must not be enough for this test to observe a dead process.
@@ -187,11 +182,10 @@ describe('runBoundedProcess() — real child process', () => {
     expect(outcome).toEqual({ kind: 'overflow', maxBufferBytes: 100 });
   });
 
-  it('terminates and reports overflow when stderr alone exceeds the per-stream limit (N8)', async () => {
-    // stdout stays far under the limit on its own; only stderr crosses it. Node's
-    // `maxBuffer` (and this runner's own cap) is enforced per stream, not against a
-    // There is no shared stdout/stderr budget — this input distinguishes per-stream
-    // enforcement from an incorrect aggregate cap.
+  it('terminates and reports overflow when stderr alone exceeds the per-stream limit', async () => {
+    // stdout stays far under the limit on its own; only stderr crosses it. There is no shared
+    // stdout/stderr budget — Node's `maxBuffer` (and this runner's own cap) is enforced per
+    // stream, so this input distinguishes per-stream enforcement from an incorrect aggregate cap.
     const outcome = await runBoundedProcess(
       'node',
       ['-e', 'process.stdout.write("12345"); process.stderr.write("x".repeat(1_000_000))'],

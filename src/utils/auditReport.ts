@@ -129,11 +129,9 @@ export function createAuditAdvisory(input: AuditAdvisoryInput): AuditAdvisory {
 }
 
 /**
- * Merges a normalized advisory into a stable identity map. The map key is deliberately
- * manager/schema-aware: the same package can be reported by independent projects and
- * distinct advisories for one package must not collapse merely because their severity is
- * equal. A stable advisory ID or canonical URL is preferred, with a deterministic,
- * explicitly unstable title/range fallback.
+ * Merges a normalized advisory into a stable identity map, keyed manager/schema-aware so
+ * distinct advisories for one package never collapse merely because their severity matches.
+ * A stable advisory ID or canonical URL is preferred, with an explicitly unstable fallback.
  */
 export function mergeAuditAdvisory(
   advisories: Map<string, AuditAdvisory>,

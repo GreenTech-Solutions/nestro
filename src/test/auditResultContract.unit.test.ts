@@ -6,9 +6,9 @@ import {
   readAllWorkspaceDependencies,
 } from '../utils';
 
-// End-to-end guard for ARC-02: the audit runner, the package manager client and the tree
-// status row are wired together with only the child process mocked, so an unrecognized
-// audit result can never reach the user as "No vulnerabilities".
+// End-to-end guard: the audit runner, the package manager client and the tree status row are
+// wired together with only the child process mocked, so an unrecognized audit result can
+// never reach the user as "No vulnerabilities".
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
@@ -27,8 +27,8 @@ vi.mock('../clients', async () => {
       this.createClient = () => new NpmClient('/workspace');
     }),
     // Every known package file resolves to one project rooted at its own directory —
-    // this suite's fixtures are all single-manifest, so real project-graph dedupe
-    // (`ARC-07`) is not what's under test here; only the audit-result contract is.
+    // this suite's fixtures are all single-manifest, so real project-graph dedupe is
+    // not what's under test here; only the audit-result contract is.
     resolveAuditProjects: (packageFilePaths: readonly string[]) => Promise.resolve({
       projects: packageFilePaths.map(packageFilePath => ({
         projectRoot: '/workspace',

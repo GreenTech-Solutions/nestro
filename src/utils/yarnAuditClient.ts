@@ -55,8 +55,8 @@ export async function runYarnAudit(cwd: string, signal?: AbortSignal): Promise<A
 
 /**
  * Runs the family-specific Yarn audit command without ever guessing Classic behavior.
- * Bounded by a timeout, output cap and optional cancellation `signal` (`ARC-07`); a
- * process that was terminated before it exited is always incomplete or error.
+ * Bounded by a timeout, output cap and optional cancellation `signal`; a process that
+ * was terminated before it exited is always incomplete or error.
  */
 export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
   const { family, source } = await resolveYarnFamily(cwd);
@@ -76,10 +76,9 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
     signal,
   });
   if (outcome.kind === 'spawn-error') {
-    // The shared, family-agnostic describeBoundedProcessFailure() can only produce a
-    // generic "yarn could not run…" message. Restores the pre-`ARC-07` shape (explicit
-    // Classic/Berry family, message truncated to its first line) that AUD-05B established and that a
-    // shared runner cannot reproduce on its own (N6) — and is this event's one log call.
+    // describeBoundedProcessFailure() is family-agnostic and can only produce a generic "yarn
+    // could not run…" message; this reports the explicit Classic/Berry family instead, truncated
+    // to its first line, and is this event's one log call.
     const familyLabel = family === 'classic' ? 'classic' : 'berry';
     const detail = `yarn ${familyLabel} audit could not run: ${describeError(outcome.message)}`;
     logger.error('Yarn audit process could not start; see the security audit report for redacted details.');

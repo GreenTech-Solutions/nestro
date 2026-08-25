@@ -19,8 +19,8 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
     return;
   }
 
-  // Locked from the pre-write revalidation through the reload (`AUD-09`) so a
-  // concurrent Update/Pin/Remove on the same project root cannot interleave with it.
+  // Locked from the pre-write revalidation through the reload so a concurrent
+  // Update/Pin/Remove on the same project root cannot interleave with it.
   const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
   await mutationCoordinator.runExclusive(projectKey, async () => {
     const checked = await revalidateCommandPackageItem(capability, provider);

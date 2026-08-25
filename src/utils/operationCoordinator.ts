@@ -1,19 +1,7 @@
 /**
- * Serializes package-project mutations by canonical project-root key (`ARC-01`).
- *
- * Guarantees:
- * - Two operations sharing a key never run their bodies concurrently; the later one
- *   waits for the earlier one to fully finish (including its own release) before it
- *   starts.
- * - Operations across different keys can run concurrently, bounded by `concurrencyCap`
- *   shared across every key — an unbounded number of independent project roots can
- *   never all execute their mutation at once.
- * - `runManyExclusive()` acquires every key it is given in the same deterministic sort
- *   order every caller uses, so two multi-key operations can never form a circular
- *   wait — the classic lock-ordering deadlock-avoidance argument.
- * - A throwing or cancelled operation still releases every key lock and concurrency
- *   slot it held: acquisition and release are paired through `finally`, not through the
- *   operation completing successfully.
+ * Serializes package-project mutations by canonical project-root key: operations sharing
+ * a key run one at a time, different keys run concurrently up to `concurrencyCap`, and
+ * every acquisition is released through `finally` even when the operation throws.
  */
 export class OperationCoordinator {
   private readonly keyQueues = new Map<string, Promise<unknown>>();
@@ -56,9 +44,7 @@ export class OperationCoordinator {
       }
     }
     finally {
-      // Release in reverse acquisition order; irrelevant for correctness (the
-      // per-key chains are independent) but keeps unwind order intuitive. `slice()`
-      // first so this never mutates `releases` in place.
+      // Reverse acquisition order; `slice()` keeps `releases` itself unmutated.
       for (const release of releases.slice().reverse()) {
         release();
       }

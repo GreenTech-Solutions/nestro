@@ -19,9 +19,9 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
     return;
   }
 
-  // The lock is held from the manifest re-read below through the write and the
-  // post-write reload (`AUD-09`), so no concurrent mutation of the same project root
-  // can interleave with this read-modify-write.
+  // Held from the manifest re-read below through the write and the post-write reload,
+  // so no concurrent mutation of the same project root can interleave with this
+  // read-modify-write.
   const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
   await mutationCoordinator.runExclusive(projectKey, async () => {
     const checked = await resolveUnambiguousManifestEntry(capability, provider);

@@ -17,17 +17,16 @@ export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 export type AuditPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 /**
- * Audit processes are given a generous but finite timeout: Yarn's full-graph recursive
- * audit and slow registries can legitimately take a while, but Node's own default
- * (`timeout: 0`, i.e. unbounded) is what let a stalled process hold `Running audit…`
- * forever (`ARC-07`).
+ * Generous but finite: Yarn's full-graph recursive audit and slow registries can legitimately
+ * take a while, but Node's default (`timeout: 0`, unbounded) is what let a stalled process
+ * hold `Running audit…` forever.
  */
 export const AUDIT_PROCESS_TIMEOUT_MS = 120_000;
 
 /**
  * A large monorepo's audit JSON can comfortably exceed Node's 1MB `maxBuffer` default,
- * which otherwise turns a perfectly valid large report into a false `overflow`. 20MB
- * stays a real, enforced bound rather than the previous implicit/undocumented default.
+ * which would otherwise turn a valid large report into a false `overflow`. 20MB is a
+ * deliberate, enforced bound.
  */
 export const AUDIT_PROCESS_MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 
@@ -58,8 +57,8 @@ export type AuditIncompleteReason
     | 'unexpected-exit'
     | 'summary-mismatch'
     | 'unknown-yarn-family'
-    // The process was terminated before it produced a complete result (`ARC-07`): none
-    // of these three ever carry inspectable output, so they can never become `clean`.
+    // The process was terminated before it produced a complete result: none of these
+    // three ever carry inspectable output, so they can never become `clean`.
     | 'timeout'
     | 'aborted'
     | 'output-overflow';
@@ -159,10 +158,8 @@ export async function runPackageAudit(
 
 /**
  * Runs an npm/pnpm-shaped audit command, bounded by a timeout, output cap and optional
- * cancellation `signal` (`ARC-07`), and classifies the run as clean, advisories,
- * incomplete or error. Advisory exit codes are accepted, but only together with a
- * recognized schema; a process that was terminated before it exited is always
- * incomplete or error, never clean.
+ * cancellation `signal`, then classifies the run as clean, advisories, incomplete or error.
+ * Advisory exit codes are accepted only together with a recognized schema.
  */
 export async function runAuditOutcome(
   command: string,
@@ -206,11 +203,9 @@ export function describeBoundedProcessFailure(
         + 'partial output is never treated as a result.',
       );
     case 'spawn-error':
-      // The only log call for this event (N5): runBoundedProcess() itself stays silent
-      // so the domain layer — the only place that knows what a failure here actually
-      // means to the user — is the single source of truth for every bounded-process
-      // failure message, instead of the runner and its caller each logging their own
-      // near-duplicate line.
+      // The only log call for this event: runBoundedProcess() itself stays silent so the
+      // domain layer — the only place that knows what a failure means to the user — is
+      // the single source of truth for every bounded-process failure message.
       logger.error('Audit process could not start; see the security audit report for redacted details.');
       return { kind: 'error', reason: outcome.reason, detail: outcome.detail };
   }

@@ -1,40 +1,8 @@
 /**
- * `audit:signatures` guard.
- *
- * pnpm only implements the `audit signatures` subcommand from 11.1.0 onwards.
- * Earlier releases accept the positional argument and discard it, so the run
- * silently degrades into the ordinary vulnerability advisory audit: on
- * pnpm 11.0.8 `pnpm audit signatures`, `pnpm audit --audit-level high` and
- * `pnpm audit definitely-not-a-subcommand` all print the same advisory result
- * and exit 0. A step named "signature audit" was therefore green without a
- * single signature ever being checked.
- *
- * This guard decides on the shape of the report the command actually produced,
- * never on the name of the command that produced it. Only the documented
- * signature schema, consistent with itself and with its own exit code, counts
- * as a pass; an advisory report, an unknown schema, empty output, or a report
- * that ended up auditing nothing are all rejections. There is deliberately no
- * pnpm version check: the output contract is the thing that must hold, and a
- * version comparison would re-introduce exactly the "trust the label" mistake
- * this guard exists to remove.
- *
- * Known boundary, measured rather than assumed: `audited` is a floor, not a
- * total. pnpm drops packages out of the denominator one by one and silently —
- * a packument that answers 404 (unpublished package, or a private scope the
- * token cannot read) and a registry that publishes no signing keys both leave
- * the report self-consistent and the exit code 0. A verified verdict therefore
- * proves that every package pnpm actually asked about carries a good signature,
- * and says nothing about packages it never asked about. Only the degenerate
- * case, a report that audited nothing at all, is rejected here. Closing the gap
- * needs an independent count of the packages that should have been audited, and
- * this command does not carry one: its own human-readable output only echoes
- * `audited` back. The advisory audit does publish such a total
- * (`metadata.totalDependencies`, counted from the same lockfile walk), but it is
- * a second command with its own failure modes — against a registry that serves
- * signing keys and no advisory endpoint it fails outright, which is exactly the
- * configuration where the signature denominator shrinks. Cross-checking one
- * command against the other therefore belongs to the CI step that owns the
- * release boundary, not to this guard.
+ * `audit:signatures` guard: pnpm below 11.1.0 silently discards the `signatures` subcommand
+ * and degrades to an ordinary advisory audit that still exits 0, so this decides on report
+ * shape alone, never on a pnpm version. Known boundary: `audited` is a floor pnpm can shrink
+ * silently (unpublished packages, registries with no signing keys); only auditing zero packages is rejected.
  */
 
 /** Subcommand and flags the guard runs. `--json` is what makes the contract checkable. */
@@ -100,11 +68,9 @@ export interface SignatureAuditCliDependencies {
 }
 
 /**
- * pnpm is spawned from `PATH` on purpose: pnpm 11 reads the `packageManager`
- * pin and self-switches to it, and `pnpm/action-setup` installs that same
- * pinned version in CI, so both paths audit with the version the repository
- * declares. Windows exposes the launcher as a `.cmd` shim, which `execFile`
- * cannot start without the extension.
+ * Spawned from `PATH` on purpose: pnpm 11 self-switches to the repository's `packageManager`
+ * pin, and CI installs that same pinned version, so both paths audit the declared version.
+ * Windows exposes the launcher as a `.cmd` shim, which `execFile` cannot start without it.
  */
 export function resolvePnpmExecutable(platform: string): string {
   return platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
@@ -135,10 +101,9 @@ function describeStderr(stderr: string): string {
 }
 
 /**
- * Recognizes the two documented npm/pnpm advisory shapes, the same pair
- * `src/utils/auditClient.ts` accepts. This is what pnpm below 11.1 returns for
- * `audit signatures`, so naming it separately turns the original defect into a
- * specific diagnosis instead of a generic "unknown schema".
+ * Recognizes the two documented npm/pnpm advisory shapes, the same pair `src/utils/auditClient.ts`
+ * accepts — what pnpm below 11.1 returns for `audit signatures`, so it gets a specific diagnosis
+ * instead of a generic "unknown schema".
  */
 function isAdvisoryReport(json: unknown): boolean {
   if (!isPlainObject(json)) {
@@ -247,19 +212,9 @@ export function evaluateSignatureAudit(execution: SignatureAuditExecution): Sign
     );
   }
 
-  // Backstop for a report whose own numbers disagree, deliberately placed after
-  // the two named diagnoses above rather than before them.
-  //
-  // pnpm can classify a package without counting it: when the packument request
-  // fails with anything other than a 404, the entry is pushed onto `invalid`
-  // from a catch block that never reaches the `audited++` on the success path,
-  // so one failed request makes `classified` exceed `audited`. Checking the sum
-  // first would answer a real signature failure with arithmetic and swallow the
-  // package names — worst in exactly the run that matters most, where some
-  // packages could not be checked and others checked badly. Reaching this branch
-  // with both finding lists empty means the counts disagree on their own, which
-  // no observed pnpm path produces; it stays a rejection because an unexplained
-  // report is not proof.
+  // Placed after the invalid/missing checks on purpose: a failed packument request can push an
+  // entry onto `invalid` without incrementing `audited`, so checking the sum first would mask a
+  // real signature failure behind a generic arithmetic mismatch.
   const classified = report.verified + report.missing.length + report.invalid.length;
   if (classified !== report.audited) {
     return reject(
@@ -291,12 +246,9 @@ export function evaluateSignatureAudit(execution: SignatureAuditExecution): Sign
 }
 
 /**
- * Runs the guard and returns the process exit code.
- *
- * Diagnostics go to stderr and stdout carries the verdict line only on success,
- * the same discipline `src/tools/verifyVsix.ts` documents: a consumer that
- * pipes this command takes its status from the last process in the pipe, so a
- * rejected run must leave stdout empty rather than let a grep answer for it.
+ * Diagnostics go to stderr; stdout carries the verdict line only on success — the same
+ * discipline `src/tools/verifyVsix.ts` documents — so a rejected run leaves stdout empty
+ * rather than let a piped consumer's exit status come from something else.
  */
 export async function runSignatureAuditCli(
   argv: readonly string[],

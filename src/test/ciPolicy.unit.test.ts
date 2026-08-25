@@ -47,7 +47,7 @@ function expectRejectedDependabot(source: string, rule: string): void {
   );
 }
 
-describe('AUD-14 CI workflow policy', () => {
+describe('CI workflow policy', () => {
   it('accepts the canonical workflow as a complete contract, not a substring smoke test', () => {
     expect(evaluateCiWorkflowPolicy(canonicalSource)).toEqual([]);
   });
@@ -362,7 +362,7 @@ describe('AUD-14 CI workflow policy', () => {
   });
 });
 
-describe('AUD-15A immutable workflow action policy', () => {
+describe('immutable workflow action policy', () => {
   const checkoutReference = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
 
   it('accepts every reviewed action reference and version comment in the current workflows', () => {
@@ -431,7 +431,7 @@ describe('AUD-15A immutable workflow action policy', () => {
     expect(evaluateWorkflowActionPolicy(inertSource)).toEqual([]);
   });
 
-  it('does not turn AUD-15A into a release topology or permissions redesign', () => {
+  it('does not treat a release topology or permissions change as an action-policy violation', () => {
     const mutated = canonicalReleaseSource
       .replace('contents: write', 'contents: read')
       .replace('branches: [master]', 'branches: [release]')
@@ -446,7 +446,7 @@ describe('AUD-15A immutable workflow action policy', () => {
   });
 });
 
-describe('AUD-15B reviewed action update policy', () => {
+describe('reviewed action update policy', () => {
   const releaseCheckoutV6 = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0';
   const reviewedCheckoutV7 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
 

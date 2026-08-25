@@ -1,11 +1,7 @@
 /**
- * Fail-closed reader for the install identity in `extension.vsixmanifest`.
- *
- * This deliberately implements only the XML surface a VSIX manifest needs.
- * It is a cursor-based parser rather than a substring/regular-expression
- * lookup: markup must be balanced, namespaces are resolved, attributes are
- * quoted and entities are decoded before identity comparison. DTDs are
- * rejected so custom/external entities can never influence verification.
+ * Fail-closed, cursor-based XML reader for the install identity in `extension.vsixmanifest`
+ * — implements only the surface a VSIX manifest needs, not a full XML parser. DTDs are
+ * rejected so custom or external entities can never influence identity comparison.
  */
 
 const VSX_SCHEMA_URI = 'http://schemas.microsoft.com/developer/vsx-schema/2011';

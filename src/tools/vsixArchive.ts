@@ -1,10 +1,9 @@
 import { crc32, inflateRawSync } from 'node:zlib';
 
 /**
- * Minimal reader for the ZIP container a `.vsix` is. It is deliberately
- * hand-written instead of pulling in an unzip dependency: the verifier must be
- * able to inspect the exact bytes that ship, and every packaging dependency it
- * adds is another thing that could put bytes into that package.
+ * Minimal ZIP reader for a `.vsix`, hand-written rather than using an unzip dependency: the
+ * verifier must inspect the exact bytes that ship, and each added dependency is another thing
+ * that could put bytes into the package.
  */
 
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;

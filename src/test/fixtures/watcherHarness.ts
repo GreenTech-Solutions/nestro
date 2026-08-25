@@ -4,22 +4,16 @@ import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS, registerPackageJsonWatcher } from '..
 import { FilterManager, GroupItem, PackageItem, PackagesProvider, WorkspaceFolderItem } from '../../providers';
 
 /**
- * Ceiling for the native file-watcher backend to attach to a freshly added
- * workspace folder. `createFileSystemWatcher()` returns synchronously but the
- * backend attaches later, so a single write issued before it is live produces
- * no event at all — see `writeUntil`.
+ * Ceiling for the native file-watcher backend to attach to a freshly added workspace folder.
+ * `createFileSystemWatcher()` returns synchronously but the backend attaches later, so a single
+ * write issued before it is live produces no event at all — see `writeUntil`.
  */
 export const NATIVE_WATCHER_ATTACH_TIMEOUT_MS = 30000;
 
 /**
- * How long each `writeUntil` attempt waits before rewriting the file.
- *
- * This MUST stay above `PACKAGE_JSON_WATCHER_DEBOUNCE_MS`. The watcher restarts
- * its debounce timer on every event, so a retry loop faster than the debounce
- * cancels the pending reload on each pass and the callback never runs: the
- * writes are observed, the reload is not, and the harness reports "no observed
- * change" for the whole timeout. Doubling the debounce leaves a full debounce
- * window of quiet after each write for the reload to land in.
+ * How long each `writeUntil` attempt waits before rewriting the file. Must stay above
+ * `PACKAGE_JSON_WATCHER_DEBOUNCE_MS`: a retry faster than the debounce cancels the pending
+ * reload on every pass, so writes are observed but the reload never runs.
  */
 const WRITE_RETRY_INTERVAL_MS = PACKAGE_JSON_WATCHER_DEBOUNCE_MS * 2;
 const POLL_INTERVAL_MS = 50;
@@ -49,12 +43,9 @@ export function delay(ms: number): Promise<void> {
 const EXTENSION_ID = 'greentech-solutions.nestro';
 
 /**
- * Activates the extension if it is not active yet.
- *
- * Suites that watch the filesystem must call this: the runner's file order is
- * not alphabetical, so a watcher suite can run before the activation suite, and
- * a host where the extension never activated has not started its file-watching
- * service — every write then goes unobserved however long the test retries.
+ * Suites that watch the filesystem must call this: the runner's file order is not
+ * alphabetical, so a watcher suite can run before the activation suite, and an inactive
+ * extension has not started its file-watching service — writes then go unobserved forever.
  */
 export async function ensureExtensionActivated(): Promise<void> {
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
@@ -196,12 +187,9 @@ export function createPackageJsonWatcherHarness(): PackageJsonWatcherHarness {
 }
 
 /**
- * Sets a `nestro.*` setting at workspace scope and returns a restore function.
- *
- * Both the set and the restore await the matching `onDidChangeConfiguration`:
- * `config.update()` resolves once the write is queued, not once the event is
- * delivered, so without this a late event from one test lands inside the next
- * one's observation window.
+ * Sets a `nestro.*` setting at workspace scope and returns a restore function. Both await the
+ * matching `onDidChangeConfiguration`, since `config.update()` resolves once the write is
+ * queued, not once delivered — otherwise a late event could leak into the next test.
  */
 export async function setNestroConfigValue(key: string, value: unknown): Promise<() => Promise<void>> {
   const original = vscode.workspace.getConfiguration('nestro').inspect(key)?.workspaceValue;

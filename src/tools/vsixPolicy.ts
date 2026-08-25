@@ -1,14 +1,9 @@
 import type { VsixArchiveEntry } from './vsixArchive';
 
 /**
- * Content policy for the published `.vsix`.
- *
- * The policy is an allowlist: a packaged path is kept only when it is named by
- * one of the rules below. Anything else is a violation, so a new file or a new
- * repository directory fails the gate instead of shipping silently. The
- * forbidden-class rules further down are a second, independent layer — they
- * also apply to allowlisted paths, so loosening the allowlist alone can never
- * quietly re-admit a source map, a cache or an internal document.
+ * Content policy for the published `.vsix`: an allowlist where any unnamed path is a
+ * violation. Forbidden-class rules below are a second, independent layer applying even to
+ * allowlisted paths, so loosening the allowlist alone cannot re-admit a forbidden file.
  */
 
 /** vsce stores extension content under this prefix inside the archive. */
@@ -42,26 +37,16 @@ export const VSIX_STATIC_ALLOWLIST: readonly StaticAllowlistRule[] = [
 export const VSIX_SCREENSHOT_PATTERN = /^images\/[a-z0-9]+(?:-[a-z0-9]+)*\.png$/;
 
 /**
- * Shape guard for bundle chunks. Chunk file names carry a build-dependent
- * content hash (`lib-CsU_nP_S-BPRZRivE.cjs`), so they cannot be enumerated.
- * This pattern only constrains the shape — a single `.cjs` directly inside
- * `out/`, never a subdirectory — while membership is decided by the require
- * graph in `resolveBundleClosure()`, so an unreferenced file dropped into
- * `out/` is rejected even though its name looks like a chunk.
+ * Shape guard for bundle chunks: file names carry a build-dependent content hash and cannot
+ * be enumerated, so this only constrains the shape (a single `.cjs` directly inside `out/`).
+ * Actual membership is decided by the require graph in `resolveBundleClosure()`.
  */
 export const VSIX_BUNDLE_CHUNK_PATTERN = /^out\/[A-Za-z0-9._$@-]+\.cjs$/;
 
 /** Packaged paths that are build output and therefore not tracked by git. */
 export const VSIX_BUILD_OUTPUT_PREFIX = 'out/';
 
-/**
- * Budget baseline, measured on the clean allowlist package this verifier
- * produces (`refactoring`, extension version 0.4.2, 2026-08-08): 16 packaged
- * files and 717682 compressed bytes, reproducible across consecutive runs.
- * Plan decision 16 sets the budget at that baseline plus 25 % of the size and
- * plus 10 files. The arithmetic stays in code so the budget cannot drift away
- * from the recorded measurement.
- */
+/** Measured clean-package baseline: 16 files, 717682 compressed bytes. Budget adds 25% size and 10 files. */
 export const CLEAN_BASELINE_COMPRESSED_BYTES = 717682;
 export const CLEAN_BASELINE_PACKAGED_FILE_COUNT = 16;
 export const COMPRESSED_SIZE_BUDGET_BYTES = Math.floor(CLEAN_BASELINE_COMPRESSED_BYTES * 1.25);
@@ -117,23 +102,14 @@ export const VSIX_FORBIDDEN_RULES: readonly ForbiddenRule[] = [
 export interface SecretPattern {
   readonly id: string;
   readonly pattern: RegExp;
-  /**
-   * Optional second stage applied to the matched text. Keeping this in code
-   * rather than folding it into the expression keeps the expression readable
-   * and within the project's regex-complexity budget.
-   */
+  /** Optional second-stage check applied to the matched text, kept separate from the regex for readability. */
   readonly confirm?: (match: string) => boolean;
 }
 
 /**
- * Decides whether an assignment that *looks* credential-shaped actually carries
- * a credential-shaped value. Ordinary code assigns identifiers to
- * credential-named variables all the time — `const refreshToken =
- * userSessionIdentifierValue` is not a leak — and a gate that reddens on that
- * is a gate people learn to ignore. Real tokens mix in a digit or a base64
- * character, so that is the signal required here. The cost is a token made of
- * letters only, which the explicit `publishing-token-assignment` rule still
- * covers for known publishing variables.
+ * Decides whether a credential-shaped assignment carries a credential-shaped value: real
+ * tokens mix in a digit or a base64 character, so a plain identifier assignment does not
+ * match — a letters-only token is still caught by the `publishing-token-assignment` rule.
  */
 export function looksLikeSecretValue(match: string): boolean {
   const separatorIndex = match.search(/[:=]/);
@@ -142,18 +118,9 @@ export function looksLikeSecretValue(match: string): boolean {
 }
 
 /**
- * Credential shapes scanned over the packaged bytes of every entry — including
- * images and vsce-generated metadata. Scanning decoded archive content rather
- * than repository files is deliberate: vsce rewrites README and CHANGELOG while
- * packaging, so a source-only scan would inspect different bytes than it ships,
- * and skipping "binary" files by extension would leave an obvious blind spot.
- * The last three rules (`publishing-token-assignment`, `credential-assignment`,
- * `api-key-assignment`) are context rules rather than shape rules, and the last
- * two additionally require `looksLikeSecretValue()` so a credential-named
- * variable holding a plain identifier is not reported. What this scan cannot
- * claim to detect: an opaque blob with no recognizable prefix and no assignment
- * context, and any re-encoding (base64, hex, gzip, UTF-16) or line break that
- * hides an otherwise recognizable token.
+ * Credential shapes scanned over the packaged bytes of every entry (including images and
+ * vsce-generated metadata) rather than repository files, since packaging rewrites README and
+ * CHANGELOG. Misses opaque blobs with no recognizable prefix and any re-encoded or obfuscated token.
  */
 export const VSIX_SECRET_PATTERNS: readonly SecretPattern[] = [
   { id: 'github-token', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}/ },
@@ -165,14 +132,9 @@ export const VSIX_SECRET_PATTERNS: readonly SecretPattern[] = [
   { id: 'private-key-block', pattern: /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/ },
   { id: 'json-web-token', pattern: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\./ },
   { id: 'publishing-token-assignment', pattern: /\b(?:VSCE_PAT|OVSX_PAT|AZURE_DEVOPS_EXT_PAT|NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN)\b[ \t]*[:=][ \t]*["']?[A-Za-z0-9+/=_-]{20,}/ },
-  // The keyword is intentionally not anchored on a word boundary, so a prefixed
-  // key still matches (`client_secret`, `MARKETPLACE_TOKEN`, `apikey`); the
-  // earlier \b form missed all of them because `_` is itself a word character.
-  // Quotes around the value are optional, because `KEY = value` is the common
-  // form. A dot is deliberately excluded from the value: allowing it made dotted
-  // member expressions such as `this.tokenizer.onToken = this.tokenParser.write`
-  // in the bundled dependencies match, and a false failure on every build is
-  // worse than the narrow class of dotted secrets it would add.
+  // Not anchored on a word boundary so a prefixed key still matches (`client_secret`,
+  // `MARKETPLACE_TOKEN`); quotes around the value are optional. The value excludes `.` to
+  // avoid matching dotted member-expression assignments in bundled dependencies.
   { id: 'credential-assignment', pattern: /(?:secret|token|passw(?:or)?d|credential)s?["']?[ \t]*[:=][ \t]*["']?[\w+/=-]{16,}/i, confirm: looksLikeSecretValue },
   { id: 'api-key-assignment', pattern: /api[_-]?keys?["']?[ \t]*[:=][ \t]*["']?[\w+/=-]{16,}/i, confirm: looksLikeSecretValue },
 ];
@@ -211,19 +173,17 @@ export interface VsixPolicyInput {
   /** Repository paths that are symlinks on disk, including ancestor directories. */
   readonly symlinkSourcePaths: readonly string[];
   /**
-   * Tracked repository paths that differ from HEAD in the working tree. Being
-   * tracked proves a packaged file exists in the repository; it does not prove
-   * the packaged bytes are the committed bytes, which is the difference between
-   * a CI checkout and a `vsce package` run from a working machine.
+   * Tracked repository paths that differ from HEAD in the working tree: being tracked proves
+   * the file exists in the repository, not that the packaged bytes match the committed bytes
+   * (the difference between a CI checkout and a `vsce package` run from a working machine).
    */
   readonly modifiedTrackedPaths: readonly string[];
   /** Untracked, non-ignored repository paths present in the working tree. */
   readonly untrackedWorktreePaths: readonly string[];
   /**
-   * When set, any tracked working-tree modification is a violation, including
-   * build inputs that do not map directly to a packaged path. Off by default so
-   * local verification still works while a change is in progress; the release
-   * pipeline turns it on to require literal clean-checkout semantics.
+   * When set, any tracked working-tree modification is a violation, including build inputs
+   * that do not map to a packaged path. Off by default so local verification works mid-change;
+   * the release pipeline enables it to require a literal clean checkout.
    */
   readonly requireCleanWorktree: boolean;
 }
@@ -315,22 +275,9 @@ function normalizeRelativeRequire(fromPath: string, specifier: string): string {
 }
 
 /**
- * Walks relative `require()` edges from the manifest entrypoint. The set of
- * bundle files that may ship is the closure of that walk, which is what makes
- * hashed chunk names verifiable without listing them.
- *
- * Known boundary: this reads chunk text, it does not parse JavaScript. Both
- * directions of that follow from it and are accepted deliberately.
- *  - A `require('./x.cjs')` written inside a comment or a string literal counts
- *    as an edge, so a file named only there would be admitted. Exploiting it
- *    requires write access to the bundle output, which is already the trusted
- *    side of this boundary; for the accidental leak SUP-03 is about, an
- *    unreferenced file still fails as `bundle-orphan-file`.
- *  - Conversely, a bundled dependency that emits the literal text
- *    `require('./something.cjs')` would produce a false `bundle-missing-chunk`.
- * A real parser was judged disproportionate here, and naive comment stripping
- * would be worse: deleting from `//` inside a string containing a URL can drop
- * a genuine require on the same line and fail the build for no reason.
+ * Walks relative `require()` edges from the manifest entrypoint; the closure of that walk is
+ * the set of bundle files allowed to ship. Reads chunk text rather than parsing JavaScript, so
+ * a `require()` inside a comment or string literal is treated as a real edge.
  */
 export function resolveBundleClosure(
   entrypoint: string,
@@ -580,12 +527,7 @@ function hasConfirmedSecretMatch(secret: SecretPattern, content: string): boolea
   return false;
 }
 
-/**
- * Scans every archive entry without exception — no skip by extension, size or
- * "looks binary" heuristic, since each such shortcut is a false negative
- * waiting to happen. The length assertion makes an entry that was only
- * partially materialised a finding instead of a silently short scan.
- */
+/** Scans every archive entry, including binaries; a short read is reported instead of silently skipped. */
 function checkSecrets(input: VsixPolicyInput, violations: PolicyViolation[]): void {
   for (const entry of input.entries) {
     if (entry.bytes.length !== entry.uncompressedSize) {

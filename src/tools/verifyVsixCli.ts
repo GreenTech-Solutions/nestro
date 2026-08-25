@@ -87,11 +87,9 @@ function assertArtifactDirectoryNotAliased(
 }
 
 /**
- * Reads `git status --porcelain -z --untracked-files=no` into the list of tracked paths that differ
- * from HEAD. Untracked entries (`??`) are skipped because they are collected
- * separately by `listUntrackedFiles()` for both direct-package provenance and
- * strict clean-checkout checks. A rename record carries its source path in the
- * following NUL-separated field, which is consumed and ignored.
+ * Parses `git status --porcelain -z --untracked-files=no` into tracked paths that differ from
+ * HEAD. Untracked entries (`??`) are skipped — collected separately by `listUntrackedFiles()` —
+ * and a rename/copy record's extra NUL-separated source-path field is consumed and ignored.
  */
 export function parseGitStatusPaths(stdout: string): string[] {
   const fields = stdout.split('\0');
@@ -287,15 +285,9 @@ function isBrokenPipe(error: unknown): boolean {
 }
 
 /**
- * Wraps a stream in a line writer that tolerates the consumer hanging up.
- *
- * `check:vsce | grep -Fxq 'out/extension.cjs'` is a real caller: grep exits the
- * moment it matches, which closes the pipe while the manifest is still being
- * written. Node reports that as an asynchronous EPIPE `error` event, and with
- * no listener it kills the process — turning a verified package into an
- * unhandled-exception dump, and into a hard failure once the caller adds
- * `pipefail`. A closed consumer is not a verification failure, so EPIPE is
- * swallowed; every other write error still surfaces.
+ * Wraps a stream in a line writer that tolerates the consumer hanging up: a piped consumer
+ * (e.g. `grep -Fxq`) that exits early closes the pipe mid-write, and Node's EPIPE error would
+ * otherwise crash the process. EPIPE is swallowed; every other write error still surfaces.
  */
 export function createStreamLineWriter(stream: LineWritableStream): (line: string) => void {
   stream.on('error', (error: Error) => {
