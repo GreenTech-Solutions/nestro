@@ -33,6 +33,7 @@ const identityMocks = vi.hoisted(() => {
       dev: boolean;
       versionPrefix?: string;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
+    resolvePinManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     resolveUnambiguousManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
@@ -203,7 +204,9 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledTimes(1);
+    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '^18.0.0', true);
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -224,7 +227,75 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '18.0.0', false);
+  });
+
+  it('pins a caret-prefixed devDependency using the devDependencies section explicitly', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'vitest',
+      '^2.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      true,
+      '^',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider);
+    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'vitest', 'devDependencies', '^2.0.0', true);
+  });
+
+  it('pins a caret-prefixed workspace: range without corrupting the protocol', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'internal-lib',
+      'workspace:^1.2.3',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'internal-lib', 'dependencies', 'workspace:^1.2.3', true);
+  });
+
+  it.each([
+    ['workspace:*', 'workspace range is not a concrete version (wildcard version range)'],
+    ['file:../local-pkg', 'local file dependency'],
+    ['git+https://github.com/foo/bar.git', 'git dependency'],
+    ['npm:real-pkg@^1.2.3', 'npm alias dependency'],
+    ['>=1.2.3 <2.0.0', 'compound version range'],
+  ] as const)('leaves the file untouched and reports why for unsupported spec %s', async (currentVersion, reason) => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'pkg',
+      currentVersion,
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(setVersionPin).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(`cannot toggle version pin for pkg — ${reason}`);
   });
 
   it('stops before pinning when identity or manifest validation fails', async () => {
@@ -235,7 +306,7 @@ describe('pinVersionCommand()', () => {
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
 
-    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolvePinManifestEntry.mockResolvedValueOnce(undefined as never);
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
   });

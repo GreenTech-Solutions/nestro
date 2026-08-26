@@ -62,36 +62,40 @@ vi.mock('../clients', () => ({
   )),
 }));
 
-vi.mock('../utils', () => ({
-  fetchAllLatestVersions: vi.fn(),
-  getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
-  getWorkspacePackageFilePaths: vi.fn(),
-  getUpdateType: getUpdateTypeMock,
-  inferPathAttribution: vi.fn((packageName: string, paths: readonly string[]) => (
-    paths.length === 1 && (paths[0] === packageName || paths[0] === `node_modules/${packageName}`)
-      ? 'direct'
-      : 'unknown'
-  )),
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-    dispose: vi.fn(),
-  },
-  // Test double for the coordinator: runs the given operation immediately
-  // without real cross-key exclusion — this file's provider-level tests only need
-  // installUpdateCommand's control flow, not coordinator concurrency semantics
-  // (those are covered directly in operationCoordinator.unit.test.ts).
-  mutationCoordinator: {
-    runExclusive: vi.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-    runManyExclusive: vi.fn((_keys: readonly string[], fn: () => Promise<unknown>) => fn()),
-  },
-  readAllWorkspaceDependencies: vi.fn(),
-  readWorkspaceDependencies: vi.fn(),
-  runNpmAudit: vi.fn(),
-  mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
-  showError: vi.fn(),
-}));
+vi.mock('../utils', async () => {
+  const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  return {
+    fetchAllLatestVersions: vi.fn(),
+    getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
+    getWorkspacePackageFilePaths: vi.fn(),
+    getUpdateType: getUpdateTypeMock,
+    inferPathAttribution: vi.fn((packageName: string, paths: readonly string[]) => (
+      paths.length === 1 && (paths[0] === packageName || paths[0] === `node_modules/${packageName}`)
+        ? 'direct'
+        : 'unknown'
+    )),
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+      dispose: vi.fn(),
+    },
+    // Test double for the coordinator: runs the given operation immediately
+    // without real cross-key exclusion — this file's provider-level tests only need
+    // installUpdateCommand's control flow, not coordinator concurrency semantics
+    // (those are covered directly in operationCoordinator.unit.test.ts).
+    mutationCoordinator: {
+      runExclusive: vi.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+      runManyExclusive: vi.fn((_keys: readonly string[], fn: () => Promise<unknown>) => fn()),
+    },
+    parseDependencySpec,
+    readAllWorkspaceDependencies: vi.fn(),
+    readWorkspaceDependencies: vi.fn(),
+    runNpmAudit: vi.fn(),
+    mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
+    showError: vi.fn(),
+  };
+});
 
 describe('PackagesProvider', () => {
   beforeEach(() => {

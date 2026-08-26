@@ -1,3 +1,4 @@
+export * from './dependencySpec';
 export * from './packageReader';
 export * from './ncuClient';
 export * from './packageManager';

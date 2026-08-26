@@ -41,17 +41,21 @@ vi.mock('../commands/installUpdate', () => ({
 
 vi.mock('../commands/packageIdentity', () => identityMocks);
 
-vi.mock('../utils', () => ({
-  fetchPackageVersions: vi.fn(),
-  getUpdateType: vi.fn(() => 'patch'),
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  },
-  showError: vi.fn(),
-  selectVersionsForPicker: vi.fn((versions: string[]) => versions),
-}));
+vi.mock('../utils', async () => {
+  const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  return {
+    fetchPackageVersions: vi.fn(),
+    getUpdateType: vi.fn(() => 'patch'),
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+    },
+    parseDependencySpec,
+    showError: vi.fn(),
+    selectVersionsForPicker: vi.fn((versions: string[]) => versions),
+  };
+});
 
 interface QuickPickMock {
   title?: string;

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AuditSeverity, UpdateType } from '../utils';
+import { AuditSeverity, parseDependencySpec, UpdateType } from '../utils';
 
 const PACKAGE_ANSI_ESCAPE = new RegExp(
   `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
@@ -27,11 +27,17 @@ export class PackageItem extends vscode.TreeItem {
     const safeLatest = latest === undefined ? undefined : sanitizePackageText(latest);
     super(safePackageName, vscode.TreeItemCollapsibleState.Collapsed);
     const hasUpdate = updateType !== 'none';
+    const parsedSpec = parseDependencySpec(currentVersion);
     this.description = hasUpdate ? `${safeCurrentVersion} → ${safeLatest}` : safeCurrentVersion;
     this.tooltip = installing
       ? `Updating ${safePackageName} to ${safeLatest}`
       : `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`;
-    this.contextValue = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
+    if (!installing && !parsedSpec.supported) {
+      this.tooltip = `${this.tooltip}\nPin unavailable: ${parsedSpec.reason}`;
+    }
+    const contextBase = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
+    const pinCapability = installing ? '' : parsedSpec.supported ? '-pinnable' : '-pin-unsupported';
+    this.contextValue = `${contextBase}${pinCapability}`;
     if (vulnerabilitySeverity !== undefined) {
       this.description = `${this.description} vulnerability: ${vulnerabilitySeverity}`;
       this.tooltip = `${this.tooltip}\nVulnerability: ${vulnerabilitySeverity}`;

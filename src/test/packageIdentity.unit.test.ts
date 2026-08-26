@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import {
   resolveCommandPackageItem,
+  resolvePinManifestEntry,
   resolveUnambiguousManifestEntry,
   revalidateCommandPackageItem,
 } from '../commands/packageIdentity';
@@ -131,6 +132,58 @@ describe('package identity command helpers', () => {
 
     await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('allows a pin action to keep the selected dev row when the name is duplicated', async () => {
+    const capability = makeCapability('devDependencies');
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^9.0.0' },
+      devDependencies: { react: '~1.1.0' },
+    })));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBe(capability);
+    expect(revalidate).toHaveBeenCalledTimes(2);
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['selected section changed', { dependencies: { react: '^9.0.0' }, devDependencies: { react: '^1.1.0' } }],
+    ['selected section missing', { dependencies: { react: '^9.0.0' }, devDependencies: {} }],
+  ] as const)('rejects a pin row when the selected manifest entry is %s', async (_label, manifest) => {
+    const capability = makeCapability('devDependencies');
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+    );
+  });
+
+  it('stops a pin before reading when the capability is no longer current', async () => {
+    const capability = makeCapability();
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes a pin manifest read failure', async () => {
+    const capability = makeCapability();
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(new Error('read failed'));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+    );
   });
 
   it.each([

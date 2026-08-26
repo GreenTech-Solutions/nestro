@@ -719,28 +719,40 @@ suite('Manifest Contracts', () => {
     assert.strictEqual(getManifest().capabilities, undefined);
   });
 
-  test('an outdated+vulnerable PackageItem contextValue does not match the exact-equality when clause that shows the inline Update button', () => {
+  test('row capabilities keep update actions working and hide pin for unsupported specs', () => {
     const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', false, 'high', '/workspace/package.json', false, '^');
-    assert.strictEqual(item.contextValue, 'outdated-vulnerable-high');
+    assert.strictEqual(item.contextValue, 'outdated-pinnable-vulnerable-high');
 
     const menuEntries = getManifest().contributes.menus['view/item/context'];
     const installUpdateEntry = menuEntries.find(entry => entry.command === 'nestro.installUpdate');
     assert.ok(installUpdateEntry, 'nestro.installUpdate should have a view/item/context menu entry');
-    assert.strictEqual(installUpdateEntry.when, 'view == nestro.packagesView && viewItem == outdated');
+    assert.strictEqual(installUpdateEntry.when, 'view == nestro.packagesView && viewItem =~ /(^|-)outdated($|-)/');
+    const updateRegexSource = /viewItem =~ \/(.+)\//.exec(installUpdateEntry.when)?.[1];
+    assert.strictEqual(typeof updateRegexSource, 'string');
+    assert.strictEqual(new RegExp(updateRegexSource ?? '').test(item.contextValue as string), true);
 
-    const requiredViewItem = /viewItem == ([\w-]+)/.exec(installUpdateEntry.when)?.[1];
-    assert.strictEqual(requiredViewItem, 'outdated');
-    // The exact-match `when` clause used by the inline Update button does not match an
-    // outdated+vulnerable contextValue, so the action that matters most silently disappears.
-    assert.notStrictEqual(item.contextValue, requiredViewItem);
-
-    // Contrast: the other row actions use a regex `when` clause and do keep
-    // matching the same contextValue, so only installUpdate's action is lost.
+    // All row actions that use a state-bearing contextValue must match its capability token.
     const pickVersionEntry = menuEntries.find(entry => entry.command === 'nestro.pickVersion');
     assert.ok(pickVersionEntry, 'nestro.pickVersion should have a view/item/context menu entry');
     const viewItemRegexSource = /viewItem =~ \/(.+)\//.exec(pickVersionEntry.when)?.[1];
     assert.ok(viewItemRegexSource, 'nestro.pickVersion should use a regex viewItem match');
     assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
+
+    const pinEntries = menuEntries.filter(entry => entry.command === 'nestro.pinVersion');
+    assert.strictEqual(pinEntries.length, 2);
+    for (const pinEntry of pinEntries) {
+      const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
+      assert.strictEqual(typeof pinRegexSource, 'string');
+      assert.strictEqual(new RegExp(pinRegexSource ?? '').test(item.contextValue as string), true);
+    }
+
+    const unsupported = new PackageItem('local-pkg', 'file:../local-pkg', undefined, 'none');
+    assert.strictEqual(unsupported.contextValue, 'package-pin-unsupported');
+    assert.strictEqual(unsupported.tooltip?.toString().includes('Pin unavailable: local file dependency'), true);
+    for (const pinEntry of pinEntries) {
+      const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
+      assert.strictEqual(new RegExp(pinRegexSource ?? '').test(unsupported.contextValue as string), false);
+    }
   });
 
   // Row-only and contextual commands have no meaningful effect when triggered outside their

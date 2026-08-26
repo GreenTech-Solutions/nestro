@@ -325,7 +325,7 @@
       "view/item/context": [
         {
           "command": "nestro.installUpdate",
-          "when": "view == nestro.packagesView && viewItem == outdated",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)outdated($|-)/",
           "group": "inline"
         },
         {
@@ -345,7 +345,7 @@
         },
         {
           "command": "nestro.pinVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)pinnable($|-)/",
           "group": "inline@5"
         },
         {
@@ -370,7 +370,7 @@
         },
         {
           "command": "nestro.pinVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)pinnable($|-)/",
           "group": "2_manage@2"
         },
         {

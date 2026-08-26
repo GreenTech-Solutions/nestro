@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
 import { logger } from './logger';
 
 export interface PackageEntry {
@@ -33,6 +34,13 @@ export interface PackageVersionUpdate {
 export interface PackageFileDependencyUpdates {
   packageFilePath: string;
   updates: readonly PackageVersionUpdate[];
+}
+
+export class VersionPinConflictError extends Error {
+  constructor() {
+    super('Package action is no longer available. Refresh the package list and try again.');
+    this.name = 'VersionPinConflictError';
+  }
 }
 
 interface WorkspacePackageJson {
@@ -197,12 +205,22 @@ export async function switchDependencyType(
 export async function setVersionPin(
   packageFilePath: string,
   packageName: string,
+  section: DependencySection,
+  expectedSpec: string,
   pin: boolean,
 ): Promise<void> {
-  const { json, raw, uri, location } = await readPackageJsonEntry(packageFilePath, packageName);
-  json[location.section] = {
-    ...(json[location.section] ?? {}),
-    [packageName]: setPinnedVersion(location.version, pin),
+  const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const current = json[section]?.[packageName];
+  if (current !== expectedSpec) {
+    throw new VersionPinConflictError();
+  }
+  const parsed = parseDependencySpec(current);
+  if (!parsed.supported) {
+    throw new Error(`Cannot toggle pin for ${packageName}: ${parsed.reason}.`);
+  }
+  json[section] = {
+    ...(json[section] ?? {}),
+    [packageName]: formatDependencySpec(parsed, pin),
   };
   await writePackageJson(uri, raw, json);
 }
@@ -223,15 +241,9 @@ async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
     const deps = json[section];
     if (deps === undefined) { continue; }
     for (const [name, version] of Object.entries(deps)) {
-      const prefix = extractVersionPrefix(version);
-      const remainder = version.startsWith('workspace:')
-        ? version.slice('workspace:'.length)
-        : version;
-      const remainderPrefix = extractVersionPrefix(remainder);
-      const isConcreteWorkspaceRange = version.startsWith('workspace:')
-        && isConcreteVersion(remainder.slice(remainderPrefix.length));
-      if ((prefix === '^' || prefix === '~') || (isConcreteWorkspaceRange && (remainderPrefix === '^' || remainderPrefix === '~'))) {
-        deps[name] = setPinnedVersion(version, true);
+      const parsed = parseDependencySpec(version);
+      if (parsed.supported && parsed.range !== 'exact') {
+        deps[name] = formatDependencySpec(parsed, true);
         count++;
       }
     }
@@ -341,43 +353,10 @@ async function readPackageJson(packageFilePath: string): Promise<{
   return { json: JSON.parse(raw) as WorkspacePackageJson, raw, uri };
 }
 
-async function readPackageJsonEntry(
-  packageFilePath: string,
-  packageName: string,
-): Promise<{
-  json: WorkspacePackageJson;
-  raw: string;
-  uri: vscode.Uri;
-  location: { section: DependencySection; version: string };
-}> {
-  const { json, raw, uri } = await readPackageJson(packageFilePath);
-  const fromDependencies = json.dependencies?.[packageName];
-  if (fromDependencies !== undefined) {
-    return { json, raw, uri, location: { section: 'dependencies', version: fromDependencies } };
-  }
-  const fromDevDependencies = json.devDependencies?.[packageName];
-  if (fromDevDependencies !== undefined) {
-    return { json, raw, uri, location: { section: 'devDependencies', version: fromDevDependencies } };
-  }
-  throw new Error(`Package ${packageName} not found in package.json.`);
-}
-
 async function writePackageJson(uri: vscode.Uri, raw: string, json: WorkspacePackageJson): Promise<void> {
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
   await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
-}
-
-function setPinnedVersion(version: string, pin: boolean): string {
-  const workspacePrefix = version.startsWith('workspace:') ? 'workspace:' : '';
-  const remainder = workspacePrefix === '' ? version : version.slice(workspacePrefix.length);
-  const versionPrefix = extractVersionPrefix(remainder);
-  const normalized = remainder.slice(versionPrefix.length);
-  return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
-}
-
-function isConcreteVersion(version: string): boolean {
-  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
 }
 
 function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {

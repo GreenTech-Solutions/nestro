@@ -4,21 +4,25 @@ import { registerConfigurationWatcher, registerWorkspaceFoldersWatcher } from '.
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { fetchAllLatestVersions, readAllWorkspaceDependencies } from '../utils';
 
-vi.mock('../utils', () => ({
-  fetchAllLatestVersions: vi.fn(),
-  getUpdateType: vi.fn((current: string, latest: string) => (
-    current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
-  )),
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    dispose: vi.fn(),
-  },
-  readAllWorkspaceDependencies: vi.fn(),
-  readWorkspaceDependencies: vi.fn(),
-  runNpmAudit: vi.fn(),
-  showError: vi.fn(),
-}));
+vi.mock('../utils', async () => {
+  const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  return {
+    fetchAllLatestVersions: vi.fn(),
+    getUpdateType: vi.fn((current: string, latest: string) => (
+      current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
+    )),
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+      dispose: vi.fn(),
+    },
+    parseDependencySpec,
+    readAllWorkspaceDependencies: vi.fn(),
+    readWorkspaceDependencies: vi.fn(),
+    runNpmAudit: vi.fn(),
+    showError: vi.fn(),
+  };
+});
 
 describe('registerConfigurationWatcher()', () => {
   beforeEach(() => {
