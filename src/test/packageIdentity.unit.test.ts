@@ -8,7 +8,11 @@ import {
   resolveUnambiguousManifestEntry,
   revalidateCommandPackageItem,
 } from '../commands/packageIdentity';
-import { readCanonicalDependencySpec, resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import {
+  readCanonicalDependencySpec,
+  readCanonicalDependencySpecs,
+  resolveCanonicalPackageLocation,
+} from '../providers/packageIdentity';
 import type { CanonicalPackageLocation, PackagesProvider, ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
@@ -288,6 +292,46 @@ describe('package identity command helpers', () => {
         configurable: true,
         value: previousFolders,
       });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readCanonicalDependencySpecs', () => {
+  it('returns one spec per identity, in the order the identities were given', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-specs-'));
+    try {
+      const packageFilePath = join(root, 'package.json');
+      await writeFile(packageFilePath, JSON.stringify({
+        dependencies: { react: '^1.0.0', vue: '^2.0.0' },
+        devDependencies: { react: '~3.0.0' },
+      }));
+      const location = { packageFilePath } as CanonicalPackageLocation;
+
+      await expect(readCanonicalDependencySpecs(location, [
+        { packageName: 'vue', packageFilePath, section: 'dependencies' },
+        { packageName: 'react', packageFilePath, section: 'devDependencies' },
+        { packageName: 'react', packageFilePath, section: 'dependencies' },
+        { packageName: 'absent', packageFilePath, section: 'dependencies' },
+      ])).resolves.toEqual(['^2.0.0', '~3.0.0', '^1.0.0', undefined]);
+    }
+    finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns no specs when the manifest parses to a non-object', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-null-'));
+    try {
+      const packageFilePath = join(root, 'package.json');
+      await writeFile(packageFilePath, 'null');
+      const location = { packageFilePath } as CanonicalPackageLocation;
+      const identity = { packageName: 'react', packageFilePath, section: 'dependencies' } as const;
+
+      await expect(readCanonicalDependencySpecs(location, [identity])).resolves.toEqual([undefined]);
+      await expect(readCanonicalDependencySpec(location, identity)).resolves.toBeUndefined();
+    }
+    finally {
       await rm(root, { recursive: true, force: true });
     }
   });

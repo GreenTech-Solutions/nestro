@@ -105,20 +105,31 @@ export async function readCanonicalDependencySpec(
   location: CanonicalPackageLocation,
   identity: PackageIdentityTuple,
 ): Promise<string | undefined> {
+  const [spec] = await readCanonicalDependencySpecs(location, [identity]);
+  return spec;
+}
+
+/** Reads every identity's spec from one parse of the manifest, aligned to `identities`. */
+export async function readCanonicalDependencySpecs(
+  location: CanonicalPackageLocation,
+  identities: readonly PackageIdentityTuple[],
+): Promise<(string | undefined)[]> {
   try {
     const manifest = JSON.parse((await readFile(location.packageFilePath, 'utf8'))) as {
       dependencies?: unknown;
       devDependencies?: unknown;
     };
-    const section = manifest[identity.section];
-    if (typeof section !== 'object' || section === null || !Object.hasOwn(section, identity.packageName)) {
-      return undefined;
-    }
-    const value = (section as Record<string, unknown>)[identity.packageName];
-    return typeof value === 'string' ? value : undefined;
+    return identities.map((identity) => {
+      const section = manifest[identity.section];
+      if (typeof section !== 'object' || section === null || !Object.hasOwn(section, identity.packageName)) {
+        return undefined;
+      }
+      const value = (section as Record<string, unknown>)[identity.packageName];
+      return typeof value === 'string' ? value : undefined;
+    });
   }
   catch {
-    return undefined;
+    return identities.map(() => undefined);
   }
 }
 

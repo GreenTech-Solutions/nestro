@@ -33,6 +33,7 @@ import {
   packageIdentityFromValues,
   packageIdentityKey,
   readCanonicalDependencySpec,
+  readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
   samePackageFileStamp,
 } from './packageIdentity';
@@ -80,6 +81,10 @@ export interface AuditReportSnapshot {
   readonly projects: readonly AuditProjectSummary[];
   readonly failures: readonly AuditProjectFailure[];
 }
+
+type UpdateFetchResult
+  = | { readonly accepted: true; readonly data: ReadonlyMap<string, string> }
+    | { readonly accepted: false };
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
@@ -133,9 +138,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private updateCache: {
     data: Map<string, string>;
     timestamp: number;
-    target: NcuUpdateTarget;
-    includePreReleases: boolean;
-    packageFilesKey: string;
+    policyKey: string;
+    fingerprint: string;
   } | undefined;
 
   constructor(private readonly filterManager: FilterManager) {
@@ -784,9 +788,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           }))
         : await this.readPackagesForUpdateCheck();
       const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-      const packageFilesKey = this.packageFilesKey(packageFiles);
-      const cacheValid = this.isCacheValid(target, includePreReleases, packageFilesKey);
-      if (!forceAlways && cacheValid && this.lastCheckTime !== undefined) {
+      const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
+      // The debounce gate uses the cheap policy/file-set key: reading every manifest to
+      // decide whether to skip a run would cost more than the run being skipped.
+      const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases);
+      if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
         const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
         if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
           logger.info('Check for updates skipped — debounce interval has not elapsed.');
@@ -794,11 +800,30 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           return;
         }
       }
+      const fingerprint = await this.computeUpdateFingerprint(identities, target, includePreReleases);
+      const cacheValid = this.isCacheValid(fingerprint);
       logger.info('Checking package updates.');
       logger.info(`Checking updates for ${source.length} package(s).`);
-      const upgrades = !forceAlways && cacheValid
-        ? this.updateCache?.data ?? new Map<string, string>()
-        : await this.fetchAndCacheUpdates(target, includePreReleases, packageFiles, packageFilesKey);
+      let upgrades: ReadonlyMap<string, string>;
+      if (!forceAlways && cacheValid) {
+        upgrades = this.updateCache?.data ?? new Map<string, string>();
+      }
+      else {
+        const fetchResult = await this.fetchAndCacheUpdates(
+          identities,
+          packageFiles,
+          target,
+          includePreReleases,
+          policyKey,
+          fingerprint,
+          snapshotGeneration,
+        );
+        if (!fetchResult.accepted) {
+          this.checkState = 'idle';
+          return;
+        }
+        upgrades = fetchResult.data;
+      }
       if (snapshotGeneration !== this.packageSnapshotGeneration) {
         this.checkState = 'idle';
         return;
@@ -1148,28 +1173,35 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.treeView.message = undefined;
   }
 
-  private isCacheValid(target: NcuUpdateTarget, includePreReleases: boolean, packageFilesKey: string): boolean {
-    if (this.updateCache === undefined) {
-      return false;
-    }
-    if (this.updateCache.target !== target) {
-      return false;
-    }
-    if (this.updateCache.includePreReleases !== includePreReleases) {
-      return false;
-    }
-    if (this.updateCache.packageFilesKey !== packageFilesKey) {
+  private isCacheValid(fingerprint: string): boolean {
+    if (this.updateCache === undefined || this.updateCache.fingerprint !== fingerprint) {
       return false;
     }
     return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
   }
 
+  /** Cheap half of cache validity: update policy and package-file set, without reading manifests. */
+  private isCachePolicyCurrent(policyKey: string): boolean {
+    if (this.updateCache === undefined || this.updateCache.policyKey !== policyKey) {
+      return false;
+    }
+    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
+  }
+
+  /**
+   * Fetches latest versions, then re-reads manifests and config immediately before
+   * committing the result. A mismatch against the pre-fetch fingerprint, or a newer
+   * load superseding this one, discards the fetch instead of caching or applying it.
+   */
   private async fetchAndCacheUpdates(
+    identities: readonly PackageIdentityTuple[],
+    packageFiles: readonly string[],
     target: NcuUpdateTarget,
     includePreReleases: boolean,
-    packageFiles: readonly string[],
-    packageFilesKey: string,
-  ): Promise<Map<string, string>> {
+    policyKey: string,
+    beforeFingerprint: string,
+    snapshotGeneration: number,
+  ): Promise<UpdateFetchResult> {
     const upgrades = new Map<string, string>();
     for (const packageFilePath of packageFiles) {
       const fileUpgrades = await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
@@ -1177,14 +1209,79 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         upgrades.set(this.entryKey(packageName, packageFilePath), version);
       }
     }
+
+    const config = vscode.workspace.getConfiguration('nestro');
+    const currentTarget = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+    const currentIncludePreReleases = config.get<boolean>('includePreReleases', true);
+    const afterFingerprint = await this.computeUpdateFingerprint(identities, currentTarget, currentIncludePreReleases);
+    if (afterFingerprint !== beforeFingerprint || snapshotGeneration !== this.packageSnapshotGeneration) {
+      logger.info('Update results discarded — packages or update settings changed during the check.');
+      return { accepted: false };
+    }
+
     this.updateCache = {
       data: upgrades,
       timestamp: Date.now(),
-      target,
-      includePreReleases,
-      packageFilesKey,
+      policyKey,
+      fingerprint: beforeFingerprint,
     };
-    return upgrades;
+    return { accepted: true, data: upgrades };
+  }
+
+  /**
+   * Deterministic key over exactly what makes a cached update result valid: each
+   * package's canonical location, section, name, on-disk spec, and the update policy.
+   * Adding a future policy setting (e.g. a release cooldown) is one extra field here.
+   */
+  private async computeUpdateFingerprint(
+    identities: readonly PackageIdentityTuple[],
+    target: NcuUpdateTarget,
+    includePreReleases: boolean,
+  ): Promise<string> {
+    const byManifest = new Map<string, PackageIdentityTuple[]>();
+    for (const identity of identities) {
+      const group = byManifest.get(identity.packageFilePath);
+      if (group === undefined) {
+        byManifest.set(identity.packageFilePath, [identity]);
+      }
+      else {
+        group.push(identity);
+      }
+    }
+    const entryFingerprints: string[] = [];
+    for (const [packageFilePath, manifestIdentities] of byManifest) {
+      const location = await resolveCanonicalPackageLocation(packageFilePath);
+      if (!location.ok) {
+        // The rejection reason stays in the key, so an unresolvable manifest cannot
+        // collapse the fingerprint into a path-only key that accepts any spec change.
+        for (const identity of manifestIdentities) {
+          entryFingerprints.push(JSON.stringify([
+            packageFilePath, identity.section, identity.packageName, null, location.reason,
+          ]));
+        }
+        continue;
+      }
+      const specs = await readCanonicalDependencySpecs(location.value, manifestIdentities);
+      manifestIdentities.forEach((identity, index) => {
+        entryFingerprints.push(JSON.stringify([
+          location.value.packageFilePath, identity.section, identity.packageName, specs[index] ?? null, 'ok',
+        ]));
+      });
+    }
+    // Plain code-unit order, not localeCompare: this key only needs to be
+    // deterministic within one process, never locale- or ICU-stable.
+    entryFingerprints.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    return JSON.stringify({ entries: entryFingerprints, target, includePreReleases });
+  }
+
+  /** Update policy plus the discovered manifest set — everything the fingerprint covers without disk reads. */
+  private updatePolicyKey(
+    packageFiles: readonly string[],
+    target: NcuUpdateTarget,
+    includePreReleases: boolean,
+  ): string {
+    const files = [...packageFiles].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    return JSON.stringify({ files, target, includePreReleases });
   }
 
   private get workspaceRoot(): string | undefined {
@@ -1374,10 +1471,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       packageFilePath,
       section: dev ? 'devDependencies' : 'dependencies',
     });
-  }
-
-  private packageFilesKey(packageFiles: readonly string[]): string {
-    return [...packageFiles].sort((a, b) => a.localeCompare(b)).join('\0');
   }
 
   private packageStateKey(identity: PackageStateIdentity): string {
