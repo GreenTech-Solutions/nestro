@@ -86,6 +86,12 @@ type UpdateFetchResult
   = | { readonly accepted: true; readonly data: ReadonlyMap<string, string> }
     | { readonly accepted: false };
 
+interface AuditOperation {
+  readonly generation: number;
+  readonly snapshotGeneration: number;
+  readonly abortController: AbortController;
+}
+
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -125,11 +131,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   /**
-   * Owns cancellation for the in-flight `runAudit()` run. Set for the duration of one run
-   * only, so `cancelAudit()`/`dispose()` can never abort a *future* run that happens to
-   * start after this one already finished.
+   * Owns the current audit generation and its cancellation for one run. A completed or
+   * superseded run cannot clear a replacement operation through this identity boundary.
    */
-  private auditAbortController: AbortController | undefined;
+  private auditGeneration = 0;
+  private auditOperation: AuditOperation | undefined;
   private lastAuditCount: number | undefined;
   private lastAuditSuccessfulRootCount: number | undefined;
   private failedAuditPaths: string[] = [];
@@ -893,10 +899,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    * "running" state while process teardown is still happening. A no-op when idle.
    */
   cancelAudit(): void {
-    if (this.auditState !== 'running' || this.auditAbortController === undefined) {
+    const operation = this.auditOperation;
+    if (this.auditState !== 'running' || operation === undefined) {
       return;
     }
-    this.auditAbortController.abort();
+    operation.abortController.abort();
     this.auditState = 'idle';
     this.emitTreeChanged();
   }
@@ -918,14 +925,24 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     // discovery/resolution so a failed new run cannot leave badges from the previous run.
     this.auditResults = new Map();
     this.rebuildPackageItems();
-    const abortController = new AbortController();
-    this.auditAbortController = abortController;
+    const operation: AuditOperation = {
+      generation: this.auditGeneration + 1,
+      snapshotGeneration: this.packageSnapshotGeneration,
+      abortController: new AbortController(),
+    };
+    this.auditGeneration = operation.generation;
+    this.auditOperation = operation;
+    let shouldEmit = false;
     this.emitTreeChanged();
 
     try {
       const packageFilePaths = await this.getKnownPackageFilePaths();
+      if (!this.isAuditCurrent(operation)) {
+        return;
+      }
       if (packageFilePaths.length === 0) {
         this.auditState = 'idle';
+        shouldEmit = true;
         return;
       }
 
@@ -933,8 +950,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       // project root and are audited exactly once. Rejected manifests — no owning
       // workspace, or a workspace-escaping root — never reach a client at all.
       const { projects, rejected } = await resolveAuditProjects(packageFilePaths);
-      if (rejected.length > 0) {
-        logger.error('Audit project resolution failed; see the security audit report for redacted details.');
+      if (!this.isAuditCurrent(operation)) {
+        return;
       }
 
       const auditResults = new Map<string, AuditSeverity>();
@@ -946,12 +963,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }));
       const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
       let successfulAuditRootCount = 0;
+      let failedProjectCount = 0;
       for (const project of projects) {
-        // Cancelled mid-loop (dispose() or cancelAudit()): stop starting new audit
-        // processes. cancelAudit() already reset the busy state, so this only prevents
-        // the loop from continuing to spawn work for a run nobody is waiting on anymore.
-        if (abortController.signal.aborted) {
-          break;
+        if (!this.isAuditCurrent(operation)) {
+          return;
         }
         try {
           const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
@@ -959,8 +974,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             runAuditReport?: (signal?: AbortSignal) => Promise<unknown>;
           };
           const rawResult = typeof reportRunner.runAuditReport === 'function'
-            ? await reportRunner.runAuditReport(abortController.signal)
-            : await client.runAudit(abortController.signal);
+            ? await reportRunner.runAuditReport(operation.abortController.signal)
+            : await client.runAudit(operation.abortController.signal);
+          if (!this.isAuditCurrent(operation)) {
+            return;
+          }
           successfulAuditRootCount += 1;
           if (this.isAuditResult(rawResult)) {
             const advisories = mergeAuditAdvisories(rawResult.advisories);
@@ -973,6 +991,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               advisories: advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
             });
             await this.applyStructuredProjectAuditResults(project, advisories, auditResults);
+            if (!this.isAuditCurrent(operation)) {
+              return;
+            }
           }
           else if (rawResult instanceof Map) {
             const vulnerabilities = new Map(rawResult as Map<string, AuditSeverity>);
@@ -990,6 +1011,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           }
         }
         catch (err) {
+          if (!this.isAuditCurrent(operation)) {
+            return;
+          }
           failedAuditPaths.push(...project.originManifests);
           const failure = describeAuditFailure(err);
           auditProjects.push({
@@ -1007,11 +1031,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             reason: failure.reason,
             detail: failure.detail,
           });
-          logger.error('Audit failed for a project; see the security audit report for redacted details.');
+          failedProjectCount += 1;
         }
       }
 
-      if (abortController.signal.aborted) {
+      if (!this.isAuditCurrent(operation)) {
         return;
       }
 
@@ -1022,6 +1046,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
       this.lastAuditCount = countProjectVulnerablePackages(auditProjects);
       this.lastAuditSuccessfulRootCount = successfulAuditRootCount;
+      shouldEmit = true;
+      if (rejected.length > 0) {
+        logger.error('Audit project resolution failed; see the security audit report for redacted details.');
+      }
+      for (let index = 0; index < failedProjectCount; index += 1) {
+        logger.error('Audit failed for a project; see the security audit report for redacted details.');
+      }
       logger.info(
         failedAuditPaths.length === 0
           ? `Audit: ${this.lastAuditCount} vulnerable package(s).`
@@ -1031,7 +1062,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.rebuildPackageItems();
     }
     catch (err) {
-      if (!abortController.signal.aborted) {
+      if (this.isAuditCurrent(operation)) {
         const failure = describeAuditFailure(err);
         this.auditFailures = [{
           packageFilePaths: [],
@@ -1039,20 +1070,36 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           detail: failure.detail,
         }];
         this.auditState = 'idle';
+        shouldEmit = true;
         showError('package audit failed — the security audit report is incomplete.');
       }
     }
     finally {
-      if (this.auditAbortController === abortController) {
-        this.auditAbortController = undefined;
+      if (this.auditOperation === operation) {
+        this.auditOperation = undefined;
+        if (this.auditState === 'running') {
+          this.auditState = 'idle';
+          shouldEmit = !operation.abortController.signal.aborted;
+        }
+        if (shouldEmit) {
+          this.emitTreeChanged();
+        }
       }
-      this.emitTreeChanged();
     }
   }
 
   /** A load is outdated once a newer load has started or the provider has been disposed. */
   private isLoadOutdated(snapshotGeneration: number, abortSignal: AbortSignal): boolean {
     return snapshotGeneration !== this.packageSnapshotGeneration || abortSignal.aborted;
+  }
+
+  /** An audit is current only while its operation owns the provider and snapshot. */
+  private isAuditCurrent(operation: AuditOperation): boolean {
+    return this.auditOperation === operation
+      && operation.generation === this.auditGeneration
+      && operation.snapshotGeneration === this.packageSnapshotGeneration
+      && this.auditState === 'running'
+      && !operation.abortController.signal.aborted;
   }
 
   private emitTreeChanged(): void {

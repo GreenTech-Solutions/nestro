@@ -21,6 +21,7 @@ import { LoadingItem } from '../providers/LoadingItem';
 import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,
+  logger,
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
@@ -1030,6 +1031,112 @@ describe('PackagesProvider', () => {
     expect(createClientMock).toHaveBeenCalledTimes(2);
     expect(runAuditMock).toHaveBeenCalledTimes(2);
     expect(react?.vulnerabilitySeverity).toBe('moderate');
+  });
+
+  it('discards an audit result after the package snapshot reloads', async () => {
+    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+        resolveAudit = resolve;
+      })),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const audit = provider.runAudit();
+    await vi.waitFor(() => expect(createClientMock).toHaveBeenCalledTimes(1));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'lodash',
+        current: '4.17.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    resolveAudit(new Map([['react', 'high']]));
+    await audit;
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+    expect(provider.getAuditProjects()).toEqual([]);
+    expect(provider.getAuditFailures()).toEqual([]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && (
+      item.label === 'Audit complete' || item.label === 'Audit incomplete'
+    ))).toBe(false);
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/^Audit/));
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current audit failure when a cancelled predecessor succeeds late', async () => {
+    let resolveOldAudit: (value: Map<string, 'high'>) => void = () => {};
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+      resolveOldAudit = resolve;
+    }));
+    const newRunAudit = vi.fn().mockRejectedValue(new Error('current audit failed'));
+    createClientMock
+      .mockReturnValueOnce({ runAudit: oldRunAudit })
+      .mockReturnValueOnce({ runAudit: newRunAudit });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    let treeChangeCount = 0;
+    const treeChangeSubscription = provider.onDidChangeTreeData(() => {
+      treeChangeCount += 1;
+    });
+
+    const oldAudit = provider.runAudit();
+    await vi.waitFor(() => expect(oldRunAudit).toHaveBeenCalledTimes(1));
+    provider.cancelAudit();
+
+    await provider.runAudit();
+    const treeChangesAfterCurrentRun = treeChangeCount;
+    resolveOldAudit(new Map([['react', 'high']]));
+    await oldAudit;
+
+    expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['failure']);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Audit incomplete')).toBe(true);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith('Audit incomplete: 0 vulnerable package(s); failed 1 package root(s).');
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/^Audit: /));
+    expect(showError).not.toHaveBeenCalled();
+    expect(treeChangeCount).toBe(treeChangesAfterCurrentRun);
+    treeChangeSubscription.dispose();
+  });
+
+  it('keeps the current audit success when a cancelled predecessor fails late', async () => {
+    let rejectOldAudit: (reason: Error) => void = () => {};
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((_, reject) => {
+      rejectOldAudit = reject;
+    }));
+    const newRunAudit = vi.fn().mockResolvedValue(new Map<string, never>());
+    createClientMock
+      .mockReturnValueOnce({ runAudit: oldRunAudit })
+      .mockReturnValueOnce({ runAudit: newRunAudit });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const oldAudit = provider.runAudit();
+    await vi.waitFor(() => expect(oldRunAudit).toHaveBeenCalledTimes(1));
+    provider.cancelAudit();
+
+    await provider.runAudit();
+    rejectOldAudit(new Error('stale audit failed'));
+    await oldAudit;
+
+    expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['success']);
+    expect(provider.getAuditFailures()).toEqual([]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Audit complete')).toBe(true);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
   });
 
   it('does nothing when cancelling with no audit running', async () => {
