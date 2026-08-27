@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
+  DependencyTypeConflictError,
   extractVersionPrefix,
   getWorkspacePackageFilePath,
   pinAllWorkspaceDependencyVersions,
@@ -339,6 +340,16 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
 });
 
 describe('switchDependencyType()', () => {
+  const malformedSpecs = [
+    ['number', 7, '<number>'],
+    ['null', null, '<null>'],
+    ['object', { version: '7', path: '/secret/package.json' }, '<object>'],
+    ['array', ['7'], '<array>'],
+    ['boolean', true, '<boolean>'],
+    ['control and ANSI', '\u0000\u001b[31munsafe\u001b[0m\n', ' unsafe '],
+    ['long string', 'x'.repeat(300), 'x'.repeat(240)],
+  ] as const;
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
@@ -350,7 +361,7 @@ describe('switchDependencyType()', () => {
       devDependencies: { axios: '^1.0.0' },
     }, undefined, 2)));
 
-    await switchDependencyType('/workspace/package.json', 'zod', false);
+    await switchDependencyType('/workspace/package.json', 'zod', false, '^3.0.0');
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
@@ -367,7 +378,7 @@ describe('switchDependencyType()', () => {
       devDependencies: { axios: '^1.0.0' },
     }, undefined, 2)));
 
-    await switchDependencyType('/workspace/package.json', 'axios', true);
+    await switchDependencyType('/workspace/package.json', 'axios', true, '^1.0.0');
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
@@ -376,6 +387,120 @@ describe('switchDependencyType()', () => {
         react: '^18.0.0',
       },
     });
+  });
+
+  it('preserves tabs and a trailing newline when moving into an empty target section', async () => {
+    const original = '{\n\t"dependencies": {\n\t\t"zod": "^3.0.0"\n\t}\n}\n';
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(original));
+
+    await switchDependencyType('/workspace/package.json', 'zod', false, '^3.0.0');
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    expect(written).toBe('{\n\t"devDependencies": {\n\t\t"zod": "^3.0.0"\n\t}\n}\n');
+  });
+
+  it.each([
+    ['same', '^1.2.3'],
+    ['different', '~2.0.0'],
+  ] as const)('rejects a %s-spec target collision without writing the file', async (_label, targetSpec) => {
+    const original = JSON.stringify({
+      dependencies: { pkg: '^1.2.3' },
+      devDependencies: { pkg: targetSpec },
+    }, undefined, 2);
+    let document = original;
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(original));
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementationOnce((_uri, data) => {
+      document = Buffer.from(data).toString('utf8');
+      return Promise.resolve();
+    });
+
+    const result = switchDependencyType('/workspace/package.json', 'pkg', false, '^1.2.3');
+
+    await expect(result).rejects.toBeInstanceOf(DependencyTypeConflictError);
+    await expect(result).rejects.toMatchObject({
+      expectedSourceSpec: '^1.2.3',
+      actualSourceSpec: '^1.2.3',
+      targetSpec,
+    });
+    await expect(result).rejects.toThrow(new RegExp(`\\^1\\.2\\.3.*${targetSpec === '^1.2.3' ? '\\^1\\.2\\.3' : '~2\\.0\\.0'}`));
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+    expect(document).toBe(original);
+  });
+
+  it('rejects a changed source spec without writing the file', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { pkg: '~2.0.0' },
+    }, undefined, 2)));
+
+    await expect(switchDependencyType('/workspace/package.json', 'pkg', false, '^1.2.3'))
+      .rejects.toThrow('source spec changed from ^1.2.3 to ~2.0.0');
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each(malformedSpecs)('rejects a malformed %s source spec as a typed no-write conflict', async (_label, sourceSpec, safeSpec) => {
+    const original = JSON.stringify({ dependencies: { pkg: sourceSpec } });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(original));
+
+    const result = switchDependencyType('/workspace/package.json', 'pkg', false, '^1.2.3');
+    const error = await result.catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(DependencyTypeConflictError);
+    const conflict = error as DependencyTypeConflictError;
+    expect(conflict.expectedSourceSpec).toBe('^1.2.3');
+    expect(conflict.actualSourceSpec).toEqual(sourceSpec);
+    expect(conflict.hasTargetSpec).toBe(false);
+    expect(conflict.message).toContain(`to ${safeSpec}`);
+    expect(conflict.message).not.toContain('/workspace/package.json');
+    expect(conflict.message).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each(malformedSpecs)('rejects a malformed %s target spec as a typed no-write conflict', async (_label, targetSpec, safeSpec) => {
+    const original = JSON.stringify({
+      dependencies: { pkg: '^1.2.3' },
+      devDependencies: { pkg: targetSpec },
+    });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(original));
+
+    const result = switchDependencyType('/workspace/package.json', 'pkg', false, '^1.2.3');
+    const error = await result.catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(DependencyTypeConflictError);
+    const conflict = error as DependencyTypeConflictError;
+    expect(conflict.actualSourceSpec).toBe('^1.2.3');
+    expect(conflict.targetSpec).toEqual(targetSpec);
+    expect(conflict.hasTargetSpec).toBe(true);
+    expect(conflict.message).toContain(`target spec ${safeSpec}`);
+    expect(conflict.message).not.toContain('/workspace/package.json');
+    expect(conflict.message).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it.each(['constructor', '__proto__'] as const)('switches an own %s source entry when the target only inherits that key', async (packageName) => {
+    const dependencies = { other: '^2.0.0' } as Record<string, string>;
+    Object.defineProperty(dependencies, packageName, {
+      configurable: true,
+      enumerable: true,
+      value: '^1.0.0',
+      writable: true,
+    });
+    const original = JSON.stringify({
+      dependencies,
+      devDependencies: { zod: '^3.0.0' },
+    });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(original));
+
+    await switchDependencyType('/workspace/package.json', packageName, false, '^1.0.0');
+
+    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
+    const result = JSON.parse(written) as {
+      dependencies?: Record<string, unknown>;
+      devDependencies?: Record<string, unknown>;
+    };
+    expect(result.dependencies).toEqual({ other: '^2.0.0' });
+    expect(Object.hasOwn(result.devDependencies ?? {}, packageName)).toBe(true);
+    expect(result.devDependencies?.[packageName]).toBe('^1.0.0');
+    expect(result.devDependencies?.zod).toBe('^3.0.0');
   });
 });
 

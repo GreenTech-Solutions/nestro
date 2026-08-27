@@ -4,7 +4,12 @@ import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
 import { PackageItem, PackagesProvider } from '../providers';
-import { setVersionPin, showError, switchDependencyType } from '../utils';
+import {
+  DependencyTypeConflictError,
+  setVersionPin,
+  showError,
+  switchDependencyType,
+} from '../utils';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -94,7 +99,7 @@ describe('switchDepTypeCommand()', () => {
 
     await switchDepTypeCommand(item, provider);
 
-    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', false, '^18.0.0');
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -115,7 +120,7 @@ describe('switchDepTypeCommand()', () => {
 
     await switchDepTypeCommand(item, provider);
 
-    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true, '^18.0.0');
   });
 
   it('stops before a write when the provider cannot resolve the current row', async () => {
@@ -165,6 +170,30 @@ describe('switchDepTypeCommand()', () => {
     await switchDepTypeCommand(item, provider);
 
     expect(showError).toHaveBeenCalledWith(`failed to switch dependency type — ${expectedMessage}`, rejection);
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
+
+  it('shows both specs and does not reload when the target section already contains the package', async () => {
+    const conflict = new DependencyTypeConflictError('react', '^18.0.0', '^18.0.0', '~17.0.0');
+    vi.mocked(switchDependencyType).mockRejectedValueOnce(conflict);
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'react',
+      '^18.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+
+    await switchDepTypeCommand(item, provider);
+
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('^18.0.0'));
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('~17.0.0'));
+    expect(showError).toHaveBeenCalledWith(expect.not.stringContaining('/workspace/package.json'));
     expect(provider.loadPackages).not.toHaveBeenCalled();
   });
 

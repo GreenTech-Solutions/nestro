@@ -43,6 +43,34 @@ export class VersionPinConflictError extends Error {
   }
 }
 
+export class DependencyTypeConflictError extends Error {
+  readonly expectedSourceSpec: unknown;
+  readonly actualSourceSpec: unknown;
+  readonly targetSpec: unknown;
+  readonly hasTargetSpec: boolean;
+
+  constructor(
+    packageName: unknown,
+    expectedSourceSpec: unknown,
+    actualSourceSpec: unknown,
+    targetSpec?: unknown,
+  ) {
+    const hasTargetSpec = arguments.length >= 4;
+    const safePackageName = sanitizeConflictText(packageName);
+    const safeExpectedSourceSpec = sanitizeConflictText(expectedSourceSpec);
+    const safeActualSourceSpec = sanitizeConflictText(actualSourceSpec);
+    const message = !hasTargetSpec
+      ? `Cannot switch ${safePackageName}: source spec changed from ${safeExpectedSourceSpec} to ${safeActualSourceSpec}.`
+      : `Cannot switch ${safePackageName}: source spec ${safeActualSourceSpec} conflicts with target spec ${sanitizeConflictText(targetSpec)}.`;
+    super(message);
+    this.name = 'DependencyTypeConflictError';
+    this.expectedSourceSpec = expectedSourceSpec;
+    this.actualSourceSpec = actualSourceSpec;
+    this.targetSpec = targetSpec;
+    this.hasTargetSpec = hasTargetSpec;
+  }
+}
+
 interface WorkspacePackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -174,32 +202,46 @@ export async function switchDependencyType(
   packageFilePath: string,
   packageName: string,
   currentlyDev: boolean,
+  expectedSourceSpec: string,
 ): Promise<void> {
   const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const runtimeJson = isRecord(json) ? json : {};
   const sourceKey = currentlyDev ? 'devDependencies' : 'dependencies';
   const targetKey = currentlyDev ? 'dependencies' : 'devDependencies';
-  const source = json[sourceKey] ?? {};
-  const version = source[packageName];
-  if (version === undefined) {
-    throw new Error(`Package ${packageName} not found in ${sourceKey}.`);
+  const sourceEntry = readOwnDependencySpec(runtimeJson[sourceKey], packageName);
+  if (!sourceEntry.valid || !sourceEntry.present) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, sourceEntry.value);
+  }
+  const version = sourceEntry.value;
+  if (version !== expectedSourceSpec) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version);
   }
 
+  const targetEntry = readOwnDependencySpec(runtimeJson[targetKey], packageName);
+  if (!targetEntry.valid || targetEntry.present) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version, targetEntry.value);
+  }
+
+  const source = sourceEntry.section;
+  if (source === undefined) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version);
+  }
   delete source[packageName];
   if (Object.keys(source).length === 0) {
-    delete json[sourceKey];
+    delete runtimeJson[sourceKey];
   }
   else {
-    json[sourceKey] = source;
+    runtimeJson[sourceKey] = source;
   }
 
-  json[targetKey] = sortDependencyMap({
-    ...(json[targetKey] ?? {}),
+  runtimeJson[targetKey] = sortDependencyMap({
+    ...(targetEntry.section ?? {}),
     [packageName]: version,
   });
 
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(runtimeJson, undefined, indent)}${newline}`));
 }
 
 export async function setVersionPin(
@@ -359,8 +401,64 @@ async function writePackageJson(uri: vscode.Uri, raw: string, json: WorkspacePac
   await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
 }
 
-function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {
+function sortDependencyMap(dependencies: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(dependencies).sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+interface OwnDependencySpec {
+  section: Record<string, unknown> | undefined;
+  valid: boolean;
+  present: boolean;
+  value: unknown;
+}
+
+function readOwnDependencySpec(section: unknown, packageName: string): OwnDependencySpec {
+  if (section === undefined) {
+    return { section: undefined, valid: true, present: false, value: undefined };
+  }
+  if (!isRecord(section)) {
+    return { section: undefined, valid: false, present: false, value: section };
+  }
+
+  const dependencySection = section as Record<string, unknown>;
+  const present = Object.hasOwn(dependencySection, packageName);
+  return {
+    section: dependencySection,
+    valid: true,
+    present,
+    value: present ? dependencySection[packageName] : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const CONFLICT_ANSI_ESCAPE = new RegExp(
+  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
+  'g',
+);
+const CONFLICT_CONTROL = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
+  'g',
+);
+
+function sanitizeConflictText(value: unknown): string {
+  if (typeof value !== 'string') {
+    if (value === undefined) {
+      return '<missing>';
+    }
+    if (value === null) {
+      return '<null>';
+    }
+    return Array.isArray(value) ? '<array>' : `<${typeof value}>`;
+  }
+
+  return value
+    .replace(CONFLICT_ANSI_ESCAPE, '')
+    .replace(CONFLICT_CONTROL, ' ')
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .slice(0, 240);
 }
