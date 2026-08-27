@@ -907,7 +907,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed; failed to roll back: /workspace/apps/web/package.json',
+      'Nestro: failed to update packages — second write failed; failed to roll back: apps/web/package.json',
     );
   });
 

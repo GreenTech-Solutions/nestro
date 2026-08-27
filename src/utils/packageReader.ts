@@ -114,11 +114,73 @@ export async function updateDependencyVersionsInFile(
 export async function updateDependencyVersionsInFilesAtomically(
   files: readonly PackageFileDependencyUpdates[],
 ): Promise<void> {
-  const prepared = [] as PreparedPackageFile[];
+  const prepared: PreparedPackageFile[] = [];
   for (const file of files) {
     prepared.push(await prepareDependencyVersionsInFile(file.packageFilePath, file.updates));
   }
+  await writeManyPreparedPackageFilesAtomically(prepared);
+}
 
+interface PreparedPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  updated: Uint8Array;
+}
+
+interface RawPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  raw: string;
+  json: WorkspacePackageJson;
+}
+
+async function readRawPackageFile(packageFilePath: string): Promise<RawPackageFile> {
+  const uri = vscode.Uri.file(packageFilePath);
+  const original = await vscode.workspace.fs.readFile(uri);
+  const raw = Buffer.from(original).toString('utf8');
+  return { uri, original, raw, json: JSON.parse(raw) as WorkspacePackageJson };
+}
+
+function serializePackageJson(raw: string, json: WorkspacePackageJson): Uint8Array {
+  const indent = detectJsonIndent(raw);
+  const newline = raw.endsWith('\n') ? '\n' : '';
+  return Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`);
+}
+
+async function prepareDependencyVersionsInFile(
+  packageFilePath: string,
+  updates: readonly PackageVersionUpdate[],
+): Promise<PreparedPackageFile> {
+  const { uri, original, raw, json } = await readRawPackageFile(packageFilePath);
+  const missing: string[] = [];
+
+  for (const update of updates) {
+    const dependencies = json[update.section];
+    if (dependencies?.[update.name] !== undefined) {
+      const current = dependencies[update.name];
+      const prefix = extractVersionPrefix(current);
+      dependencies[update.name] = `${prefix}${update.version}`;
+      continue;
+    }
+    missing.push(`${update.name} (${update.section})`);
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
+  }
+
+  return { uri, original, updated: serializePackageJson(raw, json) };
+}
+
+async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
+  await vscode.workspace.fs.writeFile(file.uri, file.updated);
+}
+
+/**
+ * Writes every prepared file in order; if any write fails, rolls the already-written
+ * files back to their original bytes in reverse order before rethrowing.
+ */
+async function writeManyPreparedPackageFilesAtomically(prepared: readonly PreparedPackageFile[]): Promise<void> {
   const written: PreparedPackageFile[] = [];
   try {
     for (const file of prepared) {
@@ -140,50 +202,6 @@ export async function updateDependencyVersionsInFilesAtomically(
   }
 }
 
-interface PreparedPackageFile {
-  uri: vscode.Uri;
-  original: Uint8Array;
-  updated: Uint8Array;
-}
-
-async function prepareDependencyVersionsInFile(
-  packageFilePath: string,
-  updates: readonly PackageVersionUpdate[],
-): Promise<PreparedPackageFile> {
-  const uri = vscode.Uri.file(packageFilePath);
-  const original = await vscode.workspace.fs.readFile(uri);
-  const raw = Buffer.from(original).toString('utf8');
-  const json = JSON.parse(raw) as WorkspacePackageJson;
-  const missing: string[] = [];
-
-  for (const update of updates) {
-    const dependencies = json[update.section];
-    if (dependencies?.[update.name] !== undefined) {
-      const current = dependencies[update.name];
-      const prefix = extractVersionPrefix(current);
-      dependencies[update.name] = `${prefix}${update.version}`;
-      continue;
-    }
-    missing.push(`${update.name} (${update.section})`);
-  }
-
-  if (missing.length > 0) {
-    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
-  }
-
-  const indent = detectJsonIndent(raw);
-  const newline = raw.endsWith('\n') ? '\n' : '';
-  return {
-    uri,
-    original,
-    updated: Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`),
-  };
-}
-
-async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
-  await vscode.workspace.fs.writeFile(file.uri, file.updated);
-}
-
 async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<string[]> {
   const failures: string[] = [];
   for (const file of [...files].reverse()) {
@@ -191,7 +209,7 @@ async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[
       await vscode.workspace.fs.writeFile(file.uri, file.original);
     }
     catch (err) {
-      failures.push(file.uri.fsPath);
+      failures.push(toWorkspaceRelativePackageFilePath(file.uri.fsPath));
       logger.error(`Failed to roll back package.json at ${file.uri.toString()}.`, err);
     }
   }
@@ -267,21 +285,50 @@ export async function setVersionPin(
   await writePackageJson(uri, raw, json);
 }
 
-export async function pinAllWorkspaceDependencyVersions(): Promise<number> {
-  const files = await findWorkspacePackageJsonFiles();
-  let count = 0;
-  for (const uri of files) {
-    count += await pinAllVersionsInFile(uri.fsPath);
-  }
-  return count;
+export interface PinAllVersionsResult {
+  count: number;
+  skippedFiles: readonly string[];
 }
 
-async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
-  const { json, raw, uri } = await readPackageJson(packageFilePath);
+/**
+ * Pins every pinnable dependency across every workspace `package.json`. A manifest that
+ * cannot be read or parsed is skipped instead of aborting the run; the rest are all
+ * classified before the first write and committed through the shared write/rollback engine.
+ */
+export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersionsResult> {
+  const files = await findWorkspacePackageJsonFiles();
+  const prepared: PreparedPackageFile[] = [];
+  const skippedFiles: string[] = [];
+  let count = 0;
+  for (const uri of files) {
+    let result: { prepared: PreparedPackageFile | undefined; count: number };
+    try {
+      result = await preparePinAllVersionsInFile(uri.fsPath);
+    }
+    catch (err) {
+      skippedFiles.push(toWorkspaceRelativePackageFilePath(uri.fsPath));
+      logger.error(`Failed to read package.json at ${uri.toString()} for Pin All; skipping it.`, err);
+      continue;
+    }
+    count += result.count;
+    if (result.prepared !== undefined) {
+      prepared.push(result.prepared);
+    }
+  }
+  await writeManyPreparedPackageFilesAtomically(prepared);
+  return { count, skippedFiles };
+}
+
+async function preparePinAllVersionsInFile(
+  packageFilePath: string,
+): Promise<{ prepared: PreparedPackageFile | undefined; count: number }> {
+  const { uri, original, raw, json } = await readRawPackageFile(packageFilePath);
   let count = 0;
   for (const section of ['dependencies', 'devDependencies'] as const) {
     const deps = json[section];
-    if (deps === undefined) { continue; }
+    // A section can be JSON `null` in a hand-edited file; treat it the same as absent
+    // rather than letting Object.entries() throw on it.
+    if (deps === undefined || deps === null) { continue; }
     for (const [name, version] of Object.entries(deps)) {
       const parsed = parseDependencySpec(version);
       if (parsed.supported && parsed.range !== 'exact') {
@@ -290,10 +337,10 @@ async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
       }
     }
   }
-  if (count > 0) {
-    await writePackageJson(uri, raw, json);
+  if (count === 0) {
+    return { prepared: undefined, count: 0 };
   }
-  return count;
+  return { prepared: { uri, original, updated: serializePackageJson(raw, json) }, count };
 }
 
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
@@ -383,6 +430,19 @@ function detectJsonIndent(raw: string): string {
     return '  ';
   }
   return match[0].match(/^[ \t]+/)?.[0] ?? '  ';
+}
+
+/** Package file path relative to its owning workspace folder, for user-facing messages. */
+function toWorkspaceRelativePackageFilePath(fsPath: string): string {
+  const normalized = fsPath.replace(/\\/g, '/');
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  for (const folder of folders) {
+    const root = folder.uri.fsPath.replace(/\\/g, '/').replace(/\/$/, '');
+    if (normalized.startsWith(`${root}/`)) {
+      return normalized.slice(root.length + 1);
+    }
+  }
+  return path.basename(fsPath);
 }
 
 async function readPackageJson(packageFilePath: string): Promise<{

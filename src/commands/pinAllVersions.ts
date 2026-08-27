@@ -19,21 +19,55 @@ export async function pinAllVersionsCommand(provider: PackagesProvider): Promise
       packageFilePaths.map(packageFilePath => resolveMutationCoordinatorKey(packageFilePath)),
     );
 
-    let count = 0;
     await mutationCoordinator.runManyExclusive(projectKeys, async () => {
-      await provider.withWriteSuppressed(async () => {
-        count = await pinAllWorkspaceDependencyVersions();
-      });
+      let count = 0;
+      let skippedFiles: readonly string[] = [];
+      // Set only after withWriteSuppressed() fully returns, so a throw anywhere in
+      // that call — including its own post-write bookkeeping, not just the pin work
+      // itself — is treated as a failure rather than inferred from a stray variable.
+      let succeeded = false;
+      try {
+        const outcome = await provider.withWriteSuppressed(() => pinAllWorkspaceDependencyVersions());
+        count = outcome.count;
+        skippedFiles = outcome.skippedFiles;
+        succeeded = true;
+      }
+      finally {
+        if (!succeeded) {
+          // The bulk write may have applied to a subset of files even though it tries
+          // to roll itself back; reconcile from disk. A reload failure here is logged,
+          // not raised, so it never replaces the pin failure the user is about to see.
+          try {
+            provider.invalidateUpdateCache();
+            await provider.loadPackages();
+          }
+          catch (reconcileErr) {
+            logger.error('Failed to reconcile package state after a failed Pin All.', reconcileErr);
+          }
+        }
+      }
+
       logger.info(`Pinned ${count} package version(s).`);
+      if (skippedFiles.length > 0) {
+        logger.warn(`Pin All could not read: ${skippedFiles.join(', ')}.`);
+      }
+      const message = formatPinAllMessage(count, skippedFiles);
       if (count === 0) {
-        void vscode.window.showInformationMessage('All versions are already pinned.');
+        void vscode.window.showInformationMessage(message);
         return;
       }
       await provider.loadPackages();
-      void vscode.window.showInformationMessage(`Pinned ${count} package version(s).`);
+      void vscode.window.showInformationMessage(message);
     });
   }
   catch (err) {
     showError(`Failed to pin all versions — ${err instanceof Error ? err.message : String(err)}`, err);
   }
+}
+
+function formatPinAllMessage(count: number, skippedFiles: readonly string[]): string {
+  const base = count === 0
+    ? skippedFiles.length === 0 ? 'All versions are already pinned.' : 'All other versions are already pinned.'
+    : `Pinned ${count} package version(s).`;
+  return skippedFiles.length === 0 ? base : `${base} Skipped unreadable manifest(s): ${skippedFiles.join(', ')}.`;
 }

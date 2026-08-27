@@ -293,7 +293,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
       },
     }, undefined, 2)));
 
-    await expect(pinAllWorkspaceDependencyVersions()).resolves.toBe(2);
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({ count: 2, skippedFiles: [] });
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
@@ -322,7 +322,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
       },
     }, undefined, 2)));
 
-    await expect(pinAllWorkspaceDependencyVersions()).resolves.toBe(1);
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({ count: 1, skippedFiles: [] });
 
     const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
     expect(JSON.parse(written)).toEqual({
@@ -337,7 +337,188 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
       },
     });
   });
+
+  it('does not write any file when nothing across the workspace needs pinning', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/a/package.json'),
+      vscode.Uri.file('/workspace/b/package.json'),
+    ]);
+    mockReadFileByPath({
+      '/workspace/a/package.json': JSON.stringify({ dependencies: { react: '1.0.0' } }),
+      '/workspace/b/package.json': JSON.stringify({ dependencies: { vue: '2.0.0' } }),
+    });
+
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({ count: 0, skippedFiles: [] });
+
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('reads and classifies every discovered file before writing any of them', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/a/package.json'),
+      vscode.Uri.file('/workspace/b/package.json'),
+    ]);
+    const order: string[] = [];
+    vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: { fsPath: string }) => {
+      order.push(`read:${uri.fsPath}`);
+      const content = uri.fsPath.endsWith('/a/package.json')
+        ? JSON.stringify({ dependencies: { react: '^1.0.0' } })
+        : JSON.stringify({ dependencies: { vue: '^2.0.0' } });
+      return Promise.resolve(Buffer.from(content));
+    });
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation((uri: { fsPath: string }) => {
+      order.push(`write:${uri.fsPath}`);
+      return Promise.resolve(undefined);
+    });
+
+    await pinAllWorkspaceDependencyVersions();
+
+    // Both reads land before either write — a per-file read-then-write loop would
+    // interleave them (read a, write a, read b, write b) instead.
+    expect(order).toEqual([
+      'read:/workspace/a/package.json',
+      'read:/workspace/b/package.json',
+      'write:/workspace/a/package.json',
+      'write:/workspace/b/package.json',
+    ]);
+  });
+
+  it('skips a manifest that cannot be parsed and still pins the rest', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/a/package.json'),
+      vscode.Uri.file('/workspace/b/package.json'),
+    ]);
+    mockReadFileByPath({
+      '/workspace/a/package.json': JSON.stringify({ dependencies: { react: '^1.0.0' } }),
+      '/workspace/b/package.json': '{ not valid json',
+    });
+
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({
+      count: 1,
+      skippedFiles: ['b/package.json'],
+    });
+
+    expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(1);
+    expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: '/workspace/a/package.json' }),
+      expect.anything(),
+    );
+  });
+
+  it('treats a null dependencies section as empty instead of throwing', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/package.json'),
+    ]);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: null,
+      devDependencies: { react: '^1.0.0' },
+    })));
+
+    await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({ count: 1, skippedFiles: [] });
+  });
+
+  it('rolls an earlier successful write back to its exact original bytes when a later file fails to write', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/a/package.json'),
+      vscode.Uri.file('/workspace/b/package.json'),
+    ]);
+    // Tabs and no trailing newline on b — round-tripping through the wrong bytes
+    // (e.g. re-serializing instead of restoring the original buffer) would show up here.
+    const originalA = '{\n\t"dependencies": {\n\t\t"react": "^1.0.0"\n\t}\n}\n';
+    const originalB = '{"dependencies":{"vue":"^2.0.0"}}';
+    mockReadFileByPath({
+      '/workspace/a/package.json': originalA,
+      '/workspace/b/package.json': originalB,
+    });
+    // Recorded outside the product code's own try/catch (rollbackPreparedPackageFiles
+    // swallows a throw from inside the mock and reports it as a rollback failure
+    // instead), so a failed byte assertion here surfaces as this test failing.
+    const calls: { path: string; bytes: string }[] = [];
+    let writeCount = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation((uri, content) => {
+      writeCount++;
+      calls.push({ path: uri.fsPath, bytes: Buffer.from(content).toString('utf8') });
+      // 1: write a (succeeds). 2: write b (fails, triggers rollback).
+      // 3: rollback b. 4: rollback a — both succeed and restore original bytes.
+      if (writeCount === 2) {
+        return Promise.reject(new Error('disk full on b'));
+      }
+      return Promise.resolve();
+    });
+
+    await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(new Error('disk full on b'));
+
+    expect(writeCount).toBe(4);
+    expect(calls[2]).toEqual({ path: '/workspace/b/package.json', bytes: originalB });
+    expect(calls[3]).toEqual({ path: '/workspace/a/package.json', bytes: originalA });
+  });
+
+  it('reports a workspace-relative path when the rollback write itself fails', async () => {
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/workspace/apps/a/package.json'),
+      vscode.Uri.file('/workspace/apps/b/package.json'),
+    ]);
+    mockReadFileByPath({
+      '/workspace/apps/a/package.json': JSON.stringify({ dependencies: { react: '^1.0.0' } }),
+      '/workspace/apps/b/package.json': JSON.stringify({ dependencies: { vue: '^2.0.0' } }),
+    });
+    let writeCount = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation(() => {
+      writeCount++;
+      // 1: write a (succeeds). 2: write b (fails). 3: rollback b (fails too,
+      // reported below). 4: rollback a (succeeds, so it never appears in the message).
+      if (writeCount === 2) {
+        return Promise.reject(new Error('disk full'));
+      }
+      if (writeCount === 3) {
+        return Promise.reject(new Error('rollback failed'));
+      }
+      return Promise.resolve();
+    });
+
+    await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(
+      'disk full; failed to roll back: apps/b/package.json',
+    );
+  });
+
+  it('falls back to the file basename when no workspace folder owns the failed path', async () => {
+    // findFiles() is mocked directly, so these paths need not actually sit under the
+    // default '/workspace' folder — that mismatch is exactly what drives the fallback.
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      vscode.Uri.file('/outside/a/package.json'),
+      vscode.Uri.file('/outside/b/package.json'),
+    ]);
+    mockReadFileByPath({
+      '/outside/a/package.json': JSON.stringify({ dependencies: { react: '^1.0.0' } }),
+      '/outside/b/package.json': JSON.stringify({ dependencies: { vue: '^2.0.0' } }),
+    });
+    let writeCount = 0;
+    vi.mocked(vscode.workspace.fs.writeFile).mockImplementation(() => {
+      writeCount++;
+      if (writeCount === 2) {
+        return Promise.reject(new Error('disk full'));
+      }
+      if (writeCount === 3) {
+        return Promise.reject(new Error('rollback failed'));
+      }
+      return Promise.resolve();
+    });
+
+    await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(
+      'disk full; failed to roll back: package.json',
+    );
+  });
 });
+
+function mockReadFileByPath(filesByPath: Record<string, string>): void {
+  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: { fsPath: string }) => {
+    const content = filesByPath[uri.fsPath];
+    if (content === undefined) {
+      return Promise.reject(new Error(`no fixture for ${uri.fsPath}`));
+    }
+    return Promise.resolve(Buffer.from(content));
+  });
+}
 
 describe('switchDependencyType()', () => {
   const malformedSpecs = [
