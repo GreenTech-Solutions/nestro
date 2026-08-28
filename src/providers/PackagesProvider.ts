@@ -27,7 +27,8 @@ import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
-import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry } from './treeBuilder';
+import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry, toWorkspaceFolderDescriptors } from './treeBuilder';
+import type { WorkspaceFolderDescriptor } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import {
   packageIdentityFromValues,
@@ -100,6 +101,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private readonly filterChangeDisposable: vscode.Disposable;
   private allEntries: PackageTreeEntry[] = [];
+  private packageFilePaths: string[] = [];
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
   private readonly packageCapabilityRecords = new WeakMap<object, {
@@ -181,7 +183,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.allEntries,
       this.filterManager.current,
       this.filterManager.search,
-      this.workspaceRoot,
+      this.workspaceFolderDescriptors,
+      this.packageFilePaths,
     )];
   }
 
@@ -681,6 +684,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.emitTreeChanged();
     try {
       const entries = await readAllWorkspaceDependencies();
+      const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
+      if (entries.length > 0) {
+        try {
+          const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
+          packageFilePaths.push(...discoveredPackageFilePaths.filter(
+            packageFilePath => !packageFilePaths.includes(packageFilePath),
+          ));
+        }
+        catch {
+          logger.warn('Failed to discover workspace package files for labels; using loaded package entries.');
+        }
+      }
       const baselines = new Map<string, CanonicalPackageLocation>();
       const canonicalManifestOwners = new Map<string, string>();
       const collidingManifestPaths = new Set<string>();
@@ -708,6 +723,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
       this.packageLocationBaselines = baselines;
+      this.packageFilePaths = packageFilePaths;
       this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
@@ -1333,6 +1349,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private get workspaceRoot(): string | undefined {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  private get workspaceFolderDescriptors(): WorkspaceFolderDescriptor[] {
+    return toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
   }
 
   private async getKnownPackageFilePaths(): Promise<string[]> {

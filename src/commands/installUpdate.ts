@@ -3,7 +3,8 @@ import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import {
   isPackageItem,
   PackagesProvider,
-  toRelativeLabel,
+  resolvePackageFileLabels,
+  toWorkspaceFolderDescriptors,
 } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
@@ -405,13 +406,15 @@ async function resolveInstallPackageFilePath(): Promise<string> {
   if (packageFilePaths.length === 0) {
     throw new Error('No workspace package.json found.');
   }
-  if (packageFilePaths.length === 1) {
-    return packageFilePaths[0];
+  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
+  const labels = resolvePackageFileLabels(packageFilePaths, folders);
+  if (labels.length === 1) {
+    return labels[0].packageFilePath;
   }
 
   const selected = await vscode.window.showQuickPick(
-    packageFilePaths.map(packageFilePath => ({
-      label: formatPackageFileLabel(packageFilePath),
+    labels.map(({ packageFilePath, owner }) => ({
+      label: owner.label,
       packageFilePath,
     })),
     { placeHolder: 'Select the package.json to install dependencies for' },
@@ -421,22 +424,4 @@ async function resolveInstallPackageFilePath(): Promise<string> {
   }
 
   return selected.packageFilePath;
-}
-
-function formatPackageFileLabel(packageFilePath: string): string {
-  const normalized = packageFilePath.replace(/\\/g, '/');
-  const folders = vscode.workspace.workspaceFolders ?? [];
-
-  for (const folder of folders) {
-    const folderPath = folder.uri.fsPath.replace(/\\/g, '/');
-    if (normalized === `${folderPath}/package.json` || normalized.startsWith(`${folderPath}/`)) {
-      return toRelativeLabel(packageFilePath, folder.uri.fsPath);
-    }
-  }
-
-  // fallback for paths outside any known workspace folder
-  const withoutFile = normalized.endsWith('/package.json')
-    ? normalized.slice(0, -'/package.json'.length)
-    : normalized;
-  return withoutFile || normalized;
 }

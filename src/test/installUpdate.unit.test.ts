@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
-import { PackageItem } from '../providers/PackageItem';
-import { FilterManager, GroupItem, PackagesProvider } from '../providers';
+import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -626,7 +625,7 @@ describe('runInstallCommand()', () => {
     expect(shellExecution.options).toEqual({ cwd: '/workspace/apps/web' });
   });
 
-  it('formats sibling workspace package labels by path segment', async () => {
+  it('disambiguates sibling root manifests with the owning workspace name', async () => {
     Object.defineProperty(vscode.workspace, 'workspaceFolders', {
       configurable: true,
       value: [
@@ -639,7 +638,7 @@ describe('runInstallCommand()', () => {
       { fsPath: '/workspace/app-mobile/package.json', path: '/workspace/app-mobile/package.json' },
     ] as vscode.Uri[]);
     vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
-      label: '(root)',
+      label: 'app-mobile — (root)',
       packageFilePath: '/workspace/app-mobile/package.json',
     } as never);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
@@ -649,12 +648,101 @@ describe('runInstallCommand()', () => {
     await runInstallCommand();
 
     expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
-      { label: '(root)', packageFilePath: '/workspace/app/package.json' },
-      { label: '(root)', packageFilePath: '/workspace/app-mobile/package.json' },
+      { label: 'app — (root)', packageFilePath: '/workspace/app/package.json' },
+      { label: 'app-mobile — (root)', packageFilePath: '/workspace/app-mobile/package.json' },
     ], { placeHolder: 'Select the package.json to install dependencies for' });
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.options).toEqual({ cwd: '/workspace/app-mobile' });
+  });
+
+  it('disambiguates two workspace folders sharing the same display name by path suffix', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/repos/team-a/service' }, name: 'service', index: 0 },
+        { uri: { fsPath: '/repos/team-b/service' }, name: 'service', index: 1 },
+      ],
+    });
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/repos/team-a/service/package.json', path: '/repos/team-a/service/package.json' },
+      { fsPath: '/repos/team-b/service/package.json', path: '/repos/team-b/service/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'team-b/service — (root)',
+      packageFilePath: '/repos/team-b/service/package.json',
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'team-a/service — (root)', packageFilePath: '/repos/team-a/service/package.json' },
+      { label: 'team-b/service — (root)', packageFilePath: '/repos/team-b/service/package.json' },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+  });
+
+  it('sorts picker items by workspace index, root first within each workspace', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/repos/first' }, name: 'first', index: 0 },
+        { uri: { fsPath: '/repos/second' }, name: 'second', index: 1 },
+      ],
+    });
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/repos/second/apps/web/package.json', path: '/repos/second/apps/web/package.json' },
+      { fsPath: '/repos/first/apps/web/package.json', path: '/repos/first/apps/web/package.json' },
+      { fsPath: '/repos/second/package.json', path: '/repos/second/package.json' },
+      { fsPath: '/repos/first/package.json', path: '/repos/first/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'first — (root)',
+      packageFilePath: '/repos/first/package.json',
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'first — (root)', packageFilePath: '/repos/first/package.json' },
+      { label: 'first — apps/web', packageFilePath: '/repos/first/apps/web/package.json' },
+      { label: 'second — (root)', packageFilePath: '/repos/second/package.json' },
+      { label: 'second — apps/web', packageFilePath: '/repos/second/apps/web/package.json' },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+  });
+
+  it('keeps picker labels aligned with filtered tree labels from the full manifest set', async () => {
+    const paths = [
+      '/workspace/0-é-empty/package.json',
+      '/workspace/α/package.json',
+      '/workspace/β/package.json',
+    ];
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce(
+      paths.map(fsPath => ({ fsPath, path: fsPath })) as vscode.Uri[],
+    );
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'workspace — β [unicode #3]',
+      packageFilePath: paths[2],
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'workspace — 0-é-empty [unicode #1]', packageFilePath: paths[0] },
+      { label: 'workspace — α [unicode #2]', packageFilePath: paths[1] },
+      { label: 'workspace — β [unicode #3]', packageFilePath: paths[2] },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    const shellExecution = task.execution as vscode.ShellExecution;
+    expect(shellExecution.options).toEqual({ cwd: '/workspace/β' });
   });
 
   it('shows an error when the install task exits with a non-zero code', async () => {
@@ -725,8 +813,8 @@ describe('runInstallCommand()', () => {
     await runInstallCommand();
 
     expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'workspace — (root)', packageFilePath: '/workspace/package.json' },
       { label: '/external/project', packageFilePath: '/external/project/package.json' },
-      { label: '(root)', packageFilePath: '/workspace/package.json' },
     ], { placeHolder: 'Select the package.json to install dependencies for' });
   });
 

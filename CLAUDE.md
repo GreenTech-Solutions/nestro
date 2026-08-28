@@ -53,7 +53,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Providers (`src/providers/`)
 - `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
 - `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
-- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`, `toRelativeLabel()`; no VS Code state; workspace folders sorted `(root)` first then alphabetically; `getFilterCounts()` excludes packages currently installing
+- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`, `toRelativeLabel()`, `resolvePackageOwnerLabel()`, `resolvePackageFileLabels()`, `comparePackageOwnerLabels()`, `resolveWorkspaceFolderDisplayNames()`, `findOwningWorkspaceFolder()`, `toWorkspaceFolderDescriptors()`; no VS Code state. Multi-root package rows are grouped and sorted by owning workspace folder (its stable `WorkspaceFolder.index`), root before subpaths within each folder, alphabetical beyond that — never a flat sort mixing roots. Every row label is `<workspace display name> — <relative path>` (root: `<workspace display name> — (root)`); when two folders share a `WorkspaceFolder.name`, the display name falls back to the shortest unique normalized path suffix, then to a stable `#<index>` suffix on a full collision. `getFilterCounts()` excludes packages currently installing
 - `PackageItem.ts`, `PackageDetailItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `SearchQueryItem.ts`, `StatusItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
 
 ### Clients (`src/clients/`)
