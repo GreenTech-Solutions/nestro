@@ -6,7 +6,7 @@ export class YarnClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
       command: 'yarn',
-      args: ['add', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--dev')],
+      args: ['add', ...this.getSectionArgs(packages, '--dev'), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
@@ -15,7 +15,7 @@ export class YarnClient extends Client {
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'yarn', args: ['remove', ...this.formatPackageNames(packages)] };
+    return { command: 'yarn', args: ['remove', '--', ...this.formatPackageNames(packages)] };
   }
 
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {

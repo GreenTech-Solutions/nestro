@@ -6,7 +6,7 @@ export class BunClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
       command: 'bun',
-      args: ['add', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--dev')],
+      args: ['add', ...this.getSectionArgs(packages, '--dev'), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
@@ -15,7 +15,7 @@ export class BunClient extends Client {
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'bun', args: ['remove', ...this.formatPackageNames(packages)] };
+    return { command: 'bun', args: ['remove', '--', ...this.formatPackageNames(packages)] };
   }
 
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {

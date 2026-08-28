@@ -10,7 +10,7 @@ export class NpmClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
       command: 'npm',
-      args: ['install', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--save-dev')],
+      args: ['install', ...this.getSectionArgs(packages, '--save-dev'), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
@@ -19,6 +19,6 @@ export class NpmClient extends Client {
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'npm', args: ['uninstall', ...this.formatPackageNames(packages)] };
+    return { command: 'npm', args: ['uninstall', '--', ...this.formatPackageNames(packages)] };
   }
 }

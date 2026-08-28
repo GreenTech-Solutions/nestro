@@ -86,7 +86,7 @@ describe('installUpdateCommand()', () => {
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     expect(task.execution).toBeInstanceOf(vscode.ShellExecution);
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add typescript@5.9.3');
+    expect(shellExecution.commandLine).toBe('pnpm add -- typescript@5.9.3');
     expect(task.presentationOptions).toEqual({
       reveal: vscode.TaskRevealKind.Always,
       panel: vscode.TaskPanelKind.New,
@@ -104,8 +104,10 @@ describe('installUpdateCommand()', () => {
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
 
+    // A registry-valid name (apostrophe and asterisk are real, unescaped-by-URL
+    // characters) that would still break out of naive shell interpolation.
     await installUpdateCommand(
-      new PackageItem('evil; touch /tmp/pwned', '^1.0.0', '1.0.1', 'patch', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('o\'brien-toolkit*', '^1.0.0', '1.0.1', 'patch', false, undefined, '/workspace/package.json', false, '^'),
       provider,
     );
 
@@ -114,7 +116,8 @@ describe('installUpdateCommand()', () => {
     expect(shellExecution.command).toBe('pnpm');
     expect(shellExecution.args).toEqual([
       'add',
-      { value: 'evil; touch /tmp/pwned@1.0.1', quoting: vscode.ShellQuoting.Strong },
+      '--',
+      { value: 'o\'brien-toolkit*@1.0.1', quoting: vscode.ShellQuoting.Strong },
     ]);
   });
 
@@ -220,6 +223,26 @@ describe('installUpdateCommand()', () => {
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
     }, false);
+  });
+
+  it('rejects an option-shaped manifest key before the update task ever launches', async () => {
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await installUpdateCommand(
+      new PackageItem('--global', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
+      provider,
+    );
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
   });
 
   it('does not run an explicitly resolved version after final identity revalidation fails', async () => {
@@ -529,7 +552,7 @@ describe('installUpdateCommand()', () => {
 
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add vitest@4.1.0 --save-dev');
+    expect(shellExecution.commandLine).toBe('pnpm add --save-dev -- vitest@4.1.0');
   });
 
   it.each([
@@ -857,7 +880,7 @@ describe('updateAllVisibleCommand()', () => {
 
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add react@19.0.0 typescript@5.9.3');
+    expect(shellExecution.commandLine).toBe('pnpm add -- react@19.0.0 typescript@5.9.3');
   });
 
   it('updates package.json for all visible outdated packages in deferred mode', async () => {
@@ -1071,9 +1094,62 @@ describe('updateAllVisibleCommand()', () => {
       (task.execution as vscode.ShellExecution).commandLine
     ));
     expect(commands).toEqual([
-      'pnpm add react@19.0.0',
-      'pnpm add vitest@4.1.0 --save-dev',
+      'pnpm add -- react@19.0.0',
+      'pnpm add --save-dev -- vitest@4.1.0',
     ]);
+  });
+
+  it('rejects an option-shaped manifest key before any batch task launches', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('rejects a whole group when it mixes a valid and an option-shaped manifest key', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdated).not.toHaveBeenCalled();
+  });
+
+  it('runs an earlier valid group before a later group is rejected for an option-shaped key', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', true, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    expect((task.execution as vscode.ShellExecution).commandLine).toBe('pnpm add -- react@19.0.0');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '19.0.0');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
   });
 
   it('stops an immediate group when its group revalidation rejects', async () => {

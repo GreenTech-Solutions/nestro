@@ -57,9 +57,10 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `PackageItem.ts`, `PackageDetailItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `SearchQueryItem.ts`, `StatusItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
 
 ### Clients (`src/clients/`)
-- `Client.ts` — abstract base for package manager clients; `buildUpdateCommand()` / `buildInstallCommand()` / `buildRemoveCommand()` return a `ShellTaskCommand` (`src/utils/shellTask.ts`) rather than a raw string; `formatPackageTargets()` / `formatPackageNames()` shell-quote each argument via `vscode.ShellQuotedString` (`ShellQuoting.Strong`) instead of interpolating into a string
+- `Client.ts` — abstract base for package manager clients; `buildUpdateCommand()` / `buildInstallCommand()` / `buildRemoveCommand()` return a `ShellTaskCommand` (`src/utils/shellTask.ts`) rather than a raw string; `formatPackageTargets()` / `formatPackageNames()` validate each package name (and, for targets, its version) via `operandValidation.ts` before shell-quoting it as a `vscode.ShellQuotedString` (`ShellQuoting.Strong`) — an invalid operand throws before a task is ever built
+- `operandValidation.ts` — `validatePackageName()` / `validatePackageVersionSpec()`; rejects only what makes an operand option-like or unresolvable (leading hyphen, empty name, malformed scope, URL-unsafe characters) — mixed case and length past 214 pass as real legacy registry names, leading `.`/`_` pass only because they're inert operands, not real ones
 - `ClientManager.ts` — instantiates the correct client based on detected package manager; `detectPackageManager()` walks ancestor directories up to the workspace folder when given a `cwd`
-- `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts` — concrete client implementations
+- `NpmClient.ts`, `YarnClient.ts`, `PnpmClient.ts`, `BunClient.ts` — concrete client implementations; each puts package operands after a `--` separator, with the section flag (`--save-dev` / `--dev`) before it, so a package name can never be parsed as a CLI option
 - `index.ts` — barrel exports for clients
 
 ### Commands (`src/commands/`)

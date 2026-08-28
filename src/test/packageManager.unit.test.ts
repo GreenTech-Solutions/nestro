@@ -31,18 +31,18 @@ describe('package manager detection', () => {
 
 describe('install command builder', () => {
   it('builds npm install commands', () => {
-    expect(buildInstallCommand('npm', 'typescript', '5.9.3')).toBe('npm install typescript@5.9.3');
+    expect(buildInstallCommand('npm', 'typescript', '5.9.3')).toBe('npm install -- typescript@5.9.3');
   });
 
   it('builds pnpm add commands', () => {
-    expect(buildInstallCommand('pnpm', 'typescript', '5.9.3')).toBe('pnpm add typescript@5.9.3');
+    expect(buildInstallCommand('pnpm', 'typescript', '5.9.3')).toBe('pnpm add -- typescript@5.9.3');
   });
 
   it('builds batch update commands', () => {
     expect(buildPackageUpdateCommand('pnpm', [
       { packageName: 'react', version: '19.0.0', section: 'dependencies' },
       { packageName: 'typescript', version: '5.9.3', section: 'dependencies' },
-    ])).toBe('pnpm add react@19.0.0 typescript@5.9.3');
+    ])).toBe('pnpm add -- react@19.0.0 typescript@5.9.3');
   });
 
   it('builds package manager install commands', () => {

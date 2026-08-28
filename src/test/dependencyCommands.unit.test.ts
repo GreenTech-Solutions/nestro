@@ -573,6 +573,26 @@ describe('removePackageCommand()', () => {
     expect(provider.markPackageUpdating).not.toHaveBeenCalled();
     expect(showError).not.toHaveBeenCalled();
   });
+
+  it('rejects an option-shaped manifest key before the remove task ever launches', async () => {
+    const provider = makeProvider();
+
+    await removePackageCommand(
+      new PackageItem('--global', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
+      provider,
+    );
+
+    expect(executeTaskMock).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+      expect.anything(),
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: '--global',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
+  });
 });
 
 function makeProvider(): PackagesProvider {

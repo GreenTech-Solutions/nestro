@@ -78,54 +78,54 @@ describe('package manager clients', () => {
   it('builds npm update commands', () => {
     expectCommand(new NpmClient('/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
-    ]), 'npm', ['install', quoted('react@18.0.0')]);
+    ]), 'npm', ['install', '--', quoted('react@18.0.0')]);
   });
 
   it('builds pnpm update commands', () => {
     expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
-    ]), 'pnpm', ['add', quoted('react@18.0.0')]);
+    ]), 'pnpm', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('builds yarn update commands', () => {
     expectCommand(new YarnClient('/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
-    ]), 'yarn', ['add', quoted('react@18.0.0')]);
+    ]), 'yarn', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('builds bun update commands', () => {
     expectCommand(new BunClient('/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
-    ]), 'bun', ['add', quoted('react@18.0.0')]);
+    ]), 'bun', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('includes multiple packages in one command', () => {
     expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
       { name: 'react', version: '19.0.0', section: 'dependencies' },
       { name: 'typescript', version: '5.9.3', section: 'dependencies' },
-    ]), 'pnpm', ['add', quoted('react@19.0.0'), quoted('typescript@5.9.3')]);
+    ]), 'pnpm', ['add', '--', quoted('react@19.0.0'), quoted('typescript@5.9.3')]);
   });
 
-  it('adds a save-dev flag for dev dependency updates', () => {
+  it('keeps the section flag before the operand separator for dev dependency updates', () => {
     expectCommand(new NpmClient('/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
-    ]), 'npm', ['install', quoted('vitest@4.0.0'), '--save-dev']);
+    ]), 'npm', ['install', '--save-dev', '--', quoted('vitest@4.0.0')]);
     expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
-    ]), 'pnpm', ['add', quoted('vitest@4.0.0'), '--save-dev']);
+    ]), 'pnpm', ['add', '--save-dev', '--', quoted('vitest@4.0.0')]);
     expectCommand(new YarnClient('/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
-    ]), 'yarn', ['add', quoted('vitest@4.0.0'), '--dev']);
+    ]), 'yarn', ['add', '--dev', '--', quoted('vitest@4.0.0')]);
     expectCommand(new BunClient('/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
-    ]), 'bun', ['add', quoted('vitest@4.0.0'), '--dev']);
+    ]), 'bun', ['add', '--dev', '--', quoted('vitest@4.0.0')]);
   });
 
   it('builds npm remove commands', () => {
     expectCommand(
       new NpmClient('/workspace').buildRemoveCommand(['lodash', 'moment']),
       'npm',
-      ['uninstall', quoted('lodash'), quoted('moment')],
+      ['uninstall', '--', quoted('lodash'), quoted('moment')],
     );
   });
 
@@ -137,16 +137,95 @@ describe('package manager clients', () => {
     expectCommand(
       new ClientCtor('/workspace').buildRemoveCommand(['lodash', 'moment']),
       packageManager,
-      ['remove', quoted('lodash'), quoted('moment')],
+      ['remove', '--', quoted('lodash'), quoted('moment')],
     );
   });
 
-  it('strongly quotes package targets with shell metacharacters', () => {
+  it('strongly quotes a valid package name that still contains shell metacharacters', () => {
+    // Apostrophe and asterisk are real, registry-valid name characters that would
+    // still break out of naive shell interpolation without Strong quoting.
     const command = new NpmClient('/workspace').buildUpdateCommand([
-      { name: 'evil; touch /tmp/pwned', version: '1.0.0', section: 'dependencies' },
+      { name: 'o\'brien-toolkit*', version: '1.0.0', section: 'dependencies' },
     ]);
 
-    expectCommand(command, 'npm', ['install', quoted('evil; touch /tmp/pwned@1.0.0')]);
+    expectCommand(command, 'npm', ['install', '--', quoted('o\'brien-toolkit*@1.0.0')]);
+  });
+
+  it.each([
+    ['npm', NpmClient],
+    ['pnpm', PnpmClient],
+    ['yarn', YarnClient],
+    ['bun', BunClient],
+  ] as const)('rejects an option-shaped package name before building an %s update command', (_packageManager, ClientCtor) => {
+    expect(() => new ClientCtor('/workspace').buildUpdateCommand([
+      { name: '--global', version: '1.0.0', section: 'dependencies' },
+    ])).toThrow(/cannot start with a hyphen/);
+  });
+
+  it.each([
+    ['npm', NpmClient],
+    ['pnpm', PnpmClient],
+    ['yarn', YarnClient],
+    ['bun', BunClient],
+  ] as const)('rejects an option-shaped package name before building an %s remove command', (_packageManager, ClientCtor) => {
+    expect(() => new ClientCtor('/workspace').buildRemoveCommand(['--global']))
+      .toThrow(/cannot start with a hyphen/);
+  });
+
+  it('rejects the crafted registry-flag operand from the SEC-02 red baseline', () => {
+    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+      { name: '--registry=http://evil.test', version: '1.0.0', section: 'dependencies' },
+    ])).toThrow(/cannot start with a hyphen/);
+  });
+
+  it.each([
+    ['empty name', ''],
+    ['leading hyphen', '-leading-hyphen'],
+    ['embedded space', 'left pad'],
+    ['embedded control character', 'left\npad'],
+    ['bare scope marker', '@'],
+    ['empty scope', '@/pkg'],
+    ['empty scoped package name', '@scope/'],
+    ['scope with more than one slash', '@scope/name/extra'],
+    ['unscoped name with a slash', 'unscoped/name'],
+    ['URL-unsafe character', 'left$pad'],
+  ] as const)('rejects an invalid unscoped or scoped name: %s', (_label, name) => {
+    expect(() => new NpmClient('/workspace').buildRemoveCommand([name])).toThrow();
+  });
+
+  it.each([
+    ['plain name', 'react'],
+    ['scoped name', '@scope/react'],
+    ['hyphens and digits', 'is-number2'],
+    ['dot-separated name', 'lodash.debounce'],
+    ['legacy mixed case', 'JSONStream'],
+    ['legacy leading dot', '.hidden-legacy-pkg'],
+    ['legacy leading underscore', '_legacy-pkg'],
+    ['legacy special characters', 'left-pad\'!(~)*'],
+    ['legacy length over 214 characters', `a${'b'.repeat(220)}`],
+  ] as const)('accepts a valid or legacy-real name: %s', (_label, name) => {
+    expect(() => new NpmClient('/workspace').buildRemoveCommand([name])).not.toThrow();
+  });
+
+  it.each([
+    ['exact semver', '18.0.0'],
+    ['prerelease with build metadata', '18.0.0-beta.1+build.5'],
+    ['workspace spec', 'workspace:^1.0.0'],
+    ['dist-tag', 'latest'],
+  ] as const)('accepts a valid update version: %s', (_label, version) => {
+    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+      { name: 'react', version, section: 'dependencies' },
+    ])).not.toThrow();
+  });
+
+  it.each([
+    ['empty version', ''],
+    ['leading hyphen', '--registry=http://evil.test'],
+    ['embedded control character', '1.0.0\n--global'],
+  ] as const)('rejects an invalid update version: %s', (_label, version) => {
+    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+      { name: 'react', version, section: 'dependencies' },
+    ])).toThrow();
   });
 });
 
