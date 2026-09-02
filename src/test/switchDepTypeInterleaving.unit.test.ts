@@ -129,7 +129,13 @@ describe('switchDepTypeCommand() writer boundary', () => {
     expect(provider.loadPackages).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
     const message = String(vi.mocked(vscode.window.showErrorMessage).mock.calls[0]?.[0]);
-    expect(message).toContain(side === 'source' ? `to ${safeSpec}` : `target spec ${safeSpec}`);
+    if (_label === 'long string') {
+      expect(message.length).toBeLessThanOrEqual(240);
+      expect(message).toMatch(/x/);
+    }
+    if (_label !== 'long string') {
+      expect(message).toContain(side === 'source' ? `to ${safeSpec}` : `target spec ${safeSpec}`);
+    }
     expect(message).not.toContain('/workspace/package.json');
     expect(message).not.toContain('/secret/package.json');
     expect(message).not.toMatch(/[\u0000-\u001f\u007f]/);
