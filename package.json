@@ -73,8 +73,8 @@
         },
         "nestro.includePreReleases": {
           "type": "boolean",
-          "default": true,
-          "description": "Include pre-release versions when checking for package updates."
+          "default": false,
+          "description": "Include pre-release versions (alpha, beta, rc) when checking for package updates."
         },
         "nestro.updateTarget": {
           "type": "string",

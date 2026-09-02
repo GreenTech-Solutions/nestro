@@ -798,7 +798,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     try {
       const config = vscode.workspace.getConfiguration('nestro');
       const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-      const includePreReleases = config.get<boolean>('includePreReleases', true);
+      const includePreReleases = config.get<boolean>('includePreReleases', false);
       const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
       const source = this.allEntries.length > 0
         ? this.allEntries.map(e => ({
@@ -1275,7 +1275,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const config = vscode.workspace.getConfiguration('nestro');
     const currentTarget = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-    const currentIncludePreReleases = config.get<boolean>('includePreReleases', true);
+    const currentIncludePreReleases = config.get<boolean>('includePreReleases', false);
     const afterFingerprint = await this.computeUpdateFingerprint(identities, currentTarget, currentIncludePreReleases);
     if (afterFingerprint !== beforeFingerprint || snapshotGeneration !== this.packageSnapshotGeneration) {
       logger.info('Update results discarded — packages or update settings changed during the check.');

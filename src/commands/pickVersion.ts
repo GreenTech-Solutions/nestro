@@ -60,7 +60,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
 
     const includePreReleases = vscode.workspace
       .getConfiguration('nestro')
-      .get<boolean>('includePreReleases', true);
+      .get<boolean>('includePreReleases', false);
     const selectedVersions = selectVersionsForPicker(
       versions,
       tags,

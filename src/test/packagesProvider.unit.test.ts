@@ -101,6 +101,7 @@ vi.mock('../utils', async () => {
 describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNestroConfiguration({});
     getUpdateTypeMock.mockImplementation(realGetUpdateType);
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
       {
@@ -232,6 +233,48 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
   });
 
+  it('excludes prereleases from update checks when the setting is absent', async () => {
+    mockNestroConfiguration({});
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      false,
+    );
+  });
+
+  it('passes explicit prerelease opt-in to update checks', async () => {
+    mockNestroConfiguration({ includePreReleases: true });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      true,
+    );
+  });
+
+  it('does not enable prereleases for the greatest target when the setting is absent', async () => {
+    mockNestroConfiguration({ updateTarget: 'greatest' });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'greatest',
+      false,
+    );
+  });
+
   it('does not reuse update cache when the package-file set changes', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
@@ -263,7 +306,7 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenLastCalledWith(
       '/workspace/tools/package.json',
       'latest',
-      true,
+      false,
     );
   });
 

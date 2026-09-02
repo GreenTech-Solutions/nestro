@@ -32,7 +32,7 @@ const NO_REFRESH_WINDOW_MS = 300;
 const WIRED_KEYS: readonly { readonly key: string; readonly value: unknown; readonly verify?: (filter: FilterManager) => void }[] = [
   { key: 'defaultFilter', value: 'patch', verify: filter => assert.strictEqual(filter.current, 'patch') },
   { key: 'updateTarget', value: 'minor' },
-  { key: 'includePreReleases', value: false },
+  { key: 'includePreReleases', value: true },
 ];
 
 /**

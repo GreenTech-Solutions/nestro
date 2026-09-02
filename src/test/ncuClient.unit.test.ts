@@ -14,7 +14,7 @@ describe('fetchAllLatestVersions()', () => {
     runMock.mockReset();
   });
 
-  it('passes a bounded global timeout to npm-check-updates', async () => {
+  it('passes explicit prerelease opt-in and a bounded global timeout to npm-check-updates', async () => {
     runMock.mockResolvedValue({ react: '19.0.0' });
 
     await expect(fetchAllLatestVersions('/workspace/package.json', 'latest', true))
@@ -24,6 +24,23 @@ describe('fetchAllLatestVersions()', () => {
       packageFile: '/workspace/package.json',
       target: 'latest',
       pre: true,
+      jsonUpgraded: true,
+      removeRange: true,
+      silent: true,
+      timeout: 60_000,
+    });
+  });
+
+  it('keeps prereleases disabled for the greatest target when not requested', async () => {
+    runMock.mockResolvedValue({ react: '19.0.0' });
+
+    await expect(fetchAllLatestVersions('/workspace/package.json', 'greatest', false))
+      .resolves.toEqual(new Map([['react', '19.0.0']]));
+
+    expect(runMock).toHaveBeenCalledWith({
+      packageFile: '/workspace/package.json',
+      target: 'greatest',
+      pre: false,
       jsonUpgraded: true,
       removeRange: true,
       silent: true,
