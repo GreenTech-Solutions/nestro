@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { PackageManager } from '../clients';
 import { detectPackageManager } from './packageManager';
+import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
 
@@ -28,6 +29,7 @@ export type PackageMetadataOutcome = MetadataOutcome<PackageMetadata>;
 export interface MetadataRequest {
   packageName: string;
   packageFilePath?: string;
+  packageManager?: PackageManager;
   signal?: AbortSignal;
 }
 
@@ -57,7 +59,7 @@ export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
 export class MetadataAdapterRegistry {
   private readonly adapters: readonly MetadataAdapter[];
 
-  constructor(adapters: readonly MetadataAdapter[] = [configAwareHttpsMetadataAdapter]) {
+  constructor(adapters: readonly MetadataAdapter[] = [nativeCliMetadataAdapter, configAwareHttpsMetadataAdapter]) {
     this.adapters = [...adapters].sort((left, right) => tierOrder[left.tier] - tierOrder[right.tier]);
   }
 
@@ -87,7 +89,7 @@ export class MetadataAdapterRegistry {
 
     let lastOutcome: PackageMetadataOutcome | undefined;
     for (const adapter of adapters) {
-      const outcome = await adapter.fetchMetadata(request);
+      const outcome = await adapter.fetchMetadata({ ...request, packageManager });
       lastOutcome = outcome;
       if (!shouldTryNextTier(outcome)) {
         return outcome;

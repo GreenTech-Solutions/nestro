@@ -1,19 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   configAwareHttpsMetadataAdapter,
-  fetchPackageMetadata,
   MetadataAdapterRegistry,
+  nativeCliMetadataAdapter,
 } from '../utils';
 import type { MetadataAdapter, PackageMetadataOutcome } from '../utils';
 
 const detectPackageManagerMock = vi.hoisted(() => vi.fn());
 const fetchPackageMetadataFromRegistryMock = vi.hoisted(() => vi.fn());
+const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/packageManager', () => ({
   detectPackageManager: detectPackageManagerMock,
 }));
 vi.mock('../utils/registryClient', () => ({
   fetchPackageMetadataFromRegistry: fetchPackageMetadataFromRegistryMock,
+}));
+vi.mock('../utils/processRunner', () => ({
+  runBoundedProcess: runBoundedProcessMock,
 }));
 
 const success: PackageMetadataOutcome = {
@@ -30,13 +34,20 @@ describe('MetadataAdapterRegistry', () => {
     vi.clearAllMocks();
     detectPackageManagerMock.mockResolvedValue('npm');
     fetchPackageMetadataFromRegistryMock.mockResolvedValue(success);
+    runBoundedProcessMock.mockResolvedValue({
+      kind: 'spawn-error',
+      reason: 'command-not-found',
+      detail: 'command not found',
+      message: 'command not found',
+      cause: undefined,
+    });
   });
 
-  it('registers the HTTPS fallback for every detected package manager', () => {
+  it('registers the native tier for npm and pnpm and the HTTPS fallback for other managers', () => {
     const registry = new MetadataAdapterRegistry();
 
-    expect(registry.getAdapter('npm')).toBe(configAwareHttpsMetadataAdapter);
-    expect(registry.getAdapter('pnpm')).toBe(configAwareHttpsMetadataAdapter);
+    expect(registry.getAdapter('npm')).toBe(nativeCliMetadataAdapter);
+    expect(registry.getAdapter('pnpm')).toBe(nativeCliMetadataAdapter);
     expect(registry.getAdapter('yarn')).toBe(configAwareHttpsMetadataAdapter);
     expect(registry.getAdapter('bun')).toBe(configAwareHttpsMetadataAdapter);
     expect(configAwareHttpsMetadataAdapter.tier).toBe('config-aware-https');
@@ -57,7 +68,10 @@ describe('MetadataAdapterRegistry', () => {
   it('uses the detected manager and preserves the typed HTTPS result', async () => {
     detectPackageManagerMock.mockResolvedValueOnce('pnpm');
 
-    await expect(fetchPackageMetadata('react', '/workspace/packages/app/package.json')).resolves.toEqual(success);
+    await expect(new MetadataAdapterRegistry([configAwareHttpsMetadataAdapter]).fetchMetadata({
+      packageName: 'react',
+      packageFilePath: '/workspace/packages/app/package.json',
+    })).resolves.toEqual(success);
 
     expect(detectPackageManagerMock).toHaveBeenCalledWith('/workspace/packages/app');
     expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledWith(
@@ -68,14 +82,10 @@ describe('MetadataAdapterRegistry', () => {
   });
 
   it('does not turn a missing package-manager CLI into unavailable', async () => {
-    const nativeAdapter = createAdapter('native-cli', ['npm'], {
-      kind: 'transport-error',
-      reason: 'command-not-found',
-    });
-    const registry = new MetadataAdapterRegistry([nativeAdapter, configAwareHttpsMetadataAdapter]);
+    const registry = new MetadataAdapterRegistry();
 
-    await expect(registry.fetchMetadata({ packageName: 'react' })).resolves.toMatchObject({ kind: 'success' });
-    expect(nativeAdapter.fetchMetadata).toHaveBeenCalledTimes(1);
+    await expect(registry.fetchMetadata({ packageName: 'react', packageFilePath: '/workspace/package.json' })).resolves.toMatchObject({ kind: 'success' });
+    expect(runBoundedProcessMock).toHaveBeenCalledTimes(1);
     expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledTimes(1);
   });
 
@@ -103,6 +113,7 @@ describe('MetadataAdapterRegistry', () => {
       { kind: 'overflow', maxBufferBytes: 10 },
       { kind: 'timeout', timeoutMs: 10 },
       { kind: 'transport-error', reason: 'request' },
+      { kind: 'transport-error', reason: 'proxy-unsupported' },
     ] satisfies PackageMetadataOutcome[];
 
     for (const outcome of retryableOutcomes) {
@@ -111,6 +122,24 @@ describe('MetadataAdapterRegistry', () => {
 
       await expect(registry.fetchMetadata({ packageName: 'react' })).resolves.toEqual(outcome);
     }
+  });
+
+  it('does not retry a scoped private registry against public npm through the cascade', async () => {
+    const privateResult: PackageMetadataOutcome = {
+      kind: 'transport-error',
+      reason: 'http-status',
+      statusCode: 404,
+    };
+    const privateAdapter = createAdapter('config-aware-https', ['npm'], privateResult);
+    const publicAdapter = createAdapter('public-npm', ['npm'], success);
+    const registry = new MetadataAdapterRegistry([publicAdapter, privateAdapter]);
+
+    await expect(registry.fetchMetadata({
+      packageName: '@private/pkg',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toEqual(privateResult);
+    expect(privateAdapter.fetchMetadata).toHaveBeenCalledTimes(1);
+    expect(publicAdapter.fetchMetadata).not.toHaveBeenCalled();
   });
 
   it('classifies adapter-detection and adapter-selection failures separately from unavailable configuration', async () => {

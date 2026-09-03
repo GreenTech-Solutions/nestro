@@ -73,12 +73,13 @@ export interface MetadataAborted {
 /** Network or adapter execution failed; selection outcomes are produced only by the registry. */
 export interface MetadataTransportError {
   kind: 'transport-error';
-  reason: 'request' | 'response' | 'http-status' | 'selection' | 'command-not-found' | 'process-failed';
+  reason: 'request' | 'response' | 'http-status' | 'selection' | 'command-not-found' | 'process-failed' | 'proxy-unsupported';
   statusCode?: number;
 }
 
 export interface BoundedMetadataTransportError extends MetadataTransportError {
   message?: string;
+  redirectLocation?: string;
 }
 
 export type MetadataOutcome<T>
@@ -99,6 +100,8 @@ export type BoundedMetadataOutcome<T>
 export interface BoundedMetadataRequestOptions<T> {
   parse: (payload: unknown) => MetadataSchemaResult<T>;
   headers?: Readonly<Record<string, string>>;
+  ca?: string;
+  rejectUnauthorized?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
   maxBufferBytes?: number;
@@ -125,7 +128,7 @@ export function runBoundedMetadataRequest<T>(
     let receivedBytes = 0;
     const chunks: Buffer[] = [];
 
-    const settle = (outcome: MetadataOutcome<T>): void => {
+    const settle = (outcome: BoundedMetadataOutcome<T>): void => {
       if (settled) {
         return;
       }
@@ -192,7 +195,15 @@ export function runBoundedMetadataRequest<T>(
       }
 
       if (response?.statusCode !== undefined && (response.statusCode < 200 || response.statusCode >= 300)) {
-        settle({ kind: 'transport-error', reason: 'http-status', statusCode: response.statusCode });
+        const location = response.headers?.location;
+        settle({
+          kind: 'transport-error',
+          reason: 'http-status',
+          statusCode: response.statusCode,
+          ...(response.statusCode >= 300 && response.statusCode < 400 && typeof location === 'string'
+            ? { redirectLocation: location }
+            : {}),
+        });
         return;
       }
 
@@ -228,7 +239,11 @@ export function runBoundedMetadataRequest<T>(
     timeoutTimer = setTimeout(onTimeout, timeoutMs);
 
     try {
-      request = https.get(url, { headers: options.headers }, (incomingResponse) => {
+      request = https.get(url, {
+        headers: options.headers,
+        ...(options.ca === undefined ? {} : { ca: options.ca }),
+        ...(options.rejectUnauthorized === undefined ? {} : { rejectUnauthorized: options.rejectUnauthorized }),
+      }, (incomingResponse) => {
         response = incomingResponse;
         incomingResponse.on('data', onData);
         incomingResponse.on('end', onEnd);
