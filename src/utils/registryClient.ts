@@ -9,6 +9,13 @@ import type {
   MetadataOutcome,
   MetadataSchemaResult,
 } from './metadataRunner';
+import {
+  parseBunConfig,
+} from './bunConfig';
+import type {
+  BunRegistryConfiguration,
+  ParsedBunConfig,
+} from './bunConfig';
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
@@ -100,6 +107,8 @@ interface ParsedYarnModernConfig {
   scopes: Map<string, YarnScopeConfiguration>;
 }
 
+type BunConfiguration = ParsedBunConfig;
+
 interface RawYamlLine {
   indent: number;
   content: string;
@@ -116,10 +125,17 @@ export async function fetchPackageMetadataFromRegistry(
   try {
     configuration = await resolveRegistryConfiguration(packageName, packageFilePath, packageManager);
   }
-  catch {
+  catch (error) {
+    const configurationMessage = packageManager === 'bun' && error instanceof Error
+      ? error.message
+      : undefined;
     return markPrivateRegistryOutcome(
-      { kind: 'unavailable', reason: 'configuration-unavailable' },
-      packageManager === 'yarn' || isScopedPackageName(packageName),
+      {
+        kind: 'unavailable',
+        reason: 'configuration-unavailable',
+        ...(configurationMessage === undefined ? {} : { message: configurationMessage }),
+      },
+      packageManager === 'bun' || packageManager === 'yarn' || isScopedPackageName(packageName),
     );
   }
 
@@ -320,6 +336,9 @@ async function resolveRegistryConfiguration(
 ): Promise<RegistryConfiguration> {
   const npmrcValues = await readNpmrcConfig(packageFilePath);
   let values = npmrcValues;
+  const bunConfiguration = packageManager === 'bun'
+    ? await readBunConfiguration(packageFilePath)
+    : undefined;
   let yarnConfiguration: YarnConfiguration | undefined;
   if (packageManager === 'yarn') {
     const packageRoot = getPackageRoot(packageFilePath);
@@ -356,8 +375,17 @@ async function resolveRegistryConfiguration(
 
   const yarnScope = yarnConfiguration === undefined
     ? undefined
-    : getYarnScopeConfiguration(packageName, yarnConfiguration.scopes);
-  const scopedRegistry = yarnScope?.registryUrl ?? yarnConfiguration?.registryUrl ?? getScopedRegistry(packageName, values);
+    : getPackageScopeConfiguration(packageName, yarnConfiguration.scopes);
+  const bunScope = bunConfiguration === undefined
+    ? undefined
+    : getPackageScopeConfiguration(packageName, bunConfiguration.scopes);
+  const bunScopedRegistry = bunScope?.registryUrl
+    ?? (packageManager === 'bun' ? getScopedRegistry(packageName, values) : undefined);
+  const bunRegistry = bunScopedRegistry ?? bunConfiguration?.registry?.registryUrl;
+  const scopedRegistry = bunRegistry
+    ?? yarnScope?.registryUrl
+    ?? yarnConfiguration?.registryUrl
+    ?? getScopedRegistry(packageName, values);
   const configuredRegistry = scopedRegistry ?? values.get('registry');
   const registryUrl = configuredRegistry ?? DEFAULT_REGISTRY_URL;
   const privateRegistryUnresolved = packageManager === 'yarn'
@@ -371,11 +399,12 @@ async function resolveRegistryConfiguration(
   const ca = yarnConfiguration !== undefined && isYarnConfigurationWithCa(yarnConfiguration)
     ? await resolveYarnCa(yarnConfiguration)
     : await resolveCa(values);
-  const authToken = yarnScope?.authToken ?? yarnConfiguration?.authToken;
-  const authIdent = yarnScope?.authIdent ?? yarnConfiguration?.authIdent;
-  const authRegistryUrl = yarnConfiguration === undefined
+  const bunAuth = getBunAuthConfiguration(bunConfiguration, bunScope);
+  const authToken = bunAuth?.authToken ?? yarnScope?.authToken ?? yarnConfiguration?.authToken;
+  const authIdent = bunAuth?.authIdent ?? yarnScope?.authIdent ?? yarnConfiguration?.authIdent;
+  const authRegistryUrl = bunAuth?.authRegistryUrl ?? (yarnConfiguration === undefined
     ? undefined
-    : getYarnAuthRegistryUrl(yarnConfiguration, yarnScope);
+    : getYarnAuthRegistryUrl(yarnConfiguration, yarnScope));
   return {
     registryUrl,
     registryConfigured: configuredRegistry !== undefined,
@@ -389,6 +418,71 @@ async function resolveRegistryConfiguration(
     authToken,
     authIdent,
     authRegistryUrl,
+  };
+}
+
+async function readBunConfiguration(
+  packageFilePath: string | undefined,
+): Promise<BunConfiguration> {
+  const config: BunConfiguration = {
+    registry: undefined,
+    scopes: new Map(),
+  };
+  for (const configPath of getBunConfigPaths(packageFilePath)) {
+    const contents = await readOptionalFile(configPath);
+    if (contents === undefined) {
+      continue;
+    }
+    const parsed = parseBunConfig(contents);
+    if (parsed === undefined) {
+      throw new Error(`Malformed bunfig.toml at ${configPath}.`);
+    }
+    mergeBunConfig(config, parsed);
+  }
+  return config;
+}
+
+function getBunConfigPaths(packageFilePath: string | undefined): string[] {
+  return [...new Set([
+    path.join(homedir(), 'bunfig.toml'),
+    ...getProjectConfigPaths(packageFilePath, 'bunfig.toml'),
+  ])];
+}
+
+function mergeBunConfig(target: BunConfiguration, source: ParsedBunConfig): void {
+  target.registry = source.registry ?? target.registry;
+  for (const [scope, values] of source.scopes) {
+    target.scopes = new Map(target.scopes).set(scope, values);
+  }
+}
+
+function getPackageScopeConfiguration<T>(
+  packageName: string,
+  scopes: ReadonlyMap<string, T>,
+): T | undefined {
+  if (!packageName.startsWith('@')) {
+    return undefined;
+  }
+  const scopeEndIndex = packageName.indexOf('/');
+  if (scopeEndIndex <= 1) {
+    return undefined;
+  }
+  return scopes.get(packageName.slice(1, scopeEndIndex));
+}
+
+function getBunAuthConfiguration(
+  config: BunConfiguration | undefined,
+  scope: BunRegistryConfiguration | undefined,
+): { authToken: string | undefined; authIdent: string | undefined; authRegistryUrl: string } | undefined {
+  const scopeHasAuth = scope?.authToken !== undefined || scope?.authIdent !== undefined;
+  const entry = scopeHasAuth ? scope : config?.registry;
+  if (entry === undefined || (entry.authToken === undefined && entry.authIdent === undefined)) {
+    return undefined;
+  }
+  return {
+    authToken: entry.authToken,
+    authIdent: entry.authIdent,
+    authRegistryUrl: entry.registryUrl,
   };
 }
 
@@ -409,20 +503,6 @@ function getNoProxyConfiguration(
   const values = [yarnNoProxy, config.get('no-proxy'), process.env.NO_PROXY, process.env.no_proxy]
     .filter((value): value is string => value !== undefined && value.trim() !== '');
   return values.length === 0 ? undefined : values.join(',');
-}
-
-function getYarnScopeConfiguration(
-  packageName: string,
-  scopes: ReadonlyMap<string, YarnScopeConfiguration>,
-): YarnScopeConfiguration | undefined {
-  if (!packageName.startsWith('@')) {
-    return undefined;
-  }
-  const scopeEndIndex = packageName.indexOf('/');
-  if (scopeEndIndex <= 1) {
-    return undefined;
-  }
-  return scopes.get(packageName.slice(1, scopeEndIndex));
 }
 
 function isNoProxyHost(hostname: string, noProxy: string | undefined): boolean {

@@ -52,6 +52,7 @@ export default defineConfig({
 				'src/utils/registryClient.ts': { statements: 93, branches: 85, functions: 100, lines: 93 },
 				'src/utils/metadataRunner.ts': { statements: 96, branches: 88, functions: 100, lines: 96 },
 				'src/utils/nativeMetadataClient.ts': { statements: 92, branches: 86, functions: 100, lines: 91 },
+				'src/utils/bunConfig.ts': { statements: 92, branches: 90, functions: 100, lines: 92 },
 				'src/utils/yarnMetadataClient.ts': { statements: 98, branches: 98, functions: 100, lines: 98 },
 				'src/utils/ncuClient.ts': { statements: 85, branches: 80, functions: 100, lines: 84 },
 				'src/utils/auditClient.ts': { statements: 100, branches: 92, functions: 100, lines: 100 },

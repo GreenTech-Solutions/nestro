@@ -146,6 +146,20 @@ function normalizeCurrentVersion(currentVersion: string): string {
 
 function showVersionPickerError(packageName: string, err: unknown): void {
   const safePackageName = sanitizePackageText(packageName);
-  void vscode.window.showErrorMessage(`Failed to fetch versions for ${safePackageName}.`);
-  logger.error(`Failed to fetch versions for ${safePackageName}.`, err);
+  const detail = getMetadataErrorDetail(err);
+  const message = detail === undefined
+    ? `Failed to fetch versions for ${safePackageName}.`
+    : `Failed to fetch versions for ${safePackageName}: ${detail}`;
+  void vscode.window.showErrorMessage(message);
+  logger.error(message, err);
+}
+
+function getMetadataErrorDetail(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const candidate = err as { kind?: unknown; message?: unknown };
+  return candidate.kind === 'unavailable' && typeof candidate.message === 'string'
+    ? sanitizePackageText(candidate.message)
+    : undefined;
 }

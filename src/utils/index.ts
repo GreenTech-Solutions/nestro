@@ -15,6 +15,7 @@ export * from './processRunner';
 export * from './metadataRunner';
 export * from './metadataRegistry';
 export * from './nativeMetadataClient';
+export * from './bunConfig';
 export * from './yarnMetadataClient';
 export * from './shellTask';
 export * from './yarnAuditClient';

@@ -200,7 +200,7 @@ describe('pickVersionCommand()', () => {
   it('shows an error and hides the picker when versions fail to load', async () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
-    vi.mocked(fetchPackageMetadata).mockRejectedValueOnce(new Error('registry unavailable'));
+    vi.mocked(fetchPackageMetadata).mockRejectedValueOnce('registry unavailable');
 
     await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
 
@@ -217,6 +217,25 @@ describe('pickVersionCommand()', () => {
     await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Failed to fetch versions for react.');
+    expect(quickPick.hide).toHaveBeenCalledTimes(1);
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the Bun configuration source when metadata configuration fails', async () => {
+    const quickPick = makeQuickPick();
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
+      message: 'Malformed bunfig.toml at /workspace/bunfig.toml.',
+    });
+
+    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Failed to fetch versions for react: Malformed bunfig.toml at /workspace/bunfig.toml.',
+    );
     expect(quickPick.hide).toHaveBeenCalledTimes(1);
     expect(quickPick.dispose).toHaveBeenCalledTimes(1);
   });

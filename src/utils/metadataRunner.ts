@@ -39,6 +39,7 @@ export interface MetadataSuccess<T> extends MetadataPrivateRegistryContext {
 export interface MetadataUnavailable extends MetadataPrivateRegistryContext {
   kind: 'unavailable';
   reason: 'configuration-unavailable';
+  message?: string;
 }
 
 /** The response is valid but does not match a known metadata schema. */

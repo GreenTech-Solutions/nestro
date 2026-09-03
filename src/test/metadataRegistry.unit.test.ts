@@ -132,6 +132,22 @@ describe('MetadataAdapterRegistry', () => {
     expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the HTTPS tier for Bun without invoking a missing Bun CLI', async () => {
+    detectPackageManagerMock.mockResolvedValueOnce('bun');
+
+    await expect(new MetadataAdapterRegistry().fetchMetadata({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toEqual(success);
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
+    expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledWith(
+      'react',
+      '/workspace/package.json',
+      undefined,
+      'bun',
+    );
+  });
+
   it('stops cascading for cancellation and definitive HTTP status', async () => {
     for (const terminalOutcome of [
       { kind: 'aborted' },
