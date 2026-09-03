@@ -6,9 +6,13 @@ import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchPackageMetadataFromRegistry,
+  parseClassicYarnConfig,
   parseNpmRegistryMetadata,
+  parseYarnModernConfig,
   selectVersionsForPicker,
 } from '../utils/registryClient';
+import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry } from '../utils';
+import type { MetadataAdapter } from '../utils';
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
@@ -18,6 +22,16 @@ vi.mock('node:https', () => ({
 }));
 vi.mock('node:os', () => ({
   homedir: vi.fn(() => '/home/user'),
+}));
+
+const detectPackageManagerMock = vi.hoisted(() => vi.fn());
+const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/packageManager', () => ({
+  detectPackageManager: detectPackageManagerMock,
+}));
+vi.mock('../utils/yarnFamily', () => ({
+  resolveYarnFamily: resolveYarnFamilyMock,
 }));
 
 interface MockClientRequest extends EventEmitter {
@@ -31,6 +45,8 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     vi.stubEnv('NO_PROXY', '');
     vi.stubEnv('no_proxy', '');
     vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
+    detectPackageManagerMock.mockResolvedValue('yarn');
+    resolveYarnFamilyMock.mockResolvedValue({ family: 'unknown', source: 'version-probe' });
     Object.defineProperty(vscode.workspace, 'workspaceFolders', {
       configurable: true,
       value: [{ uri: { fsPath: '/workspace' } }],
@@ -78,6 +94,216 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       result: { versions: ['1.0.0'] },
     });
     expectRegistryUrl('https://registry.example.com/npm/react');
+  });
+
+  it('uses the Classic Yarn registry from the project .yarnrc format', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'classic', source: 'project-markers' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc': 'registry "https://classic.example.com/npm/"',
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json', undefined, 'yarn');
+
+    expectRegistryUrl('https://classic.example.com/npm/react');
+  });
+
+  it('uses the Modern Yarn registry and token from .yarnrc.yml', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'package-manager' });
+    vi.stubEnv('YARN_TOKEN', 'modern-secret-token');
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmRegistryServer: "https://modern.example.com/npm/"',
+        'npmAuthToken: ${YARN_TOKEN}',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json', undefined, 'yarn');
+
+    expectRegistryUrl('https://modern.example.com/npm/react');
+    expectRequestHeaders({ Authorization: 'Bearer modern-secret-token' });
+  });
+
+  it('reads an ancestor Modern Yarn config when family resolution is unknown', async () => {
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmScopes:',
+        '  acme:',
+        '    npmRegistryServer: https://internal.acme.test/npm/',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry(
+      '@acme/secret-app',
+      '/workspace/packages/app/package.json',
+      undefined,
+      'yarn',
+    );
+
+    expectRegistryUrl('https://internal.acme.test/npm/@acme%2Fsecret-app');
+  });
+
+  it('does not send an npmrc scoped registry to public npm through Modern Yarn', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'package-manager' });
+    mockNpmrcFiles({
+      '/workspace/.npmrc': '@acme:registry=https://internal.acme.test/npm/',
+      '/workspace/.yarnrc.yml': 'npmRegistryServer: https://registry.npmjs.org/',
+    });
+
+    await expect(fetchPackageMetadataFromRegistry(
+      '@acme/secret-app',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    )).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
+    });
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('reads the user Modern Yarn config and its scoped registry', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'package-manager' });
+    mockNpmrcFiles({
+      '/home/user/.yarnrc.yml': [
+        'npmScopes:',
+        '  acme:',
+        '    npmRegistryServer: https://home.acme.test/npm/',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry(
+      '@acme/pkg',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    );
+
+    expectRegistryUrl('https://home.acme.test/npm/@acme%2Fpkg');
+  });
+
+  it('binds top-level Modern Yarn credentials to their registry host and path', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'package-manager' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmRegistryServer: https://top-level.example.com/npm/',
+        'npmAuthToken: top-level-token',
+        'npmScopes:',
+        '  acme:',
+        '    npmRegistryServer: https://scope.example.com/npm/',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry(
+      '@acme/pkg',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    );
+
+    expectRegistryUrl('https://scope.example.com/npm/@acme%2Fpkg');
+    expect(vi.mocked(https.get).mock.calls[0][1]).not.toMatchObject({
+      headers: { Authorization: 'Bearer top-level-token' },
+    });
+  });
+
+  it('prefers the nearest Modern Yarn config and scoped settings over top-level values', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'project-markers' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmRegistryServer: https://root.example.com',
+        'npmScopes:',
+        '  acme:',
+        '    npmRegistryServer: https://root-acme.example.com',
+      ].join('\n'),
+      '/workspace/packages/app/.yarnrc.yml': [
+        'npmRegistryServer: https://nested.example.com',
+        'npmScopes:',
+        '  acme:',
+        '    npmRegistryServer: https://nested-acme.example.com/npm/',
+        '    npmAuthIdent: "alice:secret"',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry(
+      '@acme/pkg',
+      '/workspace/packages/app/package.json',
+      undefined,
+      'yarn',
+    );
+
+    expectRegistryUrl('https://nested-acme.example.com/npm/@acme%2Fpkg');
+    expectRequestHeaders({ Authorization: 'Basic YWxpY2U6c2VjcmV0' });
+  });
+
+  it('passes Modern Yarn proxy, CA file, and strict SSL settings', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'project-markers' });
+    vi.stubEnv('NO_PROXY', 'registry.example.com');
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmRegistryServer: https://registry.example.com',
+        'httpsProxy: https://proxy.example.com',
+        'caFilePath: ./company-ca.pem',
+        'enableStrictSsl: false',
+      ].join('\n'),
+      '/workspace/company-ca.pem': 'company-ca',
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json', undefined, 'yarn');
+
+    expect(vi.mocked(https.get).mock.calls[0][1]).toMatchObject({
+      ca: 'company-ca',
+      rejectUnauthorized: false,
+    });
+  });
+
+  it('drops Modern Yarn credentials on a cross-origin redirect', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'project-markers' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmRegistryServer: https://private.example.com/npm/',
+        'npmAuthToken: private-token',
+      ].join('\n'),
+    });
+    mockRegistryResponse('', 302, 'https://public.example.com/npm/react');
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await expect(fetchPackageMetadataFromRegistry(
+      'react',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    )).resolves.toMatchObject({ kind: 'success' });
+    expect(vi.mocked(https.get).mock.calls[1][1]).not.toMatchObject({
+      headers: { Authorization: 'Bearer private-token' },
+    });
+  });
+
+  it('fails closed for an ambiguous Yarn family instead of using a Yarn config', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'unknown', source: 'conflicting-markers' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': 'npmRegistryServer: https://private.example.com',
+      '/workspace/.yarnrc': 'registry "https://classic.example.com"',
+    });
+
+    await expect(fetchPackageMetadataFromRegistry(
+      '@private/pkg',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    )).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
+    });
+    expect(https.get).not.toHaveBeenCalled();
   });
 
   it('uses the user .npmrc default registry when project config is missing', async () => {
@@ -262,6 +488,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toEqual({
       kind: 'transport-error',
       reason: 'proxy-unsupported',
+      privateRegistry: true,
     });
     expect(https.get).not.toHaveBeenCalled();
   });
@@ -311,6 +538,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toEqual({
       kind: 'transport-error',
       reason: 'proxy-unsupported',
+      privateRegistry: true,
     });
     expect(https.get).not.toHaveBeenCalled();
   });
@@ -427,6 +655,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('invalid-protocol', '/workspace/package.json')).resolves.toEqual({
       kind: 'transport-error',
       reason: 'request',
+      privateRegistry: true,
     });
 
     mockNpmrcFiles({ '/workspace/.npmrc': 'registry=https://registry.example.com' });
@@ -434,6 +663,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('invalid-url', '/workspace/package.json')).resolves.toEqual({
       kind: 'transport-error',
       reason: 'request',
+      privateRegistry: true,
     });
 
     vi.mocked(https.get).mockClear();
@@ -445,6 +675,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('too-many', '/workspace/package.json')).resolves.toEqual({
       kind: 'transport-error',
       reason: 'request',
+      privateRegistry: true,
     });
     expect(vi.mocked(https.get).mock.calls).toHaveLength(4);
   });
@@ -462,9 +693,44 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       kind: 'transport-error',
       reason: 'http-status',
       statusCode: 404,
+      privateRegistry: true,
     });
     expect(vi.mocked(https.get).mock.calls).toHaveLength(1);
     expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
+  });
+
+  it('does not retry an unreachable Modern Yarn private scope against public npm', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'project-markers' });
+    mockNpmrcFiles({
+      '/workspace/.yarnrc.yml': [
+        'npmScopes:',
+        '  private:',
+        '    npmRegistryServer: https://private.example.com/npm/',
+        '    npmAuthToken: private-token',
+      ].join('\n'),
+    });
+    vi.mocked(https.get).mockImplementationOnce(() => {
+      const request = createMockRequest();
+      process.nextTick(() => request.emit('error', new Error('private registry unavailable')));
+      return toClientRequest(request);
+    });
+    const publicAdapter: MetadataAdapter = {
+      tier: 'public-npm',
+      packageManagers: ['yarn'],
+      fetchMetadata: vi.fn().mockResolvedValue({
+        kind: 'success',
+        result: { distTags: {}, publishTimes: { kind: 'not-provided' }, versions: ['9.9.9'] },
+      }),
+    };
+
+    await expect(new MetadataAdapterRegistry([
+      configAwareHttpsMetadataAdapter,
+      publicAdapter,
+    ]).fetchMetadata({
+      packageName: '@private/pkg',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toEqual({ kind: 'transport-error', reason: 'request', privateRegistry: true });
+    expect(publicAdapter.fetchMetadata).not.toHaveBeenCalled();
   });
 
   it('returns unavailable for an invalid configured registry instead of connecting elsewhere', async () => {
@@ -473,6 +739,52 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toEqual({
       kind: 'unavailable',
       reason: 'configuration-unavailable',
+      privateRegistry: true,
+    });
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('marks a scoped npmrc configuration failure as private and does not retry publicly', async () => {
+    mockNpmrcFiles({ '/workspace/.npmrc': '@private:registry=http://registry.example.com' });
+
+    await expect(fetchPackageMetadataFromRegistry('@private/pkg', '/workspace/package.json')).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
+    });
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('marks a malformed Classic Yarn config as private without using public npm', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'classic', source: 'project-markers' });
+    mockNpmrcFiles({ '/workspace/.yarnrc': 'registry "unterminated' });
+
+    await expect(fetchPackageMetadataFromRegistry(
+      '@private/pkg',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    )).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
+    });
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('marks a malformed Modern Yarn config as private without using public npm', async () => {
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'modern', source: 'project-markers' });
+    mockNpmrcFiles({ '/workspace/.yarnrc.yml': 'npmRegistryServer: [' });
+
+    await expect(fetchPackageMetadataFromRegistry(
+      '@private/pkg',
+      '/workspace/package.json',
+      undefined,
+      'yarn',
+    )).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+      privateRegistry: true,
     });
     expect(https.get).not.toHaveBeenCalled();
   });
@@ -488,6 +800,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toEqual({
       kind: 'unavailable',
       reason: 'configuration-unavailable',
+      privateRegistry: true,
     });
     expect(https.get).not.toHaveBeenCalled();
   });
@@ -611,6 +924,25 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     expect(https.get).not.toHaveBeenCalled();
   });
 
+  it('ignores malformed npm auth keys and package scopes without a package name', async () => {
+    mockNpmrcFiles({
+      '/workspace/.npmrc': [
+        'not-an-assignment',
+        '//:_authToken=invalid',
+        '//registry.example.com/:unsupported=value',
+        '//[invalid/:_authToken=value',
+        '//user:password@registry.example.com/:_authToken=value',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry('@scope', '/workspace/package.json');
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json');
+
+    expect(vi.mocked(https.get)).toHaveBeenCalledTimes(2);
+  });
+
   it('parses publish times at the parser boundary', () => {
     expect(parseNpmRegistryMetadata({
       'dist-tags': { latest: '2.0.0' },
@@ -692,8 +1024,109 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('classifies unknown and malformed packument schemas', () => {
+    expect(parseNpmRegistryMetadata(null)).toEqual({ kind: 'unrecognized' });
     expect(parseNpmRegistryMetadata({})).toEqual({ kind: 'unrecognized' });
     expect(parseNpmRegistryMetadata({ 'dist-tags': [], versions: {} })).toEqual({ kind: 'malformed' });
+  });
+});
+
+describe('Yarn configuration parsers', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('parses the supported Classic keys and ignores other Yarn settings', () => {
+    expect(parseClassicYarnConfig([
+      '# comment',
+      '--registry "https://registry.example.com/npm/"',
+      'proxy "https://proxy.example.com"',
+      'https-proxy https://secure-proxy.example.com',
+      'ca "inline-ca"',
+      'cafile ./company-ca.pem',
+      'strict-ssl false',
+      'no-proxy registry.example.com',
+      'cache-folder ".yarn-cache"',
+      '',
+    ].join('\n'))).toEqual(new Map([
+      ['registry', 'https://registry.example.com/npm/'],
+      ['proxy', 'https://proxy.example.com'],
+      ['https-proxy', 'https://secure-proxy.example.com'],
+      ['ca', 'inline-ca'],
+      ['cafile', './company-ca.pem'],
+      ['strict-ssl', 'false'],
+      ['no-proxy', 'registry.example.com'],
+    ]));
+  });
+
+  it('fails closed on a malformed Classic supported value', () => {
+    expect(() => parseClassicYarnConfig('registry "unterminated')).toThrow();
+    expect(parseClassicYarnConfig('registry')).toEqual(new Map());
+  });
+
+  it('parses Modern scalar and flow-map settings while ignoring unrelated blocks', () => {
+    vi.stubEnv('YARN_TOKEN', 'env-token');
+    const parsed = parseYarnModernConfig([
+      'npmRegistryServer: "https://registry.example.com/npm/" # comment',
+      'npmAuthToken: ${YARN_TOKEN}',
+      'npmAuthIdent: "alice:secret"',
+      'httpProxy: https://proxy.example.com',
+      'httpsProxy: https://secure-proxy.example.com',
+      'caFilePath: ./company-ca.pem',
+      'enableStrictSsl: false',
+      'noProxy: registry.example.com',
+      'npmScopes: { @acme: { npmRegistryServer: "https://acme.example.com", npmAuthToken: token } }',
+      'plugins:',
+      '  - path: .yarn/plugins/@yarnpkg/plugin-npm.cjs',
+    ].join('\n'));
+
+    expect(parsed).toMatchObject({
+      registryUrl: 'https://registry.example.com/npm/',
+      authToken: 'env-token',
+      authIdent: 'alice:secret',
+      httpProxy: 'https://proxy.example.com',
+      httpsProxy: 'https://secure-proxy.example.com',
+      caFilePath: './company-ca.pem',
+      enableStrictSsl: false,
+      noProxy: 'registry.example.com',
+    });
+    expect(parsed?.scopes).toEqual(new Map([
+      ['acme', { registryUrl: 'https://acme.example.com', authToken: 'token', authIdent: undefined }],
+    ]));
+  });
+
+  it('parses block scopes and rejects unsupported or malformed YAML constructs', () => {
+    expect(parseYarnModernConfig([
+      'npmScopes:',
+      '  acme:',
+      '    npmRegistryServer: https://acme.example.com',
+      '    npmAuthToken: token',
+      '  other:',
+      '    npmAuthIdent: "alice:secret"',
+    ].join('\n'))?.scopes).toEqual(new Map([
+      ['acme', { registryUrl: 'https://acme.example.com', authToken: 'token', authIdent: undefined }],
+      ['other', { registryUrl: undefined, authToken: undefined, authIdent: 'alice:secret' }],
+    ]));
+    expect(parseYarnModernConfig('enableStrictSsl: maybe')).toBeUndefined();
+    expect(parseYarnModernConfig('npmRegistryServer: [unsupported]')).toBeUndefined();
+    expect(parseYarnModernConfig('npmScopes: { acme: [unsupported] }')).toBeUndefined();
+    expect(parseYarnModernConfig('npmScopes: { acme: { npmAuthToken: "unterminated } }')).toBeUndefined();
+    expect(parseYarnModernConfig('npmScopes: { acme: { npmRegistryServer: https://acme.example.com }')).toBeUndefined();
+    expect(parseYarnModernConfig('npmScopes:\n  acme:\n    npmAuthToken: token\n      bad: value')).toBeUndefined();
+    expect(parseYarnModernConfig('\tnpmRegistryServer: https://registry.example.com')).toBeUndefined();
+    expect(parseYarnModernConfig('not-a-yaml-entry')).toBeUndefined();
+    expect(parseYarnModernConfig('npmRegistryServer: "unterminated')).toBeUndefined();
+  });
+
+  it('rejects invalid scope entries and unsupported scalar forms', () => {
+    expect(parseYarnModernConfig('npmScopes: { "bad scope": { npmAuthToken: token } }')).toBeUndefined();
+    expect(parseYarnModernConfig('npmScopes: { acme: { npmAuthToken: [token] } }')).toBeUndefined();
+    expect(parseYarnModernConfig('npmAuthToken: null')).toBeUndefined();
+    expect(parseYarnModernConfig('npmAuthToken: &token value')).toBeUndefined();
+    expect(parseYarnModernConfig('npmAuthToken: *token')).toBeUndefined();
+    expect(parseYarnModernConfig('npmAuthToken: |\n  token')).toBeUndefined();
+    expect(parseYarnModernConfig('npmAuthToken: "token # not a comment"')).toMatchObject({
+      authToken: 'token # not a comment',
+    });
   });
 });
 

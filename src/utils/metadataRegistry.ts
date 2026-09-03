@@ -4,6 +4,7 @@ import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
+import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMetadataClient';
 
 export type MetadataAdapterTier = 'native-cli' | 'config-aware-https' | 'public-npm';
 
@@ -53,13 +54,19 @@ export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
     request.packageName,
     request.packageFilePath,
     request.signal,
+    request.packageManager,
   ),
 };
 
 export class MetadataAdapterRegistry {
   private readonly adapters: readonly MetadataAdapter[];
 
-  constructor(adapters: readonly MetadataAdapter[] = [nativeCliMetadataAdapter, configAwareHttpsMetadataAdapter]) {
+  constructor(adapters: readonly MetadataAdapter[] = [
+    nativeCliMetadataAdapter,
+    yarnClassicMetadataAdapter,
+    yarnModernMetadataAdapter,
+    configAwareHttpsMetadataAdapter,
+  ]) {
     this.adapters = [...adapters].sort((left, right) => tierOrder[left.tier] - tierOrder[right.tier]);
   }
 
@@ -102,6 +109,10 @@ export class MetadataAdapterRegistry {
 
 // Cascades when a tier cannot answer; cancellation and definitive HTTP status stop the chain.
 function shouldTryNextTier(outcome: PackageMetadataOutcome): boolean {
+  if (hasPrivateRegistryMarker(outcome)) {
+    return false;
+  }
+
   switch (outcome.kind) {
     case 'success':
     case 'aborted':
@@ -116,6 +127,10 @@ function shouldTryNextTier(outcome: PackageMetadataOutcome): boolean {
     case 'timeout':
       return true;
   }
+}
+
+function hasPrivateRegistryMarker(outcome: PackageMetadataOutcome): boolean {
+  return outcome.privateRegistry === true;
 }
 
 export const metadataAdapterRegistry = new MetadataAdapterRegistry();

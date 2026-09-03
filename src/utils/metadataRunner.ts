@@ -4,6 +4,10 @@ import type { ClientRequest, IncomingMessage } from 'node:http';
 export const METADATA_REQUEST_TIMEOUT_MS = 15_000;
 export const METADATA_RESPONSE_MAX_BYTES = 5 * 1024 * 1024;
 
+export interface MetadataPrivateRegistryContext {
+  privateRegistry?: boolean;
+}
+
 /** A response schema was recognized and converted into typed metadata. */
 export interface MetadataSchemaRecognized<T> {
   kind: 'recognized';
@@ -26,52 +30,52 @@ export type MetadataSchemaResult<T>
     | MetadataSchemaMalformed;
 
 /** The adapter returned complete, schema-recognized metadata. */
-export interface MetadataSuccess<T> {
+export interface MetadataSuccess<T> extends MetadataPrivateRegistryContext {
   kind: 'success';
   result: T;
 }
 
 /** Configuration could not be resolved; missing executables are transport failures. */
-export interface MetadataUnavailable {
+export interface MetadataUnavailable extends MetadataPrivateRegistryContext {
   kind: 'unavailable';
   reason: 'configuration-unavailable';
 }
 
 /** The response is valid but does not match a known metadata schema. */
-export interface MetadataUnrecognized {
+export interface MetadataUnrecognized extends MetadataPrivateRegistryContext {
   kind: 'unrecognized';
 }
 
 /** JSON or a recognized schema is malformed; callers may try another adapter. */
-export interface MetadataMalformed {
+export interface MetadataMalformed extends MetadataPrivateRegistryContext {
   kind: 'malformed';
   reason: 'json' | 'schema';
 }
 
 /** The response ended before its declared length or its stream was aborted. */
-export interface MetadataTruncated {
+export interface MetadataTruncated extends MetadataPrivateRegistryContext {
   kind: 'truncated';
 }
 
 /** The response exceeded the bounded request buffer. */
-export interface MetadataOverflow {
+export interface MetadataOverflow extends MetadataPrivateRegistryContext {
   kind: 'overflow';
   maxBufferBytes: number;
 }
 
 /** The request exceeded its deadline and was terminated. */
-export interface MetadataTimeout {
+export interface MetadataTimeout extends MetadataPrivateRegistryContext {
   kind: 'timeout';
   timeoutMs: number;
 }
 
 /** The caller cancelled the request; no adapter result is usable. */
-export interface MetadataAborted {
+export interface MetadataAborted extends MetadataPrivateRegistryContext {
   kind: 'aborted';
 }
 
 /** Network or adapter execution failed; selection outcomes are produced only by the registry. */
-export interface MetadataTransportError {
+export interface MetadataTransportError extends MetadataPrivateRegistryContext {
   kind: 'transport-error';
   reason: 'request' | 'response' | 'http-status' | 'selection' | 'command-not-found' | 'process-failed' | 'proxy-unsupported';
   statusCode?: number;

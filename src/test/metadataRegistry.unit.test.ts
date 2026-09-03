@@ -3,12 +3,14 @@ import {
   configAwareHttpsMetadataAdapter,
   MetadataAdapterRegistry,
   nativeCliMetadataAdapter,
+  yarnClassicMetadataAdapter,
 } from '../utils';
 import type { MetadataAdapter, PackageMetadataOutcome } from '../utils';
 
 const detectPackageManagerMock = vi.hoisted(() => vi.fn());
 const fetchPackageMetadataFromRegistryMock = vi.hoisted(() => vi.fn());
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/packageManager', () => ({
   detectPackageManager: detectPackageManagerMock,
@@ -18,6 +20,9 @@ vi.mock('../utils/registryClient', () => ({
 }));
 vi.mock('../utils/processRunner', () => ({
   runBoundedProcess: runBoundedProcessMock,
+}));
+vi.mock('../utils/yarnFamily', () => ({
+  resolveYarnFamily: resolveYarnFamilyMock,
 }));
 
 const success: PackageMetadataOutcome = {
@@ -34,6 +39,7 @@ describe('MetadataAdapterRegistry', () => {
     vi.clearAllMocks();
     detectPackageManagerMock.mockResolvedValue('npm');
     fetchPackageMetadataFromRegistryMock.mockResolvedValue(success);
+    resolveYarnFamilyMock.mockResolvedValue({ family: 'unknown', source: 'version-probe' });
     runBoundedProcessMock.mockResolvedValue({
       kind: 'spawn-error',
       reason: 'command-not-found',
@@ -48,7 +54,7 @@ describe('MetadataAdapterRegistry', () => {
 
     expect(registry.getAdapter('npm')).toBe(nativeCliMetadataAdapter);
     expect(registry.getAdapter('pnpm')).toBe(nativeCliMetadataAdapter);
-    expect(registry.getAdapter('yarn')).toBe(configAwareHttpsMetadataAdapter);
+    expect(registry.getAdapter('yarn')).toBe(yarnClassicMetadataAdapter);
     expect(registry.getAdapter('bun')).toBe(configAwareHttpsMetadataAdapter);
     expect(configAwareHttpsMetadataAdapter.tier).toBe('config-aware-https');
   });
@@ -65,6 +71,42 @@ describe('MetadataAdapterRegistry', () => {
     expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the Yarn family adapters before the HTTPS fallback', async () => {
+    detectPackageManagerMock.mockResolvedValueOnce('yarn');
+    resolveYarnFamilyMock.mockResolvedValueOnce({ family: 'classic', source: 'package-manager' });
+    runBoundedProcessMock.mockResolvedValueOnce({
+      kind: 'exit',
+      stdout: JSON.stringify({
+        type: 'inspect',
+        data: { 'dist-tags': {}, versions: ['1.0.0'] },
+      }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(new MetadataAdapterRegistry().fetchMetadata({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toMatchObject({
+      kind: 'success',
+      result: { versions: ['1.0.0'], distTags: {} },
+    });
+    expect(runBoundedProcessMock).toHaveBeenCalledTimes(1);
+    expect(fetchPackageMetadataFromRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it('falls through to HTTPS when the Yarn family is unknown without running Yarn', async () => {
+    detectPackageManagerMock.mockResolvedValueOnce('yarn');
+
+    await expect(new MetadataAdapterRegistry().fetchMetadata({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toEqual(success);
+    expect(resolveYarnFamilyMock).toHaveBeenCalled();
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
+    expect(fetchPackageMetadataFromRegistryMock).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the detected manager and preserves the typed HTTPS result', async () => {
     detectPackageManagerMock.mockResolvedValueOnce('pnpm');
 
@@ -78,6 +120,7 @@ describe('MetadataAdapterRegistry', () => {
       'react',
       '/workspace/packages/app/package.json',
       undefined,
+      'pnpm',
     );
   });
 
@@ -129,6 +172,25 @@ describe('MetadataAdapterRegistry', () => {
       kind: 'transport-error',
       reason: 'http-status',
       statusCode: 404,
+      privateRegistry: true,
+    };
+    const privateAdapter = createAdapter('config-aware-https', ['npm'], privateResult);
+    const publicAdapter = createAdapter('public-npm', ['npm'], success);
+    const registry = new MetadataAdapterRegistry([publicAdapter, privateAdapter]);
+
+    await expect(registry.fetchMetadata({
+      packageName: '@private/pkg',
+      packageFilePath: '/workspace/package.json',
+    })).resolves.toEqual(privateResult);
+    expect(privateAdapter.fetchMetadata).toHaveBeenCalledTimes(1);
+    expect(publicAdapter.fetchMetadata).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a marked retryable private outcome against a later tier', async () => {
+    const privateResult: PackageMetadataOutcome = {
+      kind: 'timeout',
+      timeoutMs: 15_000,
+      privateRegistry: true,
     };
     const privateAdapter = createAdapter('config-aware-https', ['npm'], privateResult);
     const publicAdapter = createAdapter('public-npm', ['npm'], success);
