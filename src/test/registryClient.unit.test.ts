@@ -4,7 +4,11 @@ import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import * as vscode from 'vscode';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPackageVersions, selectVersionsForPicker } from '../utils/registryClient';
+import {
+  fetchPackageMetadataFromRegistry,
+  parseNpmRegistryMetadata,
+  selectVersionsForPicker,
+} from '../utils/registryClient';
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
@@ -21,7 +25,7 @@ interface MockClientRequest extends EventEmitter {
   setTimeout: ReturnType<typeof vi.fn>;
 }
 
-describe('fetchPackageVersions()', () => {
+describe('fetchPackageMetadataFromRegistry()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
@@ -43,9 +47,13 @@ describe('fetchPackageVersions()', () => {
       },
     }));
 
-    await expect(fetchPackageVersions('react')).resolves.toEqual({
-      tags: { latest: '18.2.0', next: '19.0.0-rc.1' },
-      versions: ['18.2.0', '18.0.0'],
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'success',
+      result: {
+        distTags: { latest: '18.2.0', next: '19.0.0-rc.1' },
+        publishTimes: { kind: 'not-provided' },
+        versions: ['18.2.0', '18.0.0'],
+      },
     });
     expectRegistryUrl('https://registry.npmjs.org/react');
   });
@@ -59,9 +67,9 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await expect(fetchPackageVersions('react', '/workspace/package.json')).resolves.toEqual({
-      tags: {},
-      versions: ['1.0.0'],
+    await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toMatchObject({
+      kind: 'success',
+      result: { versions: ['1.0.0'] },
     });
     expectRegistryUrl('https://registry.example.com/npm/react');
   });
@@ -75,7 +83,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('react', '/workspace/package.json');
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json');
 
     expectRegistryUrl('https://user-registry.example.com/react');
   });
@@ -90,7 +98,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('react', '/workspace/package.json');
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json');
 
     expectRegistryUrl('https://project-registry.example.com/react');
   });
@@ -107,7 +115,7 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('@private/pkg', '/workspace/package.json');
+    await fetchPackageMetadataFromRegistry('@private/pkg', '/workspace/package.json');
 
     expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
   });
@@ -133,8 +141,8 @@ describe('fetchPackageVersions()', () => {
       versions: { '2.0.0': {} },
     }));
 
-    await fetchPackageVersions('first-package', '/workspace/app-one/package.json');
-    await fetchPackageVersions('second-package', '/workspace/app-two/packages/web/package.json');
+    await fetchPackageMetadataFromRegistry('first-package', '/workspace/app-one/package.json');
+    await fetchPackageMetadataFromRegistry('second-package', '/workspace/app-two/packages/web/package.json');
 
     expect(vi.mocked(https.get).mock.calls[0][0]).toBe('https://one.example.com/first-package');
     expect(vi.mocked(https.get).mock.calls[1][0]).toBe('https://two.example.com/second-package');
@@ -157,60 +165,63 @@ describe('fetchPackageVersions()', () => {
       versions: { '1.0.0': {} },
     }));
 
-    await fetchPackageVersions('@private/pkg', '/workspace/private-app/package.json');
+    await fetchPackageMetadataFromRegistry('@private/pkg', '/workspace/private-app/package.json');
 
     expectRegistryUrl('https://private.example.com/npm/@private%2Fpkg');
     expect(readFile).not.toHaveBeenCalledWith('/workspace/public-app/.npmrc', 'utf8');
   });
 
-  it('rejects on network errors', async () => {
-    const error = new Error('network down');
-    vi.mocked(https.get).mockImplementationOnce(() => {
-      const request = createMockRequest();
-      process.nextTick(() => {
-        request.emit('error', error);
-      });
-      return toClientRequest(request);
-    });
-
-    await expect(fetchPackageVersions('react')).rejects.toThrow('network down');
-  });
-
-  it('rejects 404 registry responses with a descriptive status error', async () => {
-    mockRegistryResponse(JSON.stringify({ error: 'Not found' }), 404);
-
-    await expect(fetchPackageVersions('missing-package')).rejects.toThrow(
-      'npm registry responded with HTTP 404 for missing-package',
-    );
-  });
-
-  it('rejects 5xx registry responses with a descriptive status error', async () => {
-    mockRegistryResponse(JSON.stringify({ error: 'Internal Server Error' }), 503);
-
-    await expect(fetchPackageVersions('@scope/package')).rejects.toThrow(
-      'npm registry responded with HTTP 503 for @scope/package',
-    );
-  });
-
-  it('sets a registry request timeout and rejects with package context', async () => {
+  it('returns a transport outcome for network errors', async () => {
     const request = createMockRequest();
     vi.mocked(https.get).mockImplementationOnce(() => {
-      process.nextTick(() => {
-        request.emit('timeout');
-      });
+      process.nextTick(() => request.emit('error', new Error('network down')));
       return toClientRequest(request);
     });
 
-    await expect(fetchPackageVersions('react')).rejects.toThrow(
-      'npm registry request timed out after 15000ms for react',
-    );
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'transport-error',
+      reason: 'request',
+    });
+  });
+
+  it('returns a transport outcome with the HTTP status for a missing package', async () => {
+    mockRegistryResponse(JSON.stringify({ error: 'Not found' }), 404);
+
+    await expect(fetchPackageMetadataFromRegistry('missing-package')).resolves.toEqual({
+      kind: 'transport-error',
+      reason: 'http-status',
+      statusCode: 404,
+    });
+  });
+
+  it('returns a transport outcome with the HTTP status for a server failure', async () => {
+    mockRegistryResponse(JSON.stringify({ error: 'Internal Server Error' }), 503);
+
+    await expect(fetchPackageMetadataFromRegistry('@scope/package')).resolves.toEqual({
+      kind: 'transport-error',
+      reason: 'http-status',
+      statusCode: 503,
+    });
+  });
+
+  it('sets a registry request timeout with package context', async () => {
+    const request = createMockRequest();
+    vi.mocked(https.get).mockImplementationOnce(() => {
+      process.nextTick(() => request.emit('timeout'));
+      return toClientRequest(request);
+    });
+
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'timeout',
+      timeoutMs: 15000,
+    });
     expect(request.setTimeout).toHaveBeenCalledWith(15000);
     expect(request.destroy).toHaveBeenCalledWith(expect.objectContaining({
       message: 'npm registry request timed out after 15000ms for react',
     }));
   });
 
-  it('rejects when the response stream itself errors', async () => {
+  it('returns a response transport outcome when the response stream errors', async () => {
     const error = new Error('response stream reset');
     vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {
       const response = new EventEmitter() as IncomingMessage;
@@ -222,13 +233,19 @@ describe('fetchPackageVersions()', () => {
       return toClientRequest(createMockRequest());
     });
 
-    await expect(fetchPackageVersions('react')).rejects.toThrow('response stream reset');
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'transport-error',
+      reason: 'response',
+    });
   });
 
-  it('rejects malformed JSON in an otherwise successful registry response', async () => {
+  it('returns a malformed outcome for invalid JSON', async () => {
     mockRegistryResponse('not valid json');
 
-    await expect(fetchPackageVersions('react')).rejects.toThrow();
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'malformed',
+      reason: 'json',
+    });
   });
 
   it('ignores a request error that arrives after the request already timed out', async () => {
@@ -241,12 +258,13 @@ describe('fetchPackageVersions()', () => {
       return toClientRequest(request);
     });
 
-    await expect(fetchPackageVersions('react')).rejects.toThrow(
-      'npm registry request timed out after 15000ms for react',
-    );
+    await expect(fetchPackageMetadataFromRegistry('react')).resolves.toEqual({
+      kind: 'timeout',
+      timeoutMs: 15000,
+    });
   });
 
-  it('rejects oversized registry responses before unbounded buffering', async () => {
+  it('returns overflow before unbounded buffering', async () => {
     const request = createMockRequest();
     vi.mocked(https.get).mockImplementationOnce((_url, _options, callback) => {
       const response = new EventEmitter() as IncomingMessage;
@@ -259,12 +277,115 @@ describe('fetchPackageVersions()', () => {
       return toClientRequest(request);
     });
 
-    await expect(fetchPackageVersions('large-package')).rejects.toThrow(
-      'npm registry response exceeded 5242880 bytes for large-package',
-    );
+    await expect(fetchPackageMetadataFromRegistry('large-package')).resolves.toEqual({
+      kind: 'overflow',
+      maxBufferBytes: 5242880,
+    });
     expect(request.destroy).toHaveBeenCalledWith(expect.objectContaining({
       message: 'npm registry response exceeded 5242880 bytes for large-package',
     }));
+  });
+
+  it('returns unavailable only when registry URL resolution throws', async () => {
+    vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementationOnce(() => {
+      throw new Error('workspace lookup failed');
+    });
+
+    await expect(fetchPackageMetadataFromRegistry('react', '/workspace/package.json')).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'configuration-unavailable',
+    });
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('does not classify an invalid package name as unavailable', async () => {
+    await expect(fetchPackageMetadataFromRegistry('\uD800')).rejects.toThrow(URIError);
+    expect(https.get).not.toHaveBeenCalled();
+  });
+
+  it('parses publish times at the parser boundary', () => {
+    expect(parseNpmRegistryMetadata({
+      'dist-tags': { latest: '2.0.0' },
+      versions: { '1.0.0': {}, '2.0.0': {} },
+      time: {
+        created: '2020-01-01T00:00:00.000Z',
+        modified: '2024-01-01T00:00:00.000Z',
+        '1.0.0': '2020-02-01T00:00:00.000Z',
+      },
+    })).toEqual({
+      kind: 'recognized',
+      result: {
+        distTags: { latest: '2.0.0' },
+        publishTimes: {
+          kind: 'provided',
+          byVersion: { '1.0.0': '2020-02-01T00:00:00.000Z' },
+        },
+        versions: ['2.0.0', '1.0.0'],
+      },
+    });
+  });
+
+  it('distinguishes a source without publish times from a version without a time', () => {
+    expect(parseNpmRegistryMetadata({
+      'dist-tags': {},
+      versions: { '1.0.0': {} },
+    })).toEqual({
+      kind: 'recognized',
+      result: {
+        distTags: {},
+        publishTimes: { kind: 'not-provided' },
+        versions: ['1.0.0'],
+      },
+    });
+
+    expect(parseNpmRegistryMetadata({
+      'dist-tags': {},
+      versions: { '1.0.0': {}, '2.0.0': {} },
+      time: { '1.0.0': '2020-02-01T00:00:00.000Z' },
+    })).toEqual({
+      kind: 'recognized',
+      result: {
+        distTags: {},
+        publishTimes: {
+          kind: 'provided',
+          byVersion: { '1.0.0': '2020-02-01T00:00:00.000Z' },
+        },
+        versions: ['2.0.0', '1.0.0'],
+      },
+    });
+  });
+
+  it('degrades malformed auxiliary publish-time fields without discarding metadata', () => {
+    const base = {
+      'dist-tags': { latest: '1.0.0' },
+      versions: { '1.0.0': {} },
+    };
+
+    expect(parseNpmRegistryMetadata({ ...base, time: null })).toMatchObject({
+      kind: 'recognized',
+      result: { publishTimes: { kind: 'not-provided' } },
+    });
+    expect(parseNpmRegistryMetadata({ ...base, time: { '1.0.0': 1700000000000 } })).toMatchObject({
+      kind: 'recognized',
+      result: { publishTimes: { kind: 'provided', byVersion: {} } },
+    });
+    expect(parseNpmRegistryMetadata({
+      ...base,
+      time: { '1.0.0': '2020-01-01T00:00:00.000Z', unpublished: { name: 'x' } },
+    })).toMatchObject({
+      kind: 'recognized',
+      result: {
+        publishTimes: {
+          kind: 'provided',
+          byVersion: { '1.0.0': '2020-01-01T00:00:00.000Z' },
+        },
+      },
+    });
+  });
+
+  it('classifies unknown and malformed packument schemas', () => {
+    expect(parseNpmRegistryMetadata({})).toEqual({ kind: 'unrecognized' });
+    expect(parseNpmRegistryMetadata({ 'dist-tags': [], versions: {} })).toEqual({ kind: 'malformed' });
   });
 });
 

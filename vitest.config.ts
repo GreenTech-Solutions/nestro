@@ -49,7 +49,8 @@ export default defineConfig({
 				// is the card's priority metric and must stay tight per file. Numbers are
 				// each file's own measured level, rounded down (AUD-03 fix pass 1).
 				'src/utils/packageReader.ts': { statements: 86, branches: 70, functions: 90, lines: 87 },
-				'src/utils/registryClient.ts': { statements: 96, branches: 79, functions: 100, lines: 96 },
+				'src/utils/registryClient.ts': { statements: 93, branches: 85, functions: 100, lines: 93 },
+				'src/utils/metadataRunner.ts': { statements: 96, branches: 88, functions: 100, lines: 96 },
 				'src/utils/ncuClient.ts': { statements: 85, branches: 80, functions: 100, lines: 84 },
 				'src/utils/auditClient.ts': { statements: 100, branches: 92, functions: 100, lines: 100 },
 				'src/utils/bunAuditClient.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },

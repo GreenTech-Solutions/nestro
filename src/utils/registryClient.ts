@@ -1,110 +1,118 @@
-import * as https from 'node:https';
-import type { ClientRequest, IncomingMessage } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
+import { runBoundedMetadataRequest } from './metadataRunner';
+import type { BoundedMetadataOutcome, MetadataOutcome, MetadataSchemaResult } from './metadataRunner';
+import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 
-const REGISTRY_REQUEST_TIMEOUT_MS = 15_000;
-const REGISTRY_RESPONSE_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 
-interface NpmRegistryPackument {
-  'dist-tags': Record<string, string>;
-  versions: Record<string, unknown>;
-}
-
-export interface PackageVersions {
-  tags: Record<string, string>;
-  versions: string[];
-}
-
-export async function fetchPackageVersions(
+export async function fetchPackageMetadataFromRegistry(
   packageName: string,
   packageFilePath?: string,
-): Promise<PackageVersions> {
+  signal?: AbortSignal,
+): Promise<PackageMetadataOutcome> {
   const encodedName = encodeURIComponent(packageName).replace('%40', '@');
-  const registryUrl = await resolveRegistryUrl(packageName, packageFilePath);
-  const url = buildRegistryPackageUrl(registryUrl, encodedName);
+  let url: string;
+  try {
+    const registryUrl = await resolveRegistryUrl(packageName, packageFilePath);
+    url = buildRegistryPackageUrl(registryUrl, encodedName);
+  }
+  catch {
+    return { kind: 'unavailable', reason: 'configuration-unavailable' };
+  }
 
-  return await new Promise<PackageVersions>((resolve, reject) => {
-    let request: ClientRequest | undefined;
-    let response: IncomingMessage | undefined;
-    let settled = false;
+  return withoutTransportMessage(await requestRegistryPayload(
+    url,
+    parseNpmRegistryMetadata,
+    packageName,
+    signal,
+  ));
+}
 
-    const settle = (callback: () => void): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      request?.removeListener('timeout', onTimeout);
-      response?.removeListener('data', onData);
-      response?.removeListener('end', onEnd);
-      response?.removeListener('error', onResponseError);
-      callback();
-    };
-    const rejectOnce = (err: Error): void => {
-      settle(() => reject(err));
-    };
-    const resolveOnce = (versions: PackageVersions): void => {
-      settle(() => resolve(versions));
-    };
-    const onTimeout = (): void => {
-      const error = new Error(`npm registry request timed out after ${REGISTRY_REQUEST_TIMEOUT_MS}ms for ${packageName}`);
-      request?.destroy(error);
-      rejectOnce(error);
-    };
-    const onRequestError = (err: Error): void => {
-      rejectOnce(err);
-    };
-    const onResponseError = (err: Error): void => {
-      rejectOnce(err);
-    };
-    let data = '';
-    let receivedBytes = 0;
-    const onData = (chunk: Buffer | string): void => {
-      const chunkText = chunk.toString();
-      receivedBytes += Buffer.byteLength(chunkText);
-
-      if (receivedBytes > REGISTRY_RESPONSE_MAX_BYTES) {
-        const error = new Error(`npm registry response exceeded ${REGISTRY_RESPONSE_MAX_BYTES} bytes for ${packageName}`);
-        request?.destroy(error);
-        rejectOnce(error);
-        return;
-      }
-
-      data += chunkText;
-    };
-    const onEnd = (): void => {
-      try {
-        if (response?.statusCode !== undefined && (response.statusCode < 200 || response.statusCode >= 300)) {
-          rejectOnce(new Error(`npm registry responded with HTTP ${response.statusCode} for ${packageName}`));
-          return;
-        }
-
-        const json = JSON.parse(data) as NpmRegistryPackument;
-        resolveOnce({
-          tags: json['dist-tags'] ?? {},
-          versions: Object.keys(json.versions ?? {}).reverse(),
-        });
-      }
-      catch (err) {
-        rejectOnce(err instanceof Error ? err : new Error(String(err)));
-      }
-    };
-
-    request = https.get(url, { headers: { Accept: 'application/vnd.npm.install-v1+json' } }, (res) => {
-      response = res;
-      res.on('data', onData);
-      res.on('end', onEnd);
-      res.on('error', onResponseError);
-    });
-    request.setTimeout(REGISTRY_REQUEST_TIMEOUT_MS);
-    request.on('timeout', onTimeout);
-    request.on('error', onRequestError);
+async function requestRegistryPayload<T>(
+  url: string,
+  parse: (payload: unknown) => MetadataSchemaResult<T>,
+  packageName: string,
+  signal?: AbortSignal,
+): Promise<BoundedMetadataOutcome<T>> {
+  return await runBoundedMetadataRequest(url, {
+    parse,
+    signal,
+    // This abbreviated response omits publish times; the native CLI tier supplies them for release policy.
+    headers: { Accept: 'application/vnd.npm.install-v1+json' },
+    timeoutErrorMessage: `npm registry request timed out after 15000ms for ${packageName}`,
+    overflowErrorMessage: `npm registry response exceeded 5242880 bytes for ${packageName}`,
   });
+}
+
+export function parseNpmRegistryMetadata(json: unknown): MetadataSchemaResult<PackageMetadata> {
+  if (!isRecord(json)) {
+    return { kind: 'unrecognized' };
+  }
+  if (!Object.hasOwn(json, 'dist-tags') || !Object.hasOwn(json, 'versions')) {
+    return { kind: 'unrecognized' };
+  }
+
+  const distTags = readStringMap(json['dist-tags']);
+  const versions = isRecord(json.versions) ? Object.keys(json.versions).reverse() : undefined;
+  if (distTags === undefined || versions === undefined) {
+    return { kind: 'malformed' };
+  }
+
+  const publishTimes = parsePublishTimes(json.time, versions);
+  return {
+    kind: 'recognized',
+    result: { distTags, versions, publishTimes },
+  };
+}
+
+function parsePublishTimes(
+  value: unknown,
+  versions: readonly string[],
+): PackageMetadata['publishTimes'] {
+  if (!isRecord(value)) {
+    return { kind: 'not-provided' };
+  }
+
+  const versionSet = new Set(versions);
+  return {
+    kind: 'provided',
+    byVersion: Object.fromEntries(
+      Object.entries(value).filter(([version, publishTime]) => (
+        versionSet.has(version) && typeof publishTime === 'string'
+      )),
+    ) as Record<string, string>,
+  };
+}
+
+function readStringMap(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value);
+  if (entries.some(([, entry]) => typeof entry !== 'string')) {
+    return undefined;
+  }
+
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function withoutTransportMessage<T>(outcome: BoundedMetadataOutcome<T>): MetadataOutcome<T> {
+  if (outcome.kind !== 'transport-error') {
+    return outcome;
+  }
+  if (outcome.statusCode === undefined) {
+    return { kind: 'transport-error', reason: outcome.reason };
+  }
+  return { kind: 'transport-error', reason: outcome.reason, statusCode: outcome.statusCode };
 }
 
 async function resolveRegistryUrl(packageName: string, packageFilePath: string | undefined): Promise<string> {

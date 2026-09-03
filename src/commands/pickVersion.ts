@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
-  fetchPackageVersions,
+  fetchPackageMetadata,
   logger,
   selectVersionsForPicker,
   showError,
@@ -28,6 +28,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   quickPick.placeholder = 'Loading versions...';
   quickPick.busy = true;
   const disposables: vscode.Disposable[] = [];
+  const abortController = new AbortController();
   let disposed = false;
   const cleanup = (): void => {
     if (disposed) {
@@ -35,6 +36,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     }
 
     disposed = true;
+    abortController.abort();
     while (disposables.length > 0) {
       disposables.pop()?.dispose();
     }
@@ -44,10 +46,21 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   quickPick.show();
 
   try {
-    const { tags, versions } = await fetchPackageVersions(current.packageName, capability.packageFilePath);
+    const metadataOutcome = await fetchPackageMetadata(
+      current.packageName,
+      capability.packageFilePath,
+      abortController.signal,
+    );
     if (disposed) {
       return;
     }
+    if (metadataOutcome.kind !== 'success') {
+      quickPick.hide();
+      showVersionPickerError(current.packageName, metadataOutcome);
+      return;
+    }
+
+    const { distTags: tags, versions } = metadataOutcome.result;
 
     const fetchedCapability = await revalidateCommandPackageItem(capability, provider);
     if (fetchedCapability === undefined) {
