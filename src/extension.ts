@@ -52,7 +52,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.pinAllVersions', () => { void pinAllVersionsCommand(provider); }),
     vscode.commands.registerCommand('nestro.openOnNpm', (item: unknown) => { openOnNpmCommand(item); }),
     vscode.commands.registerCommand('nestro.copyPackageName', (item: unknown) => { copyPackageNameCommand(item); }),
-    vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
+    vscode.commands.registerCommand('nestro.setFilter', (type: unknown) => {
+      if (!isFilterType(type)) {
+        return;
+      }
+      provider.setFilter(type);
+    }),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
     vscode.commands.registerCommand('nestro.searchPackages', () => { void provider.showSearch(); }),
     vscode.commands.registerCommand('nestro.clearSearchQuery', () => { provider.clearSearch(); }),

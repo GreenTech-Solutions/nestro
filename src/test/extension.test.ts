@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   awaitTaskOutcome,
@@ -265,6 +265,51 @@ suite('command boundary smoke', function () {
       await restoreDeferredInstall();
     }
   });
+});
+
+// Smoke only: the extension exports no API, so a host test cannot read the active filter back.
+// The behavioural matrix lives in the unit suite, which can observe the provider call.
+suite('nestro.setFilter argument guard', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+
+  suiteSetup(async () => {
+    opened = await openTrackedFixture(fixture);
+    await vscode.commands.executeCommand('nestro.refresh');
+  });
+
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand('nestro.setFilter', 'all');
+    await closeIfOpen(opened);
+    opened = undefined;
+  });
+
+  const REJECTED_FILTER_VALUES: readonly { readonly label: string; readonly value: unknown }[] = [
+    { label: 'undefined', value: undefined },
+    { label: 'null', value: null },
+    { label: 'an empty string', value: '' },
+    { label: 'an arbitrary string', value: 'not-a-filter' },
+    { label: 'a number', value: 42 },
+    { label: 'a plain object', value: {} },
+  ];
+
+  for (const { label, value } of REJECTED_FILTER_VALUES) {
+    test(`survives ${label} without throwing, leaving the workspace refreshable`, async () => {
+      requireOpen(opened);
+      await vscode.commands.executeCommand('nestro.setFilter', value);
+      await vscode.commands.executeCommand('nestro.refresh');
+    });
+  }
+
+  for (const filterType of FILTER_TYPES) {
+    test(`accepts the valid "${filterType}" filter without throwing`, async () => {
+      requireOpen(opened);
+      await vscode.commands.executeCommand('nestro.setFilter', filterType);
+      await vscode.commands.executeCommand('nestro.refresh');
+    });
+  }
 });
 
 suite('Fixture Materialization', () => {
@@ -864,9 +909,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
 
   suiteTeardown(async () => {
     process.off('unhandledRejection', onUnhandledRejection);
-    // nestro.setFilter has no argument guard and silently accepts `undefined` (getFilteredEntries()
-    // in treeBuilder.ts tolerates an unrecognized filter by matching nothing) — restore the
-    // default so later runs of this file are not affected by this suite having executed.
+    // Explicit reset so later runs of this file see a known filter regardless of
+    // whichever command last ran in the loop above.
     await vscode.commands.executeCommand('nestro.setFilter', 'all');
     // nestro.searchPackages opens a real, non-modal InputBox that only
     // resolves on hide/accept; since its handler is fire-and-forget it is
