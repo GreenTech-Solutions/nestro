@@ -172,7 +172,7 @@ describe('package manager clients', () => {
       .toThrow(/cannot start with a hyphen/);
   });
 
-  it('rejects the crafted registry-flag operand from the SEC-02 red baseline', () => {
+  it('rejects a package name that starts with a registry flag', () => {
     expect(() => new NpmClient('/workspace').buildUpdateCommand([
       { name: '--registry=http://evil.test', version: '1.0.0', section: 'dependencies' },
     ])).toThrow(/cannot start with a hyphen/);
