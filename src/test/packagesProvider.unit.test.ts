@@ -12,6 +12,7 @@ import {
   PackageDetailItem,
   PackageItem,
   PackagesProvider,
+  resolvePackageFileLabels,
   SearchQueryItem,
   StatusItem,
   WorkspaceFolderItem,
@@ -139,6 +140,16 @@ vi.mock('../utils', async () => {
     runNpmAudit: vi.fn(),
     mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
     showError: vi.fn(),
+  };
+});
+
+// Wraps the real projection in a spy so tests can assert it runs once per manifest-set
+// change, not once per row — a regression back to per-row calls would fail those counts.
+vi.mock('../providers/treeBuilder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/treeBuilder')>();
+  return {
+    ...actual,
+    resolvePackageFileLabels: vi.fn(actual.resolvePackageFileLabels),
   };
 });
 
@@ -2332,6 +2343,150 @@ describe('PackagesProvider', () => {
       resolveFirstAudit(new Map([['react', 'high']]));
       await firstAudit;
     });
+  });
+
+  it('gives a package row an accessible workspace owner that matches the disambiguated tree label', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nestro-owner-label-'));
+    const firstRoot = join(root, 'team-a', 'app');
+    const secondRoot = join(root, 'team-b', 'app');
+    const firstManifest = join(firstRoot, 'package.json');
+    const secondManifest = join(secondRoot, 'package.json');
+    const previousFolders = vscode.workspace.workspaceFolders;
+    try {
+      await mkdir(firstRoot, { recursive: true });
+      await mkdir(secondRoot, { recursive: true });
+      await writeFile(firstManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
+      await writeFile(secondManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
+      // Neither folder declares a `name`, so both derive the same "app" folder name and
+      // can only be told apart by the same suffix disambiguation the tree/picker use.
+      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+        configurable: true,
+        value: [{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }],
+      });
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+        { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: firstManifest },
+        { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: secondManifest },
+      ]);
+      vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([firstManifest, secondManifest]);
+
+      const provider = new PackagesProvider(new FilterManager('all'));
+      await provider.loadPackages();
+
+      const folders = provider.getChildren()
+        .filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+      expect(folders.map(folder => folder.folderLabel)).toEqual(['team-a/app — (root)', 'team-b/app — (root)']);
+
+      const rows = folders
+        .flatMap(folder => folder.children)
+        .flatMap(group => group.children)
+        .filter((item): item is PackageItem => item instanceof PackageItem);
+
+      expect(rows).toHaveLength(2);
+      const ownerLabels = rows.map(item => item.accessibilityInformation?.label);
+      expect(ownerLabels[0]).toContain('Workspace owner: team-a/app — (root)');
+      expect(ownerLabels[1]).toContain('Workspace owner: team-b/app — (root)');
+      // The two roots share a folder name; a naive `folder.name` fallback would collide here.
+      expect(new Set(ownerLabels)).toHaveLength(2);
+
+      provider.dispose();
+    }
+    finally {
+      restoreWorkspaceFolders(previousFolders);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('computes the owner-label projection once per load, not once per row', async () => {
+    const manifestCount = 20;
+    const packagesPerManifest = 15;
+    const manifestPaths = Array.from(
+      { length: manifestCount },
+      (_, manifestIndex) => `/workspace/pkg-${manifestIndex}/package.json`,
+    );
+    const entries = manifestPaths.flatMap((packageFilePath, manifestIndex) => (
+      Array.from({ length: packagesPerManifest }, (_, packageIndex) => ({
+        name: `dep-${manifestIndex}-${packageIndex}`,
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath,
+      }))
+    ));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(entries);
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce(manifestPaths);
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    // A per-row lookup over manifestCount * packagesPerManifest rows would call the
+    // projection hundreds of times; caching it per load calls it exactly once, checked
+    // before the tree is ever rendered so buildTree()'s own (unrelated) call cannot hide it.
+    expect(vi.mocked(resolvePackageFileLabels)).toHaveBeenCalledTimes(1);
+
+    const rows = provider.getChildren()
+      .filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem)
+      .flatMap(folder => folder.children)
+      .flatMap(group => group.children)
+      .filter((item): item is PackageItem => item instanceof PackageItem);
+    expect(rows).toHaveLength(manifestCount * packagesPerManifest);
+
+    provider.dispose();
+  });
+
+  it('does not reuse a stale owner label after the manifest set changes', async () => {
+    const firstRoot = '/workspace/team-a/app';
+    const secondRoot = '/workspace/team-b/app';
+    const firstManifest = `${firstRoot}/package.json`;
+    const secondManifest = `${secondRoot}/package.json`;
+    const previousFolders = vscode.workspace.workspaceFolders;
+    try {
+      // First load: a single folder named "app" — no collision, no disambiguation needed.
+      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+        configurable: true,
+        value: [{ uri: { fsPath: firstRoot } }],
+      });
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+        { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: firstManifest },
+      ]);
+      vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([firstManifest]);
+
+      const provider = new PackagesProvider(new FilterManager('all'));
+      await provider.loadPackages();
+
+      const soloLabel = getPackageItems(provider)[0]?.accessibilityInformation?.label;
+      expect(soloLabel).toContain('Workspace owner: app — (root)');
+
+      // Second load on the same provider: a same-named sibling folder now collides,
+      // so the label cached for the single-folder load must not survive unchanged.
+      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+        configurable: true,
+        value: [{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }],
+      });
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+        { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: firstManifest },
+        { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: secondManifest },
+      ]);
+      vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([firstManifest, secondManifest]);
+
+      await provider.loadPackages();
+
+      const folders = provider.getChildren()
+        .filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+      const rows = folders
+        .flatMap(folder => folder.children)
+        .flatMap(group => group.children)
+        .filter((item): item is PackageItem => item instanceof PackageItem);
+      const labels = rows.map(item => item.accessibilityInformation?.label);
+
+      expect(labels[0]).toContain('Workspace owner: team-a/app — (root)');
+      expect(labels[1]).toContain('Workspace owner: team-b/app — (root)');
+      expect(labels[0]).not.toContain('Workspace owner: app — (root)');
+
+      provider.dispose();
+    }
+    finally {
+      restoreWorkspaceFolders(previousFolders);
+    }
   });
 });
 

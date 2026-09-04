@@ -21,6 +21,7 @@ const PACKAGE_CONTROL = new RegExp(
 
 export class PackageItem extends vscode.TreeItem {
   public readonly operation: PackageOperation | undefined;
+  public readonly workspaceOwner: string | undefined;
 
   constructor(
     public readonly packageName: string,
@@ -33,26 +34,34 @@ export class PackageItem extends vscode.TreeItem {
     public readonly dev = false,
     public readonly versionPrefix = '',
     public readonly releaseAge: ReleaseAgeState = { kind: 'accepted' },
+    workspaceOwner?: string,
   ) {
     const safePackageName = sanitizePackageText(packageName);
     const safeCurrentVersion = sanitizePackageText(currentVersion);
     const safeLatest = latest === undefined ? undefined : sanitizePackageText(latest);
+    const resolvedWorkspaceOwner = workspaceOwner ?? resolveWorkspaceOwner(packageFilePath);
     super(safePackageName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.workspaceOwner = resolvedWorkspaceOwner === undefined
+      ? undefined
+      : sanitizePackageText(resolvedWorkspaceOwner);
     this.operation = normalizeOperation(operation, latest ?? currentVersion);
     const hasUpdate = updateType !== 'none';
     const parsedSpec = parseDependencySpec(currentVersion);
-    this.description = this.operation === undefined
+    const baseDescription = this.operation === undefined
       ? hasUpdate
-        ? `${safeCurrentVersion} → ${safeLatest}`
+        ? `${safeCurrentVersion} → ${safeLatest ?? 'unavailable'}`
         : safeCurrentVersion
       : this.operation.kind === 'update'
         ? `${safeCurrentVersion} → ${sanitizePackageText(this.operation.target)}`
         : safeCurrentVersion;
+    this.description = hasUpdate
+      ? `${baseDescription} (${getUpdateTypeLabel(updateType)})`
+      : baseDescription;
     this.tooltip = this.operation === undefined
-      ? `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`
+      ? `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest ?? 'unavailable'})` : ''}`
       : getOperationTooltip(safePackageName, this.operation);
     if (this.operation === undefined && !parsedSpec.supported) {
-      this.tooltip = `${this.tooltip}\nPin unavailable: ${parsedSpec.reason}`;
+      this.tooltip = `${this.tooltip}\nPin unavailable: ${sanitizePackageText(parsedSpec.reason)}`;
     }
     const contextBase = this.operation === undefined ? hasUpdate ? 'outdated' : 'package' : `installing-${this.operation.kind}`;
     const pinCapability = this.operation === undefined ? parsedSpec.supported ? '-pinnable' : '-pin-unsupported' : '';
@@ -68,9 +77,9 @@ export class PackageItem extends vscode.TreeItem {
       this.tooltip = `${this.tooltip}\n${releaseAgeText}`;
     }
     const icons: Record<UpdateType, vscode.ThemeIcon> = {
-      breaking: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.red')),
+      breaking: new vscode.ThemeIcon('triangle-up', new vscode.ThemeColor('charts.red')),
       minor: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.yellow')),
-      patch: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.green')),
+      patch: new vscode.ThemeIcon('arrow-small-up', new vscode.ThemeColor('charts.green')),
       none: new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
     };
     this.iconPath = this.operation === undefined
@@ -78,6 +87,19 @@ export class PackageItem extends vscode.TreeItem {
         ? icons[updateType]
         : getVulnerabilityIcon(vulnerabilitySeverity)
       : getOperationIcon(this.operation);
+    this.accessibilityInformation = {
+      label: getAccessibilityLabel(
+        safePackageName,
+        safeCurrentVersion,
+        safeLatest,
+        updateType,
+        vulnerabilitySeverity,
+        this.operation,
+        this.workspaceOwner,
+        parsedSpec,
+        releaseAgeText,
+      ),
+    };
   }
 
   get installing(): boolean {
@@ -90,6 +112,75 @@ function normalizeOperation(operation: PackageOperationInput, defaultTarget: str
     return operation;
   }
   return operation ? { kind: 'update', target: defaultTarget } : undefined;
+}
+
+function resolveWorkspaceOwner(packageFilePath: string): string | undefined {
+  if (packageFilePath === '') {
+    return undefined;
+  }
+
+  try {
+    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath));
+    if (folder === undefined) {
+      return undefined;
+    }
+    return folder.name || folder.uri.fsPath.split(/[\\/]/).at(-1);
+  }
+  catch {
+    return undefined;
+  }
+}
+
+function getUpdateTypeLabel(updateType: UpdateType): string {
+  return updateType === 'none' ? 'up to date' : `${updateType} update`;
+}
+
+function getAccessibilityLabel(
+  packageName: string,
+  currentVersion: string,
+  latest: string | undefined,
+  updateType: UpdateType,
+  vulnerabilitySeverity: AuditSeverity | undefined,
+  operation: PackageOperation | undefined,
+  workspaceOwner: string | undefined,
+  parsedSpec: ReturnType<typeof parseDependencySpec>,
+  releaseAgeText: string | undefined,
+): string {
+  const details = [
+    `Package name: ${packageName}`,
+    `Current version: ${currentVersion}`,
+    `Latest version: ${latest ?? 'unavailable'}`,
+    `Update type: ${updateType}`,
+    vulnerabilitySeverity === undefined
+      ? 'Vulnerability: none detected'
+      : `Vulnerability: ${vulnerabilitySeverity}`,
+    operation === undefined
+      ? 'Active operation: none'
+      : `Active operation: ${getOperationAccessibilityText(operation)}`,
+    `Workspace owner: ${workspaceOwner ?? 'unavailable'}`,
+    operation === undefined
+      ? parsedSpec.supported
+        ? 'Pin capability: available'
+        : `Pin capability: unavailable — ${sanitizePackageText(parsedSpec.reason)}`
+      : 'Pin capability: unavailable while busy',
+    ...(releaseAgeText === undefined ? [] : [releaseAgeText]),
+  ];
+  return details.join('. ');
+}
+
+function getOperationAccessibilityText(operation: PackageOperation): string {
+  switch (operation.kind) {
+    case 'update':
+      return `update in progress to ${sanitizePackageText(operation.target)}`;
+    case 'remove':
+      return 'remove in progress';
+    case 'install':
+      return 'install in progress';
+    case 'pin':
+      return 'pin in progress';
+    case 'switch':
+      return 'dependency type switch in progress';
+  }
 }
 
 function getOperationTooltip(packageName: string, operation: PackageOperation): string {

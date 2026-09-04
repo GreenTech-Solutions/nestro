@@ -33,7 +33,7 @@ import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
-import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry, toWorkspaceFolderDescriptors } from './treeBuilder';
+import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './treeBuilder';
 import type { WorkspaceFolderDescriptor } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import {
@@ -191,6 +191,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly filterChangeDisposable: vscode.Disposable;
   private allEntries: PackageTreeEntry[] = [];
   private packageFilePaths: string[] = [];
+  /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
+  private ownerLabelCache: ReadonlyMap<string, string> | undefined;
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
   private readonly packageCapabilityRecords = new WeakMap<object, {
@@ -825,6 +827,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       }
       this.packageLocationBaselines = baselines;
       this.packageFilePaths = packageFilePaths;
+      this.ownerLabelCache = undefined;
       this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
@@ -1275,6 +1278,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       dev,
       versionPrefix,
       releaseAge,
+      this.resolveOwnerLabel(packageFilePath),
     );
     const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
     const row: CanonicalPackageItem = Object.freeze({
@@ -1292,6 +1296,38 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const baselineLocation = this.packageLocationBaselines.get(packageFilePath);
     this.packageItemRecords.set(item, Object.freeze({ identity, row, baselineLocation }));
     return item;
+  }
+
+  /** Same owner-qualified label the tree/picker show, so a row's accessible owner never diverges from it. */
+  private resolveOwnerLabel(packageFilePath: string): string | undefined {
+    if (packageFilePath === '') {
+      return undefined;
+    }
+    const cached = this.ownerLabels.get(packageFilePath);
+    if (cached !== undefined) {
+      return cached;
+    }
+    // Defensive: a manifest outside the tracked set resolves on its own instead of
+    // widening the cache every other row's lookup relies on.
+    const folders = this.workspaceFolderDescriptors;
+    if (folders.length === 0) {
+      return undefined;
+    }
+    return resolvePackageFileLabels([...this.packageFilePaths, packageFilePath], folders)
+      .find(entry => entry.packageFilePath === packageFilePath)?.owner.label;
+  }
+
+  /** Owner labels for the tracked manifest set; the projection runs once per `packageFilePaths` change, not per row. */
+  private get ownerLabels(): ReadonlyMap<string, string> {
+    if (this.ownerLabelCache === undefined) {
+      const folders = this.workspaceFolderDescriptors;
+      this.ownerLabelCache = folders.length === 0
+        ? new Map()
+        : new Map(resolvePackageFileLabels(this.packageFilePaths, folders).map(
+            entry => [entry.packageFilePath, entry.owner.label],
+          ));
+    }
+    return this.ownerLabelCache;
   }
 
   private issuePackageCapability(
