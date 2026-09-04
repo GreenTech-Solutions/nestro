@@ -17,6 +17,7 @@ import {
   readMinimumReleaseAgeDays,
   resolveMetadataRegistryKey,
   resolveUpdateReleaseAge,
+  resolveYarnFamily,
   showError,
 } from '../utils';
 import type { AuditSeverity, PackageMetadataOutcome, ReleaseAgeState, UpdateType } from '../utils';
@@ -99,6 +100,43 @@ interface CachedUpdateData {
 }
 
 const METADATA_CONCURRENCY_CAP = 4;
+
+/** Global workspace capabilities used by toolbar and Command Palette contexts. */
+export interface WorkspaceCapabilities {
+  readonly hasPackageFiles: boolean;
+  readonly hasReadablePackageFiles: boolean;
+  readonly hasDependencyEntries: boolean;
+  readonly hasAuditableProjects: boolean;
+  readonly canRunInstall: boolean;
+  readonly canRunAudit: boolean;
+  readonly canSearchPackages: boolean;
+  readonly canFilterPackages: boolean;
+  readonly canPinAllVersions: boolean;
+}
+
+const EMPTY_WORKSPACE_CAPABILITIES: WorkspaceCapabilities = Object.freeze({
+  hasPackageFiles: false,
+  hasReadablePackageFiles: false,
+  hasDependencyEntries: false,
+  hasAuditableProjects: false,
+  canRunInstall: false,
+  canRunAudit: false,
+  canSearchPackages: false,
+  canFilterPackages: false,
+  canPinAllVersions: false,
+});
+
+const WORKSPACE_CAPABILITY_CONTEXTS = {
+  hasPackageFiles: 'nestro.hasPackageFiles',
+  hasReadablePackageFiles: 'nestro.hasReadablePackageFiles',
+  hasDependencyEntries: 'nestro.hasDependencyEntries',
+  hasAuditableProjects: 'nestro.hasAuditableProjects',
+  canRunInstall: 'nestro.canRunInstall',
+  canRunAudit: 'nestro.canRunAudit',
+  canSearchPackages: 'nestro.canSearchPackages',
+  canFilterPackages: 'nestro.canFilterPackages',
+  canPinAllVersions: 'nestro.canPinAllVersions',
+} as const;
 
 interface MetadataLookup {
   readonly identity: PackageIdentityTuple;
@@ -193,6 +231,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private packageFilePaths: string[] = [];
   /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
   private ownerLabelCache: ReadonlyMap<string, string> | undefined;
+  private readablePackageFilePaths: string[] = [];
+  private workspaceCapabilities: WorkspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+  // True once a load has settled (success or failure) at least once. Global actions stay
+  // enabled while this is false so a command is never hidden just because the extension
+  // has not resolved real capabilities yet — see publishedWorkspaceCapabilities().
+  private capabilitiesInitialized = false;
+  private packageReadFailed = false;
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
   private readonly packageCapabilityRecords = new WeakMap<object, {
@@ -234,6 +279,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private failedAuditPaths: string[] = [];
   private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
+  private disposed = false;
   private updateCache: {
     data: Map<string, CachedUpdateData>;
     timestamp: number;
@@ -771,6 +817,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const abortController = new AbortController();
     this.loadAbortController = abortController;
     this.packageLocationBaselines = new Map();
+    this.packageFilePaths = [];
+    this.readablePackageFilePaths = [];
+    // workspaceCapabilities is intentionally left in place here: it still holds the last
+    // settled result (or the permissive pre-init default), so a reload never flashes global
+    // actions to disabled while it is in flight. It is only overwritten once this load settles.
+    this.packageReadFailed = false;
     this.loading = true;
     // A reload must not clear another operation's own running guard; only reset audit
     // state when no audit is currently in flight for it to own.
@@ -788,17 +840,26 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     try {
       const entries = await readAllWorkspaceDependencies();
       const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
-      if (entries.length > 0) {
-        try {
-          const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
-          packageFilePaths.push(...discoveredPackageFilePaths.filter(
-            packageFilePath => !packageFilePaths.includes(packageFilePath),
-          ));
-        }
-        catch {
-          logger.warn('Failed to discover workspace package files for labels; using loaded package entries.');
+      try {
+        const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
+        packageFilePaths.push(...discoveredPackageFilePaths.filter(
+          packageFilePath => !packageFilePaths.includes(packageFilePath),
+        ));
+      }
+      catch {
+        this.packageReadFailed = true;
+        logger.warn('Failed to discover workspace package files; using loaded package entries.');
+      }
+      const failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+      for (const packageFilePath of failedPackageReadPaths) {
+        if (!packageFilePaths.includes(packageFilePath)) {
+          packageFilePaths.push(packageFilePath);
         }
       }
+      const failedPackageReadPathSet = new Set(failedPackageReadPaths);
+      const readablePackageFilePaths = packageFilePaths.filter(
+        packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
+      );
       const baselines = new Map<string, CanonicalPackageLocation>();
       const canonicalManifestOwners = new Map<string, string>();
       const collidingManifestPaths = new Set<string>();
@@ -828,7 +889,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.packageLocationBaselines = baselines;
       this.packageFilePaths = packageFilePaths;
       this.ownerLabelCache = undefined;
-      this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+      this.readablePackageFilePaths = readablePackageFilePaths;
+      this.failedPackageReadPaths = failedPackageReadPaths;
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -873,12 +935,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           packageFilePath: e.packageFilePath,
         };
       });
+      const workspaceCapabilities = await this.resolveWorkspaceCapabilities(
+        packageFilePaths,
+        readablePackageFilePaths,
+        entries,
+      );
+      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
+        return;
+      }
+      this.workspaceCapabilities = workspaceCapabilities;
+      this.capabilitiesInitialized = true;
     }
     catch (err) {
       if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
       this.packageLocationBaselines = new Map();
+      this.packageFilePaths = [];
+      this.readablePackageFilePaths = [];
+      this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+      this.packageReadFailed = true;
+      this.capabilitiesInitialized = true;
       showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
     }
     finally {
@@ -1021,6 +1098,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
     for (const timer of this.writeSuppressionTimers) {
       clearTimeout(timer);
     }
@@ -1028,6 +1108,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.writeSuppressionDepth = 0;
     this.loadAbortController?.abort();
     this.cancelAudit();
+    this.disposed = true;
+    this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+    this.packageReadFailed = false;
+    this.setWorkspaceCapabilityContexts(EMPTY_WORKSPACE_CAPABILITIES);
+    void vscode.commands.executeCommand('setContext', 'nestro.canUpdateVisiblePackages', false);
+    void vscode.commands.executeCommand('setContext', 'nestro.noWorkspace', false);
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
   }
@@ -1248,12 +1334,41 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       'nestro.canUpdateVisiblePackages',
       this.getVisibleOutdatedPackages().length > 0,
     );
+    this.setWorkspaceCapabilityContexts(this.publishedWorkspaceCapabilities());
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.noWorkspace',
-      !this.loading && this.allEntries.length === 0 && this.failedPackageReadPaths.length === 0,
+      !this.loading && !this.workspaceCapabilities.hasPackageFiles && !this.packageReadFailed,
     );
     this._onDidChangeTreeData.fire();
+  }
+
+  /**
+   * Global actions (`can*`) publish as executable before the first load ever settles, since
+   * "not yet known" is not the same as "known impossible". `dispose()` bypasses this by
+   * calling setWorkspaceCapabilityContexts() directly, so teardown still publishes `false`.
+   */
+  private publishedWorkspaceCapabilities(): WorkspaceCapabilities {
+    if (this.capabilitiesInitialized) {
+      return this.workspaceCapabilities;
+    }
+    return {
+      ...this.workspaceCapabilities,
+      canRunInstall: true,
+      canRunAudit: true,
+      canSearchPackages: true,
+      canFilterPackages: true,
+      canPinAllVersions: true,
+    };
+  }
+
+  private setWorkspaceCapabilityContexts(capabilities: WorkspaceCapabilities): void {
+    for (const [capability, context] of Object.entries(WORKSPACE_CAPABILITY_CONTEXTS) as [
+      keyof WorkspaceCapabilities,
+      string,
+    ][]) {
+      void vscode.commands.executeCommand('setContext', context, capabilities[capability]);
+    }
   }
 
   private createPackageItem(
@@ -1552,13 +1667,77 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
   }
 
+  private async resolveWorkspaceCapabilities(
+    packageFilePaths: readonly string[],
+    readablePackageFilePaths: readonly string[],
+    entries: readonly { readonly packageFilePath: string }[],
+  ): Promise<WorkspaceCapabilities> {
+    const hasPackageFiles = packageFilePaths.length > 0;
+    const hasReadablePackageFiles = readablePackageFilePaths.length > 0;
+    const hasDependencyEntries = entries.length > 0;
+    let hasAuditableProjects = false;
+
+    if (hasReadablePackageFiles) {
+      try {
+        const { projects } = await resolveAuditProjects(readablePackageFilePaths);
+        for (const project of projects) {
+          if (await this.isAuditableProject(project)) {
+            hasAuditableProjects = true;
+            break;
+          }
+        }
+      }
+      catch {
+        logger.warn('Failed to resolve auditable workspace projects.');
+      }
+    }
+
+    return {
+      hasPackageFiles,
+      hasReadablePackageFiles,
+      hasDependencyEntries,
+      hasAuditableProjects,
+      canRunInstall: hasReadablePackageFiles,
+      canRunAudit: hasAuditableProjects,
+      canSearchPackages: hasDependencyEntries,
+      canFilterPackages: hasDependencyEntries,
+      canPinAllVersions: hasDependencyEntries,
+    };
+  }
+
+  private async isAuditableProject(project: AuditProject): Promise<boolean> {
+    if (project.lockfilePath === undefined) {
+      return false;
+    }
+    if (project.packageManager !== 'yarn') {
+      return true;
+    }
+
+    // A Yarn lock file alone does not identify a supported audit command. Keep the
+    // Audit action disabled when the family resolver cannot establish Classic or Modern.
+    if (typeof resolveYarnFamily !== 'function') {
+      return false;
+    }
+    try {
+      const resolution = await resolveYarnFamily(project.projectRoot);
+      return resolution.family !== 'unknown';
+    }
+    catch {
+      return false;
+    }
+  }
+
   private async getKnownPackageFilePaths(): Promise<string[]> {
     const knownPackageFilePaths = [...new Set(this.allEntries.map(entry => entry.packageFilePath).filter(Boolean))];
     if (knownPackageFilePaths.length > 0) {
       return knownPackageFilePaths;
     }
 
-    return await getWorkspacePackageFilePaths();
+    const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
+    const failedPackageReadPathSet = new Set(this.failedPackageReadPaths);
+    return discoveredPackageFilePaths.filter(
+      packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
+    );
   }
 
   private async readPackagesForUpdateCheck(): Promise<Awaited<ReturnType<typeof readAllWorkspaceDependencies>>> {
@@ -1824,6 +2003,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         `Fix invalid or unreadable package.json: ${this.failedPackageReadPaths.join(', ')}`,
         'warning',
         'charts.yellow',
+      ));
+    }
+    // A readable package.json with zero dependencies is a real project, not an empty
+    // workspace — without this row the panel would show nothing at all in that state.
+    else if (
+      this.workspaceCapabilities.hasPackageFiles
+      && !this.workspaceCapabilities.hasDependencyEntries
+      && !this.packageReadFailed
+    ) {
+      items.push(new StatusItem(
+        'No dependencies to manage',
+        'This package.json has no dependencies yet.',
+        'info',
       ));
     }
 

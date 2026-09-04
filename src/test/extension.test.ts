@@ -72,6 +72,7 @@ interface WorkspaceCapability {
 }
 
 interface ExtensionManifest {
+  readonly activationEvents: readonly string[];
   readonly capabilities: {
     readonly untrustedWorkspaces: WorkspaceCapability;
     readonly virtualWorkspaces: WorkspaceCapability;
@@ -80,6 +81,7 @@ interface ExtensionManifest {
     readonly commands: readonly ManifestCommand[];
     readonly menus: {
       readonly commandPalette: readonly ManifestMenuEntry[];
+      readonly 'view/title': readonly ManifestMenuEntry[];
       readonly 'view/item/context': readonly ManifestMenuEntry[];
     };
   };
@@ -767,6 +769,12 @@ suite('Manifest Contracts', () => {
     assert.strictEqual(getManifest().contributes.commands.length, 19);
   });
 
+  // Global commands gate on capability contexts published only after the provider's first
+  // load, so a workspace holding a package.json activates without opening the sidebar first.
+  test('activates on a package.json without waiting for the sidebar to open', () => {
+    assert.deepStrictEqual(getManifest().activationEvents, ['workspaceContains:package.json']);
+  });
+
   test('declares unsupported workspace modes and workspace-side execution', () => {
     const manifest = getManifest();
     assert.deepStrictEqual(manifest.capabilities, {
@@ -833,6 +841,14 @@ suite('Manifest Contracts', () => {
     'nestro.clearSearchQuery',
   ] as const;
 
+  const PALETTE_GATED_COMMANDS: Readonly<Record<string, string>> = {
+    'nestro.updateAllVisible': 'nestro.canUpdateVisiblePackages',
+    'nestro.runInstall': 'nestro.canRunInstall',
+    'nestro.searchPackages': 'nestro.canSearchPackages',
+    'nestro.runAudit': 'nestro.canRunAudit',
+    'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+  };
+
   test('row-only and contextual commands are hidden from the Command Palette', () => {
     const paletteEntries = getManifest().contributes.menus.commandPalette;
     for (const commandId of PALETTE_HIDDEN_COMMAND_IDS) {
@@ -842,9 +858,14 @@ suite('Manifest Contracts', () => {
     }
     assert.strictEqual(
       paletteEntries.length,
-      PALETTE_HIDDEN_COMMAND_IDS.length,
-      'every commandPalette override should be one of the hidden row-only/contextual commands',
+      PALETTE_HIDDEN_COMMAND_IDS.length + Object.keys(PALETTE_GATED_COMMANDS).length,
+      'every commandPalette override should be a hidden or capability-gated command',
     );
+    for (const [commandId, context] of Object.entries(PALETTE_GATED_COMMANDS)) {
+      const entry = paletteEntries.find(candidate => candidate.command === commandId);
+      assert.ok(entry, `${commandId} should have a capability-gated commandPalette entry`);
+      assert.strictEqual(entry.when, context, `${commandId} should use ${context}`);
+    }
   });
 
   test('every command still visible in the Command Palette carries the Nestro category', () => {
@@ -860,6 +881,32 @@ suite('Manifest Contracts', () => {
     const command = getManifest().contributes.commands.find(entry => entry.command === 'nestro.updateAllVisible');
     assert.ok(command, 'nestro.updateAllVisible should be a contributed command');
     assert.strictEqual(command.enablement, 'nestro.canUpdateVisiblePackages');
+  });
+
+  test('global actions expose their executable workspace capabilities', () => {
+    const commands = getManifest().contributes.commands;
+    for (const [commandId, context] of Object.entries({
+      'nestro.runInstall': 'nestro.canRunInstall',
+      'nestro.runAudit': 'nestro.canRunAudit',
+      'nestro.searchPackages': 'nestro.canSearchPackages',
+      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+    })) {
+      const command = commands.find(entry => entry.command === commandId);
+      assert.ok(command, `${commandId} should be a contributed command`);
+      assert.strictEqual(command.enablement, context);
+    }
+
+    const toolbarEntries = getManifest().contributes.menus['view/title'];
+    for (const [commandId, context] of Object.entries({
+      'nestro.runInstall': 'nestro.canRunInstall',
+      'nestro.runAudit': 'nestro.canRunAudit',
+      'nestro.searchPackages': 'nestro.canSearchPackages',
+      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+    })) {
+      const entry = toolbarEntries.find(candidate => candidate.command === commandId);
+      assert.ok(entry, `${commandId} should have a toolbar menu entry`);
+      assert.strictEqual(entry.when, `view == nestro.packagesView && ${context}`);
+    }
   });
 });
 

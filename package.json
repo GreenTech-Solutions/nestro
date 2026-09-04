@@ -47,7 +47,9 @@
     "Other",
     "Programming Languages"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "workspaceContains:package.json"
+  ],
   "main": "./out/extension.cjs",
   "contributes": {
     "viewsContainers": {
@@ -169,7 +171,8 @@
         "command": "nestro.runAudit",
         "title": "Run Security Audit",
         "category": "Nestro",
-        "icon": "$(shield)"
+        "icon": "$(shield)",
+        "enablement": "nestro.canRunAudit"
       },
       {
         "command": "nestro.openAuditReport",
@@ -213,7 +216,8 @@
         "command": "nestro.runInstall",
         "title": "Run Install",
         "category": "Nestro",
-        "icon": "$(terminal)"
+        "icon": "$(terminal)",
+        "enablement": "nestro.canRunInstall"
       },
       {
         "command": "nestro.openOnNpm",
@@ -237,7 +241,8 @@
         "command": "nestro.searchPackages",
         "title": "Search Packages",
         "category": "Nestro",
-        "icon": "$(search)"
+        "icon": "$(search)",
+        "enablement": "nestro.canSearchPackages"
       },
       {
         "command": "nestro.clearSearchQuery",
@@ -254,7 +259,8 @@
         "command": "nestro.pinAllVersions",
         "title": "Pin All Versions",
         "category": "Nestro",
-        "icon": "$(lock)"
+        "icon": "$(lock)",
+        "enablement": "nestro.canPinAllVersions"
       }
     ],
     "menus": {
@@ -298,6 +304,26 @@
         {
           "command": "nestro.clearSearchQuery",
           "when": "false"
+        },
+        {
+          "command": "nestro.updateAllVisible",
+          "when": "nestro.canUpdateVisiblePackages"
+        },
+        {
+          "command": "nestro.runInstall",
+          "when": "nestro.canRunInstall"
+        },
+        {
+          "command": "nestro.searchPackages",
+          "when": "nestro.canSearchPackages"
+        },
+        {
+          "command": "nestro.runAudit",
+          "when": "nestro.canRunAudit"
+        },
+        {
+          "command": "nestro.pinAllVersions",
+          "when": "nestro.canPinAllVersions"
         }
       ],
       "view/title": [
@@ -318,7 +344,7 @@
         },
         {
           "command": "nestro.runInstall",
-          "when": "view == nestro.packagesView",
+          "when": "view == nestro.packagesView && nestro.canRunInstall",
           "group": "navigation"
         },
         {
@@ -328,17 +354,17 @@
         },
         {
           "command": "nestro.searchPackages",
-          "when": "view == nestro.packagesView",
+          "when": "view == nestro.packagesView && nestro.canSearchPackages",
           "group": "2_advanced@1"
         },
         {
           "command": "nestro.runAudit",
-          "when": "view == nestro.packagesView",
+          "when": "view == nestro.packagesView && nestro.canRunAudit",
           "group": "2_advanced@2"
         },
         {
           "command": "nestro.pinAllVersions",
-          "when": "view == nestro.packagesView",
+          "when": "view == nestro.packagesView && nestro.canPinAllVersions",
           "group": "2_advanced@3"
         }
       ],
