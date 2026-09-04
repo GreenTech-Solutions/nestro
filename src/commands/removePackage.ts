@@ -49,7 +49,7 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
       return;
     }
 
-    let activeCapability: ResolvedPackageItem | undefined = checked;
+    let activeCapability: ResolvedPackageItem | undefined;
     try {
       const client = await clientManager.getClient(checked.packageDirectory);
       const beforeTask = await revalidateCommandPackageItem(checked, provider);
@@ -57,7 +57,7 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
         activeCapability = undefined;
         return;
       }
-      activeCapability = provider.markPackageUpdatingForCapability(beforeTask, true);
+      activeCapability = provider.markPackageUpdatingForCapability(beforeTask, { kind: 'remove' });
       if (activeCapability === undefined) {
         return;
       }
@@ -70,13 +70,13 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
         await provider.loadPackages();
         return;
       }
-      provider.markPackageUpdatingForCapability(activeCapability, false);
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       showError(formatShellTaskFailureMessage(taskName, exitCode));
       await provider.loadPackages();
     }
     catch (err) {
       if (activeCapability !== undefined) {
-        provider.markPackageUpdatingForCapability(activeCapability, false);
+        provider.markPackageUpdatingForCapability(activeCapability, undefined);
       }
       showError(`failed to remove package — ${err instanceof Error ? err.message : String(err)}`, err);
     }

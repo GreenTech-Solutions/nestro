@@ -37,6 +37,11 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
       return;
     }
 
+    const activeCapability = provider.markPackageUpdatingForCapability(checked, { kind: 'pin' });
+    if (activeCapability === undefined) {
+      return;
+    }
+
     try {
       const shouldPin = parsed.range !== 'exact';
       logger.info(`${shouldPin ? 'Pinning' : 'Unpinning'} ${checked.item.packageName} version.`);
@@ -49,9 +54,11 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
           shouldPin,
         );
       });
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       await provider.loadPackages();
     }
     catch (err) {
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       if (err instanceof VersionPinConflictError) {
         showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
         return;

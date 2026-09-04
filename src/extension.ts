@@ -47,7 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.switchDepType', (item: unknown) => { void switchDepTypeCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pinVersion', (item: unknown) => { void pinVersionCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.removePackage', (item: unknown) => { void removePackageCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
+    vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(provider); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
     vscode.commands.registerCommand('nestro.pinAllVersions', () => { void pinAllVersionsCommand(provider); }),
     vscode.commands.registerCommand('nestro.openOnNpm', (item: unknown) => { openOnNpmCommand(item); }),

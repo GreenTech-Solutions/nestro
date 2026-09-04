@@ -77,7 +77,7 @@ function makeCapability(currentVersion: string): ResolvedPackageItem {
       currentVersion,
       latest: undefined,
       updateType: 'none',
-      installing: false,
+      operation: undefined,
       vulnerabilitySeverity: undefined,
       packageFilePath,
       dev: false,
@@ -111,6 +111,7 @@ function makeProvider(
       return await fn();
     }),
     loadPackages: vi.fn(),
+    markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
   } as unknown as PackagesProvider;
   return { provider, revalidate, beforeWrite };
 }

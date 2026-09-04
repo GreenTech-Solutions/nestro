@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { AuditSeverity, ReleaseAgeState, UpdateType } from '../utils';
+import type { PackageOperation } from './PackageItem';
 
 export type PackageDependencySection = 'dependencies' | 'devDependencies';
 
@@ -12,7 +13,7 @@ export interface CanonicalPackageItem {
   readonly currentVersion: string;
   readonly latest: string | undefined;
   readonly updateType: UpdateType;
-  readonly installing: boolean;
+  readonly operation: PackageOperation | undefined;
   readonly vulnerabilitySeverity: AuditSeverity | undefined;
   readonly packageFilePath: string;
   readonly dev: boolean;

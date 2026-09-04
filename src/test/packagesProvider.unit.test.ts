@@ -610,7 +610,7 @@ describe('PackagesProvider', () => {
 
     expect(react?.latest).toBe('19.0.0');
     expect(react?.installing).toBe(true);
-    expect(react?.contextValue).toBe('installing');
+    expect(react?.contextValue).toBe('installing-update');
   });
 
   it('keeps write suppression active for overlapping suppressed writes', async () => {
@@ -854,7 +854,7 @@ describe('PackagesProvider', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
     setProviderState(provider, {
       allEntries: [{
-        item: new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+        item: new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', undefined, undefined, '/workspace/package.json', false, '^'),
         dev: false,
         packageFilePath: '/workspace/package.json',
       }],
@@ -918,7 +918,7 @@ describe('PackagesProvider', () => {
       packageName: 'react',
       packageFilePath: '/workspace/packages/ui/package.json',
       section: 'dependencies',
-    }, true);
+    }, { kind: 'update', target: '18.3.1' });
     provider.markPackageUpdated({
       packageName: 'react',
       packageFilePath: '',
@@ -928,25 +928,25 @@ describe('PackagesProvider', () => {
       packageName: 'react',
       packageFilePath: '',
       section: 'dependencies',
-    }, false);
+    }, undefined);
 
     const entries = (provider as unknown as { allEntries: { item: PackageItem }[] }).allEntries;
 
     expect(entries.map(entry => ({
       currentVersion: entry.item.currentVersion,
-      installing: entry.item.installing,
+      operation: entry.item.operation,
       packageFilePath: entry.item.packageFilePath,
       updateType: entry.item.updateType,
     }))).toEqual([
       {
         currentVersion: '^18.0.0',
-        installing: false,
+        operation: undefined,
         packageFilePath: '/workspace/apps/web/package.json',
         updateType: 'breaking',
       },
       {
         currentVersion: '~18.3.1',
-        installing: true,
+        operation: { kind: 'update', target: '18.3.1' },
         packageFilePath: '/workspace/packages/ui/package.json',
         updateType: 'none',
       },
@@ -978,26 +978,26 @@ describe('PackagesProvider', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'devDependencies',
-    }, true);
+    }, { kind: 'update', target: '19.0.0' });
 
     let packages = getPackageItems(provider);
     expect(packages.map(item => ({
       currentVersion: item.currentVersion,
       dev: item.dev,
-      installing: item.installing,
+      operation: item.operation,
     }))).toEqual([
-      { currentVersion: '^18.0.0', dev: false, installing: false },
-      { currentVersion: '~18.1.0', dev: true, installing: true },
+      { currentVersion: '^18.0.0', dev: false, operation: undefined },
+      { currentVersion: '~18.1.0', dev: true, operation: { kind: 'update', target: '19.0.0' } },
     ]);
 
     await provider.loadPackages();
     packages = getPackageItems(provider);
     expect(packages.map(item => ({
       dev: item.dev,
-      installing: item.installing,
+      operation: item.operation,
     }))).toEqual([
-      { dev: false, installing: false },
-      { dev: true, installing: true },
+      { dev: false, operation: undefined },
+      { dev: true, operation: { kind: 'update', target: '19.0.0' } },
     ]);
 
     provider.markPackageUpdated({
@@ -1010,11 +1010,11 @@ describe('PackagesProvider', () => {
     expect(packages.map(item => ({
       currentVersion: item.currentVersion,
       dev: item.dev,
-      installing: item.installing,
+      operation: item.operation,
       updateType: item.updateType,
     }))).toEqual([
-      { currentVersion: '^18.0.0', dev: false, installing: false, updateType: 'breaking' },
-      { currentVersion: '~19.0.0', dev: true, installing: false, updateType: 'none' },
+      { currentVersion: '^18.0.0', dev: false, operation: undefined, updateType: 'breaking' },
+      { currentVersion: '~19.0.0', dev: true, operation: undefined, updateType: 'none' },
     ]);
   });
 
@@ -1027,7 +1027,7 @@ describe('PackagesProvider', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, true);
+    }, { kind: 'update', target: '19.0.0' });
 
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
@@ -1045,7 +1045,7 @@ describe('PackagesProvider', () => {
       currentVersion: '19.0.0',
       latest: '19.0.0',
       updateType: 'breaking',
-      installing: true,
+      operation: { kind: 'update', target: '19.0.0' },
     });
     expect(provider.getVisibleOutdatedPackages()).toEqual([]);
 
@@ -1053,14 +1053,14 @@ describe('PackagesProvider', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
 
     react = getPackageItems(provider).find(item => item.packageName === 'react');
     expect(react).toMatchObject({
       currentVersion: '19.0.0',
       latest: '19.0.0',
       updateType: 'none',
-      installing: false,
+      operation: undefined,
     });
     expect(provider.getVisibleOutdatedPackages()).toEqual([]);
   });
@@ -1075,7 +1075,7 @@ describe('PackagesProvider', () => {
       packageFilePath: '/workspace/package.json',
       section: 'dependencies' as const,
     };
-    provider.markPackageUpdating(identity, true);
+    provider.markPackageUpdating(identity, { kind: 'update', target: '19.0.0' });
 
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
       {
@@ -1094,9 +1094,9 @@ describe('PackagesProvider', () => {
       currentVersion: item.currentVersion,
       latest: item.latest,
       updateType: item.updateType,
-      installing: item.installing,
+      operation: item.operation,
     }))).toEqual([
-      { currentVersion: '19.0.0', latest: undefined, updateType: 'none', installing: false },
+      { currentVersion: '19.0.0', latest: undefined, updateType: 'none', operation: undefined },
     ]);
   });
 
@@ -1170,7 +1170,7 @@ describe('PackagesProvider', () => {
       packageName: 'installing',
       packageFilePath,
       section: 'dependencies',
-    }, true);
+    }, { kind: 'update', target: '2.0.0' });
     await provider.runAudit();
 
     const rows = new Map(getPackageItems(provider).map(item => [item.packageName, item]));
@@ -2676,17 +2676,17 @@ describe('package identity boundary', () => {
       }
       await expect(provider.revalidatePackageItem(resolved.value)).resolves.toMatchObject({ ok: true });
 
-      const active = provider.markPackageUpdatingForCapability(resolved.value, true);
+      const active = provider.markPackageUpdatingForCapability(resolved.value, { kind: 'update', target: '1.0.0' });
       expect(active).toBeDefined();
       if (active === undefined) {
         throw new Error('expected an active capability');
       }
-      const inactive = provider.markPackageUpdatingForCapability(active, false);
+      const inactive = provider.markPackageUpdatingForCapability(active, undefined);
       expect(inactive).toBeDefined();
       if (inactive === undefined) {
         throw new Error('expected a replacement capability');
       }
-      expect(provider.markPackageUpdatingForCapability(resolved.value, true)).toBeUndefined();
+      expect(provider.markPackageUpdatingForCapability(resolved.value, { kind: 'update', target: '1.0.0' })).toBeUndefined();
       await expect(provider.reissuePackageCapability(inactive)).resolves.toBeDefined();
 
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.1' } }));
@@ -3082,12 +3082,12 @@ describe('update fingerprint', () => {
     });
     const check = provider.checkUpdates();
     await fetchGate;
-    provider.markPackageUpdating({ packageName: 'react', packageFilePath: manifest, section: 'dependencies' }, true);
+    provider.markPackageUpdating({ packageName: 'react', packageFilePath: manifest, section: 'dependencies' }, { kind: 'update', target: '2.0.0' });
     releaseFetch(new Map([['react', '3.0.0']]));
     await check;
 
     const react = getPackageItems(provider).find(item => item.packageName === 'react');
-    expect(react?.installing).toBe(true);
+    expect(react?.operation).toEqual({ kind: 'update', target: '2.0.0' });
     expect(react?.latest).toBe('2.0.0');
   });
 

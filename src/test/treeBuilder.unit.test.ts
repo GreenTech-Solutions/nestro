@@ -18,6 +18,7 @@ import {
   WorkspaceFolderItem,
 } from '../providers';
 import * as vscode from 'vscode';
+import type { PackageOperation } from '../providers';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
@@ -690,7 +691,7 @@ describe('path normalization', () => {
 describe('getFilterCounts', () => {
   it('excludes installing packages from update-related counters but keeps them in all', () => {
     expect(getFilterCounts([
-      makeEntry('patch-installing', '1.0.0', '1.0.1', 'patch', false, '/workspace/package.json', true),
+      makeEntry('patch-installing', '1.0.0', '1.0.1', 'patch', false, '/workspace/package.json', { kind: 'update', target: '1.0.1' }),
       makeEntry('minor-ready', '1.0.0', '1.1.0', 'minor', false),
       makeEntry('breaking-ready', '1.0.0', '2.0.0', 'breaking', false),
       makeEntry('current', '1.0.0', undefined, 'none', false),
@@ -711,10 +712,10 @@ function makeEntry(
   updateType: PackageTreeEntry['item']['updateType'],
   dev: boolean,
   packageFilePath = '/workspace/package.json',
-  installing = false,
+  operation: PackageOperation | undefined = undefined,
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType, installing, undefined, packageFilePath),
+    item: new PackageItem(name, current, latest, updateType, operation, undefined, packageFilePath),
     dev,
     packageFilePath,
   };

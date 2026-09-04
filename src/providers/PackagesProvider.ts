@@ -28,6 +28,7 @@ import type {
 } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { isPackageItem, PackageItem, sanitizePackageText } from './PackageItem';
+import type { PackageOperation } from './PackageItem';
 import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
@@ -103,6 +104,8 @@ interface MetadataLookup {
   readonly identity: PackageIdentityTuple;
   readonly key: string;
 }
+
+type PackageOperationInput = PackageOperation | boolean | undefined;
 
 async function fetchMetadataOutcomes(
   identities: readonly PackageIdentityTuple[],
@@ -450,7 +453,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     return getFilteredEntries(this.allEntries, this.filterManager.current, this.filterManager.search)
       .map(entry => entry.item)
-      .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
+      .filter(item => item.updateType !== 'none' && item.latest !== undefined && item.operation === undefined);
+  }
+
+  getPackageIdentitiesForFile(packageFilePath: string): PackageStateIdentity[] {
+    return this.allEntries
+      .filter(entry => entry.packageFilePath === packageFilePath)
+      .map(entry => this.packageItemRecords.get(entry.item)?.identity)
+      .filter((identity): identity is PackageStateIdentity => identity !== undefined);
   }
 
   markPackageUpdated(identity: PackageStateIdentity, newVersion: string): void {
@@ -466,7 +476,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.versionPrefix + newVersion,
         undefined,
         'none',
-        false,
+        undefined,
         entryPackageFilePath,
         dev,
         item.versionPrefix,
@@ -496,7 +506,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         row.versionPrefix + newVersion,
         undefined,
         'none',
-        false,
+        undefined,
         row.packageFilePath,
         row.dev,
         row.versionPrefix,
@@ -515,7 +525,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         undefined,
         'none',
-        item.installing,
+        item.operation,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -532,14 +542,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     logger.info('Update cache invalidated.');
   }
 
-  markPackageUpdating(identity: PackageStateIdentity, installing: boolean): void {
+  markPackageUpdating(identity: PackageStateIdentity, operation: PackageOperationInput): void {
     const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
 
     const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
-    const updateType = installing || item.latest === undefined
+    const activeOperation = normalizeOperation(operation, item.latest ?? item.currentVersion);
+    const updateType = activeOperation !== undefined || item.latest === undefined
       ? item.updateType
       : getUpdateType(item.currentVersion, item.latest);
     this.allEntries[index] = {
@@ -548,7 +559,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         item.latest,
         updateType,
-        installing,
+        activeOperation,
         entryPackageFilePath,
         dev,
         item.versionPrefix,
@@ -567,7 +578,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    */
   markPackageUpdatingForCapability(
     capability: ResolvedPackageItem,
-    installing: boolean,
+    operation: PackageOperationInput,
   ): ResolvedPackageItem | undefined {
     const record = this.getCurrentCapabilityRecord(capability);
     if (record === undefined) {
@@ -585,7 +596,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const previousEntry = currentEntry;
     const previousRecord = currentRecord;
     const row = currentRecord.row;
-    const updateType = installing || row.latest === undefined
+    const activeOperation = normalizeOperation(operation, row.latest ?? row.currentVersion);
+    const updateType = activeOperation !== undefined || row.latest === undefined
       ? row.updateType
       : getUpdateType(row.currentVersion, row.latest);
     this.allEntries[index] = {
@@ -594,7 +606,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         row.currentVersion,
         row.latest,
         updateType,
-        installing,
+        activeOperation,
         row.packageFilePath,
         row.dev,
         row.versionPrefix,
@@ -653,7 +665,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             row.currentVersion,
             row.latest,
             row.updateType,
-            originalRecord.row.installing,
+            originalRecord.row.operation,
             row.packageFilePath,
             row.dev,
             row.versionPrefix,
@@ -834,7 +846,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
         const newSemver = e.current.slice(e.versionPrefix.length);
         const preserveExistingUpdateState = existing !== undefined
-          && (existing.item.installing || existingSemver === newSemver);
+          && (existing.item.operation !== undefined || existingSemver === newSemver);
         if (preserveExistingUpdateState) {
           return {
             item: this.createPackageItem(
@@ -842,7 +854,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               e.current,
               existing.item.latest,
               existing.item.updateType,
-              existing.item.installing,
+              existing.item.operation,
               e.packageFilePath,
               e.dev,
               e.versionPrefix,
@@ -853,7 +865,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           };
         }
         return {
-          item: this.createPackageItem(e.name, e.current, undefined, 'none', false, e.packageFilePath, e.dev, e.versionPrefix),
+          item: this.createPackageItem(e.name, e.current, undefined, 'none', undefined, e.packageFilePath, e.dev, e.versionPrefix),
           dev: e.dev,
           packageFilePath: e.packageFilePath,
         };
@@ -962,7 +974,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               entry.current,
               undefined,
               'none',
-              false,
+              undefined,
               entry.packageFilePath,
               entry.dev,
               entry.versionPrefix,
@@ -982,7 +994,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             item.currentVersion,
             latest,
             updateType,
-            item.installing,
+            item.operation,
             packageFilePath,
             dev,
             item.versionPrefix,
@@ -1246,7 +1258,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     currentVersion: string,
     latest: string | undefined,
     updateType: UpdateType,
-    installing = false,
+    operation: PackageOperation | undefined = undefined,
     packageFilePath = '',
     dev = false,
     versionPrefix = '',
@@ -1257,7 +1269,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       currentVersion,
       latest,
       updateType,
-      installing,
+      operation,
       this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
       packageFilePath,
       dev,
@@ -1270,7 +1282,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       currentVersion,
       latest,
       updateType,
-      installing,
+      operation,
       vulnerabilitySeverity: this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
       packageFilePath,
       dev,
@@ -1321,7 +1333,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         item.latest,
         item.updateType,
-        item.installing,
+        item.operation,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -1340,7 +1352,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const outdatedCount = this.allEntries.filter(e => (
       e.item.updateType !== 'none'
       && e.item.latest !== undefined
-      && !e.item.installing
+      && e.item.operation === undefined
     )).length;
     this.treeView.badge = outdatedCount > 0
       ? { tooltip: `${outdatedCount} package updates available`, value: outdatedCount }
@@ -2012,4 +2024,11 @@ function cloneAdvisorySnapshot(advisory: AuditAdvisory): AuditAdvisory {
       ? { ...advisory.fixAvailable }
       : advisory.fixAvailable,
   };
+}
+
+function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
+  if (typeof operation !== 'boolean') {
+    return operation;
+  }
+  return operation ? { kind: 'update', target: defaultTarget } : undefined;
 }

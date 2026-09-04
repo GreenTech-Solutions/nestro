@@ -29,6 +29,11 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
       return;
     }
 
+    const activeCapability = provider.markPackageUpdatingForCapability(checked, { kind: 'switch' });
+    if (activeCapability === undefined) {
+      return;
+    }
+
     try {
       logger.info(`Switching ${checked.item.packageName} dependency type.`);
       await provider.withWriteSuppressed(async () => {
@@ -39,9 +44,11 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
           checked.item.currentVersion,
         );
       });
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       await provider.loadPackages();
     }
     catch (err) {
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       if (err instanceof DependencyTypeConflictError) {
         showError(err.message);
         return;

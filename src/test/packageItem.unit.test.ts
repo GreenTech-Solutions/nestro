@@ -9,16 +9,33 @@ describe('PackageItem', () => {
     expect(item.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
   });
 
-  it('uses a spinner context while an update is installing', () => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', true);
+  it.each([
+    ['update', { kind: 'update', target: '5.9.3' }, 'Updating typescript to 5.9.3', 'arrow-up'],
+    ['remove', { kind: 'remove' }, 'Removing typescript', 'trash'],
+    ['install', { kind: 'install' }, 'Installing typescript', 'cloud-download'],
+    ['pin', { kind: 'pin' }, 'Pinning typescript version', 'lock'],
+    ['switch', { kind: 'switch' }, 'Switching typescript dependency type', 'arrow-swap'],
+  ] as const)('renders a %s operation with its own busy presentation', (_kind, operation, tooltip, icon) => {
+    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', operation);
 
-    expect(item.contextValue).toBe('installing');
+    expect(item.operation).toEqual(operation);
+    expect(item.contextValue).toBe(`installing-${operation.kind}`);
+    expect(item.tooltip).toBe(tooltip);
+    expect(item.description).not.toContain('undefined');
     expect(item.iconPath).toBeInstanceOf(vscode.ThemeIcon);
-    expect((item.iconPath as vscode.ThemeIcon).id).toBe('loading~spin');
+    expect((item.iconPath as vscode.ThemeIcon).id).toBe(icon);
+  });
+
+  it('does not render a version target while removing a package', () => {
+    const item = new PackageItem('pkg', '^1.0.0', undefined, 'none', { kind: 'remove' });
+
+    expect(item.description).toBe('^1.0.0');
+    expect(item.tooltip).toBe('Removing pkg');
+    expect(item.description).not.toContain('undefined');
   });
 
   it('adds vulnerability context and warning icon for vulnerable packages', () => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, 'high');
+    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', undefined, 'high');
 
     expect(item.contextValue).toContain('vulnerable-high');
     expect(item.description).toContain('vulnerability: high');
@@ -63,9 +80,9 @@ describe('PackageItem', () => {
   });
 
   it('keeps the installing context contract while an unsupported spec is busy', () => {
-    const item = new PackageItem('pkg', 'workspace:*', '1.0.0', 'minor', true);
+    const item = new PackageItem('pkg', 'workspace:*', '1.0.0', 'minor', { kind: 'update', target: '1.0.0' });
 
-    expect(item.contextValue).toBe('installing');
+    expect(item.contextValue).toBe('installing-update');
     expect(item.tooltip).not.toContain('Pin unavailable:');
   });
 
@@ -75,7 +92,7 @@ describe('PackageItem', () => {
       '^5.0.0',
       '5.9.3',
       'minor',
-      false,
+      undefined,
       undefined,
       '/workspace/package.json',
       false,
@@ -93,7 +110,7 @@ describe('PackageItem', () => {
       '^5.0.0',
       '5.9.3',
       'minor',
-      false,
+      undefined,
       undefined,
       '/workspace/package.json',
       false,

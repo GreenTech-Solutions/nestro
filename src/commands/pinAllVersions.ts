@@ -22,6 +22,10 @@ export async function pinAllVersionsCommand(provider: PackagesProvider): Promise
     await mutationCoordinator.runManyExclusive(projectKeys, async () => {
       let count = 0;
       let skippedFiles: readonly string[] = [];
+      const activeIdentities = packageFilePaths.flatMap(packageFilePath => (
+        provider.getPackageIdentitiesForFile?.(packageFilePath) ?? []
+      ));
+      activeIdentities.forEach(identity => provider.markPackageUpdating(identity, { kind: 'pin' }));
       // Set only after withWriteSuppressed() fully returns, so a throw anywhere in
       // that call — including its own post-write bookkeeping, not just the pin work
       // itself — is treated as a failure rather than inferred from a stray variable.
@@ -33,6 +37,7 @@ export async function pinAllVersionsCommand(provider: PackagesProvider): Promise
         succeeded = true;
       }
       finally {
+        activeIdentities.forEach(identity => provider.markPackageUpdating(identity, undefined));
         if (!succeeded) {
           // The bulk write may have applied to a subset of files even though it tries
           // to roll itself back; reconcile from disk. A reload failure here is logged,

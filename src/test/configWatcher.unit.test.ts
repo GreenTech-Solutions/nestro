@@ -179,7 +179,7 @@ describe('PackagesProvider.resetUpdateData()', () => {
 
     await provider.loadPackages();
     await provider.checkUpdates();
-    provider.markPackageUpdating(identity, true);
+    provider.markPackageUpdating(identity, { kind: 'update', target: '19.0.0' });
     provider.resetUpdateData();
 
     const packages = provider.getChildren()
@@ -189,7 +189,7 @@ describe('PackagesProvider.resetUpdateData()', () => {
     expect(packages.find(item => item.packageName === 'react')).toMatchObject({
       latest: undefined,
       updateType: 'none',
-      installing: true,
+      operation: { kind: 'update', target: '19.0.0' },
     });
   });
 });

@@ -20,7 +20,9 @@ const identityMocks = vi.hoisted(() => {
       currentVersion: item.currentVersion ?? '',
       latest: item.latest,
       updateType: 'none' as const,
-      installing: item.installing ?? false,
+      operation: item.installing
+        ? { kind: 'update' as const, target: item.latest ?? item.currentVersion ?? '' }
+        : undefined,
       vulnerabilitySeverity: undefined,
       packageFilePath: item.packageFilePath,
       dev: item.dev,
@@ -159,12 +161,12 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, true);
+    }, { kind: 'update', target: '5.9.3' });
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('shows an error when an update task exits with a non-zero code', async () => {
@@ -185,7 +187,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('shows an error when an update task ends without an exit code', async () => {
@@ -206,7 +208,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('clears package update progress when starting the task throws', async () => {
@@ -228,7 +230,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('rejects an option-shaped manifest key before the update task ever launches', async () => {
@@ -553,7 +555,7 @@ describe('installUpdateCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, false);
+    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, undefined);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
@@ -592,7 +594,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('preserves devDependencies when updating through the package manager', async () => {
@@ -686,6 +688,24 @@ describe('runInstallCommand()', () => {
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.commandLine).toBe(command);
     expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('marks every row in the selected manifest while install runs', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+    const provider = makeProvider([]);
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+
+    await runInstallCommand(provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenNthCalledWith(1, identity, { kind: 'install' });
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
   });
 
   it('asks for a package root when the workspace has multiple package.json files', async () => {
@@ -1054,12 +1074,12 @@ describe('updateAllVisibleCommand()', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(provider.markPackageUpdating).toHaveBeenCalledWith({
       packageName: 'vite',
       packageFilePath: '/workspace/apps/web/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: failed to update packages — second write failed',
     );
@@ -1411,7 +1431,7 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, false);
+    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, undefined);
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 

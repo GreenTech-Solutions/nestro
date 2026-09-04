@@ -1,6 +1,15 @@
 import * as vscode from 'vscode';
 import { AuditSeverity, parseDependencySpec, ReleaseAgeState, UpdateType } from '../utils';
 
+export type PackageOperation
+  = | { readonly kind: 'update'; readonly target: string }
+    | { readonly kind: 'remove' }
+    | { readonly kind: 'install' }
+    | { readonly kind: 'pin' }
+    | { readonly kind: 'switch' };
+
+type PackageOperationInput = PackageOperation | boolean | undefined;
+
 const PACKAGE_ANSI_ESCAPE = new RegExp(
   `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
   'g',
@@ -11,12 +20,14 @@ const PACKAGE_CONTROL = new RegExp(
 );
 
 export class PackageItem extends vscode.TreeItem {
+  public readonly operation: PackageOperation | undefined;
+
   constructor(
     public readonly packageName: string,
     public readonly currentVersion: string,
     public readonly latest: string | undefined,
     public readonly updateType: UpdateType,
-    public readonly installing = false,
+    operation: PackageOperationInput = undefined,
     public readonly vulnerabilitySeverity: AuditSeverity | undefined = undefined,
     public readonly packageFilePath = '',
     public readonly dev = false,
@@ -27,17 +38,24 @@ export class PackageItem extends vscode.TreeItem {
     const safeCurrentVersion = sanitizePackageText(currentVersion);
     const safeLatest = latest === undefined ? undefined : sanitizePackageText(latest);
     super(safePackageName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.operation = normalizeOperation(operation, latest ?? currentVersion);
     const hasUpdate = updateType !== 'none';
     const parsedSpec = parseDependencySpec(currentVersion);
-    this.description = hasUpdate ? `${safeCurrentVersion} → ${safeLatest}` : safeCurrentVersion;
-    this.tooltip = installing
-      ? `Updating ${safePackageName} to ${safeLatest}`
-      : `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`;
-    if (!installing && !parsedSpec.supported) {
+    this.description = this.operation === undefined
+      ? hasUpdate
+        ? `${safeCurrentVersion} → ${safeLatest}`
+        : safeCurrentVersion
+      : this.operation.kind === 'update'
+        ? `${safeCurrentVersion} → ${sanitizePackageText(this.operation.target)}`
+        : safeCurrentVersion;
+    this.tooltip = this.operation === undefined
+      ? `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`
+      : getOperationTooltip(safePackageName, this.operation);
+    if (this.operation === undefined && !parsedSpec.supported) {
       this.tooltip = `${this.tooltip}\nPin unavailable: ${parsedSpec.reason}`;
     }
-    const contextBase = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
-    const pinCapability = installing ? '' : parsedSpec.supported ? '-pinnable' : '-pin-unsupported';
+    const contextBase = this.operation === undefined ? hasUpdate ? 'outdated' : 'package' : `installing-${this.operation.kind}`;
+    const pinCapability = this.operation === undefined ? parsedSpec.supported ? '-pinnable' : '-pin-unsupported' : '';
     this.contextValue = `${contextBase}${pinCapability}`;
     if (vulnerabilitySeverity !== undefined) {
       this.description = `${this.description} vulnerability: ${vulnerabilitySeverity}`;
@@ -55,12 +73,49 @@ export class PackageItem extends vscode.TreeItem {
       patch: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.green')),
       none: new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
     };
-    this.iconPath = installing
-      ? new vscode.ThemeIcon('loading~spin')
-      : vulnerabilitySeverity === undefined
+    this.iconPath = this.operation === undefined
+      ? vulnerabilitySeverity === undefined
         ? icons[updateType]
-        : getVulnerabilityIcon(vulnerabilitySeverity);
+        : getVulnerabilityIcon(vulnerabilitySeverity)
+      : getOperationIcon(this.operation);
   }
+
+  get installing(): boolean {
+    return this.operation !== undefined;
+  }
+}
+
+function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
+  if (typeof operation !== 'boolean') {
+    return operation;
+  }
+  return operation ? { kind: 'update', target: defaultTarget } : undefined;
+}
+
+function getOperationTooltip(packageName: string, operation: PackageOperation): string {
+  switch (operation.kind) {
+    case 'update':
+      return `Updating ${packageName} to ${sanitizePackageText(operation.target)}`;
+    case 'remove':
+      return `Removing ${packageName}`;
+    case 'install':
+      return `Installing ${packageName}`;
+    case 'pin':
+      return `Pinning ${packageName} version`;
+    case 'switch':
+      return `Switching ${packageName} dependency type`;
+  }
+}
+
+function getOperationIcon(operation: PackageOperation): vscode.ThemeIcon {
+  const icons: Record<PackageOperation['kind'], string> = {
+    update: 'arrow-up',
+    remove: 'trash',
+    install: 'cloud-download',
+    pin: 'lock',
+    switch: 'arrow-swap',
+  };
+  return new vscode.ThemeIcon(icons[operation.kind]);
 }
 
 function getReleaseAgeText(state: ReleaseAgeState): string | undefined {

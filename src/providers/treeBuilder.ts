@@ -207,10 +207,10 @@ export function toRelativeLabel(packageFilePath: string, workspaceRoot: string):
 export function getFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
   return {
     all: entries.length,
-    hasUpdates: entries.filter(e => e.item.updateType !== 'none' && !e.item.installing).length,
-    patch: entries.filter(e => e.item.updateType === 'patch' && !e.item.installing).length,
-    minor: entries.filter(e => e.item.updateType === 'minor' && !e.item.installing).length,
-    breaking: entries.filter(e => e.item.updateType === 'breaking' && !e.item.installing).length,
+    hasUpdates: entries.filter(e => e.item.updateType !== 'none' && e.item.operation === undefined).length,
+    patch: entries.filter(e => e.item.updateType === 'patch' && e.item.operation === undefined).length,
+    minor: entries.filter(e => e.item.updateType === 'minor' && e.item.operation === undefined).length,
+    breaking: entries.filter(e => e.item.updateType === 'breaking' && e.item.operation === undefined).length,
   };
 }
 

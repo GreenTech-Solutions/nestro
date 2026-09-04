@@ -248,7 +248,7 @@ suite('command boundary smoke', function () {
         '^1.3.0',
         '99.99.99',
         'breaking',
-        false,
+        undefined,
         undefined,
         packageFilePath,
         false,
@@ -678,11 +678,11 @@ suite('Shell Task Lifecycle: package update busy state', function () {
   test('clears busy state and applies the new version after a successful task', async () => {
     const before = findPackageItem('left-pad');
     assert.ok(before, 'left-pad should be present after loadPackages()');
-    assert.strictEqual(before.installing, false);
+    assert.strictEqual(before.operation, undefined);
 
     const identity = identityFor(before);
-    provider.markPackageUpdating(identity, true);
-    assert.strictEqual(findPackageItem('left-pad')?.installing, true, 'Item should be marked installing while the task runs');
+    provider.markPackageUpdating(identity, { kind: 'update', target: '9.9.9' });
+    assert.strictEqual(findPackageItem('left-pad')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
     const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
     assert.strictEqual(exitCode, 0);
@@ -692,7 +692,7 @@ suite('Shell Task Lifecycle: package update busy state', function () {
 
     const after = findPackageItem('left-pad');
     assert.ok(after);
-    assert.strictEqual(after.installing, false, 'Busy state must clear once the task exits successfully');
+    assert.strictEqual(after.operation, undefined, 'Busy state must clear once the task exits successfully');
     assert.strictEqual(after.currentVersion, `${before.versionPrefix}9.9.9`);
   });
 
@@ -702,17 +702,17 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     const originalVersion = before.currentVersion;
 
     const identity = identityFor(before);
-    provider.markPackageUpdating(identity, true);
-    assert.strictEqual(findPackageItem('rimraf')?.installing, true, 'Item should be marked installing while the task runs');
+    provider.markPackageUpdating(identity, { kind: 'update', target: originalVersion });
+    assert.strictEqual(findPackageItem('rimraf')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
     const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
     assert.notStrictEqual(exitCode, 0);
 
-    provider.markPackageUpdating(identity, false);
+    provider.markPackageUpdating(identity, undefined);
 
     const after = findPackageItem('rimraf');
     assert.ok(after);
-    assert.strictEqual(after.installing, false, 'Busy state must clear after a failing task — no stuck busy state');
+    assert.strictEqual(after.operation, undefined, 'Busy state must clear after a failing task — no stuck busy state');
     assert.strictEqual(after.currentVersion, originalVersion, 'A failing task must not apply the pending version');
   });
 });
@@ -738,7 +738,7 @@ suite('Manifest Contracts', () => {
   });
 
   test('row capabilities keep update actions working and hide pin for unsupported specs', () => {
-    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', false, 'high', '/workspace/package.json', false, '^');
+    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', undefined, 'high', '/workspace/package.json', false, '^');
     assert.strictEqual(item.contextValue, 'outdated-pinnable-vulnerable-high');
 
     const menuEntries = getManifest().contributes.menus['view/item/context'];

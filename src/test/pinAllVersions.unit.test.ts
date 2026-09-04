@@ -34,6 +34,24 @@ describe('pinAllVersionsCommand()', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 3 package version(s).');
   });
 
+  it('marks rows in every discovered manifest while pinning', async () => {
+    const packageFilePath = '/workspace/package.json';
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([{ fsPath: packageFilePath }] as vscode.Uri[]);
+    vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce({ count: 1, skippedFiles: [] });
+    const provider = makeProvider();
+    const identity = {
+      packageName: 'react',
+      packageFilePath,
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+
+    await pinAllVersionsCommand(provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenNthCalledWith(1, identity, { kind: 'pin' });
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
+  });
+
   it('shows a no-op message without reloading when everything is already pinned', async () => {
     vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce({ count: 0, skippedFiles: [] });
     const provider = makeProvider();
@@ -135,6 +153,8 @@ function makeProvider(): PackagesProvider {
   return {
     loadPackages: vi.fn(),
     invalidateUpdateCache: vi.fn(),
+    getPackageIdentitiesForFile: vi.fn(() => []),
+    markPackageUpdating: vi.fn(),
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
   } as unknown as PackagesProvider;
 }

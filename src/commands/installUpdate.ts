@@ -50,7 +50,7 @@ export async function installUpdateCommand(item: unknown, provider: PackagesProv
   }
 
   const current = capability.item;
-  if (current.latest !== undefined && !current.installing) {
+  if (current.latest !== undefined && current.operation === undefined) {
     // The selected version is intentionally read from the freshly resolved row;
     // `item.latest` is never an operation input after validation.
     await runResolvedPackageVersion(capability, current.latest, provider);
@@ -87,7 +87,10 @@ export async function runResolvedPackageVersion(
         if (!await confirmRiskyUpdates([{ capability: checked, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
           return;
         }
-        activeCapability = provider.markPackageUpdatingForCapability(checked, true);
+        activeCapability = provider.markPackageUpdatingForCapability(checked, {
+          kind: 'update',
+          target: version,
+        });
         if (activeCapability === undefined) {
           return;
         }
@@ -130,14 +133,14 @@ export async function runResolvedPackageVersion(
     }
     catch (err) {
       if (activeCapability !== undefined) {
-        provider.markPackageUpdatingForCapability(activeCapability, false);
+        provider.markPackageUpdatingForCapability(activeCapability, undefined);
       }
       showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   });
 }
 
-export async function runInstallCommand(): Promise<void> {
+export async function runInstallCommand(provider?: PackagesProvider): Promise<void> {
   try {
     const selection = await resolveInstallPackageSelection();
     if (selection === undefined) {
@@ -156,9 +159,16 @@ export async function runInstallCommand(): Promise<void> {
       const command = client.buildInstallCommand();
       logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
       const taskName = 'Install Dependencies';
-      const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
-      if (exitCode !== 0) {
-        showError(formatShellTaskFailureMessage(taskName, exitCode));
+      const activeIdentities = provider?.getPackageIdentitiesForFile(packageFilePath) ?? [];
+      activeIdentities.forEach(identity => provider?.markPackageUpdating(identity, { kind: 'install' }));
+      try {
+        const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
+        if (exitCode !== 0) {
+          showError(formatShellTaskFailureMessage(taskName, exitCode));
+        }
+      }
+      finally {
+        activeIdentities.forEach(identity => provider?.markPackageUpdating(identity, undefined));
       }
     });
   }
@@ -180,7 +190,7 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
       return;
     }
     const current = capability.item;
-    if (current.latest !== undefined && !current.installing) {
+    if (current.latest !== undefined && current.operation === undefined) {
       capabilities.push(capability);
     }
   }
@@ -235,7 +245,10 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         }
         const activeUpdates = checkedUpdates.map(update => ({
           ...update,
-          capability: provider.markPackageUpdatingForCapability(update.capability, true),
+          capability: provider.markPackageUpdatingForCapability(update.capability, {
+            kind: 'update',
+            target: update.version,
+          }),
         }));
         if (activeUpdates.some(update => update.capability === undefined)) {
           resetActiveCapabilities(activeUpdates, provider);
@@ -283,7 +296,7 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
       }
     }
     catch (err) {
-      activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
+      activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
       showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   });
@@ -352,7 +365,10 @@ async function runPackageUpdateTask(
 ): Promise<boolean> {
   const activeUpdates = updates.map(update => ({
     ...update,
-    capability: provider.markPackageUpdatingForCapability(update.capability, true),
+    capability: provider.markPackageUpdatingForCapability(update.capability, {
+      kind: 'update',
+      target: update.version,
+    }),
   }));
   if (activeUpdates.some(update => update.capability === undefined)) {
     resetActiveCapabilities(activeUpdates, provider);
@@ -365,13 +381,13 @@ async function runPackageUpdateTask(
     exitCode = await runShellTaskAndWait(command, taskName, cwd);
   }
   catch (err) {
-    active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
+    active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
     throw err;
   }
   if (exitCode === 0) {
     const refreshed = await refreshUpdatedCapabilities(active, provider);
     if (refreshed === undefined) {
-      active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
+      active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
       await provider.loadPackages();
       throw new Error('Package update could not be verified. Refresh the package list and try again.');
     }
@@ -379,7 +395,7 @@ async function runPackageUpdateTask(
     refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
     return true;
   }
-  active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, false));
+  active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
   showError(formatShellTaskFailureMessage(taskName, exitCode));
   return false;
 }
@@ -390,7 +406,7 @@ function resetActiveCapabilities(
 ): void {
   updates.forEach((update) => {
     if (update.capability !== undefined) {
-      provider.markPackageUpdatingForCapability(update.capability, false);
+      provider.markPackageUpdatingForCapability(update.capability, undefined);
     }
   });
 }
@@ -471,7 +487,7 @@ async function revalidateUpdates(
       return undefined;
     }
     const currentVersion = capability.item.latest;
-    if (currentVersion === undefined || capability.item.installing) {
+    if (currentVersion === undefined || capability.item.operation !== undefined) {
       return undefined;
     }
     checked.push({ capability, version: currentVersion });
