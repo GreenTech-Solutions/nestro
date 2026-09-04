@@ -9,6 +9,7 @@ import {
   parseClassicYarnConfig,
   parseNpmRegistryMetadata,
   parseYarnModernConfig,
+  resolvePackageRegistryUrl,
   selectVersionsForPicker,
 } from '../utils/registryClient';
 import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry, parseBunConfig } from '../utils';
@@ -94,6 +95,15 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       result: { versions: ['1.0.0'] },
     });
     expectRegistryUrl('https://registry.example.com/npm/react');
+  });
+
+  it('resolves the project registry without credentials for metadata deduplication', async () => {
+    mockNpmrcFiles({
+      '/workspace/.npmrc': 'registry=https://registry.example.com/npm/',
+    });
+
+    await expect(resolvePackageRegistryUrl('react', '/workspace/package.json', 'npm'))
+      .resolves.toBe('https://registry.example.com/npm/');
   });
 
   it('uses the Classic Yarn registry from the project .yarnrc format', async () => {

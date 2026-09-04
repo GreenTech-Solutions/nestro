@@ -181,6 +181,15 @@ export async function fetchPackageMetadataFromRegistry(
   )), configuration.registryConfigured);
 }
 
+export async function resolvePackageRegistryUrl(
+  packageName: string,
+  packageFilePath?: string,
+  packageManager?: PackageManager,
+): Promise<string> {
+  const configuration = await resolveRegistryConfiguration(packageName, packageFilePath, packageManager);
+  return normalizeRegistryUrl(configuration.registryUrl);
+}
+
 async function requestRegistryPayload<T>(
   url: string,
   parse: (payload: unknown) => MetadataSchemaResult<T>,
@@ -1306,15 +1315,19 @@ function getScopedRegistry(packageName: string, config: ReadonlyMap<string, stri
 }
 
 function buildRegistryPackageUrl(registryUrl: string, encodedName: string): string {
+  const registryString = normalizeRegistryUrl(registryUrl);
+  const baseUrl = registryString.endsWith('/') ? registryString : `${registryString}/`;
+  return new URL(encodedName, baseUrl).toString();
+}
+
+function normalizeRegistryUrl(registryUrl: string): string {
   const registry = new URL(registryUrl);
   if (registry.protocol !== 'https:') {
     throw new Error('Registry URL must use HTTPS.');
   }
   registry.username = '';
   registry.password = '';
-  const registryString = registry.toString();
-  const baseUrl = registryString.endsWith('/') ? registryString : `${registryString}/`;
-  return new URL(encodedName, baseUrl).toString();
+  return registry.toString();
 }
 
 function getAuthorizationHeader(

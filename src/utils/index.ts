@@ -14,6 +14,7 @@ export * from './bunAuditClient';
 export * from './processRunner';
 export * from './metadataRunner';
 export * from './metadataRegistry';
+export * from './releaseAge';
 export * from './nativeMetadataClient';
 export * from './bunConfig';
 export * from './yarnMetadataClient';

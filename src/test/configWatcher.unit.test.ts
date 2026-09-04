@@ -2,12 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { registerConfigurationWatcher, registerWorkspaceFoldersWatcher } from '../extension';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { fetchAllLatestVersions, readAllWorkspaceDependencies } from '../utils';
+import {
+  fetchAllLatestVersions,
+  fetchPackageMetadata,
+  readAllWorkspaceDependencies,
+} from '../utils';
 
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
   return {
+    ...releaseAge,
     fetchAllLatestVersions: vi.fn(),
+    fetchPackageMetadata: vi.fn(),
     getUpdateType: vi.fn((current: string, latest: string) => (
       current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
     )),
@@ -19,6 +26,9 @@ vi.mock('../utils', async () => {
     parseDependencySpec,
     readAllWorkspaceDependencies: vi.fn(),
     readWorkspaceDependencies: vi.fn(),
+    resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (
+      Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
+    )),
     runNpmAudit: vi.fn(),
     showError: vi.fn(),
   };
@@ -41,31 +51,23 @@ describe('registerConfigurationWatcher()', () => {
     expect(provider.resetUpdateData).not.toHaveBeenCalled();
   });
 
-  it('resets update data when updateTarget changes', () => {
+  it.each([
+    'updateTarget',
+    'includePreReleases',
+    'minimumReleaseAgeDays',
+  ])('resets update data when %s changes', (key) => {
     const provider = makeProvider();
 
     registerConfigurationWatcher(makeContext(), provider);
     const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
-    listener(makeConfigEvent(['nestro.updateTarget']));
+    listener(makeConfigEvent([`nestro.${key}`]));
 
     expect(provider.resetUpdateData).toHaveBeenCalledTimes(1);
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.setFilter).not.toHaveBeenCalled();
   });
 
-  it('resets update data when includePreReleases changes', () => {
-    const provider = makeProvider();
-
-    registerConfigurationWatcher(makeContext(), provider);
-    const listener = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls[0][0];
-    listener(makeConfigEvent(['nestro.includePreReleases']));
-
-    expect(provider.resetUpdateData).toHaveBeenCalledTimes(1);
-    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
-    expect(provider.setFilter).not.toHaveBeenCalled();
-  });
-
-  it('does not react to deferInstallAfterUpdate changes', () => {
+  it('does not react to unrelated configuration changes', () => {
     const provider = makeProvider();
 
     registerConfigurationWatcher(makeContext(), provider);
@@ -141,6 +143,14 @@ describe('PackagesProvider.resetUpdateData()', () => {
       ['react', '19.0.0'],
       ['typescript', '5.9.3'],
     ]));
+    vi.mocked(fetchPackageMetadata).mockResolvedValue({
+      kind: 'success',
+      result: {
+        versions: [],
+        distTags: {},
+        publishTimes: { kind: 'not-provided' },
+      },
+    });
   });
 
   it('clears latest versions and update types while keeping current package versions', async () => {

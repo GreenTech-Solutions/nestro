@@ -3,6 +3,7 @@ import {
   configAwareHttpsMetadataAdapter,
   MetadataAdapterRegistry,
   nativeCliMetadataAdapter,
+  resolveMetadataRegistryKey,
   yarnClassicMetadataAdapter,
 } from '../utils';
 import type { MetadataAdapter, PackageMetadataOutcome } from '../utils';
@@ -17,6 +18,7 @@ vi.mock('../utils/packageManager', () => ({
 }));
 vi.mock('../utils/registryClient', () => ({
   fetchPackageMetadataFromRegistry: fetchPackageMetadataFromRegistryMock,
+  resolvePackageRegistryUrl: vi.fn().mockResolvedValue('https://registry.npmjs.org/'),
 }));
 vi.mock('../utils/processRunner', () => ({
   runBoundedProcess: runBoundedProcessMock,
@@ -57,6 +59,14 @@ describe('MetadataAdapterRegistry', () => {
     expect(registry.getAdapter('yarn')).toBe(yarnClassicMetadataAdapter);
     expect(registry.getAdapter('bun')).toBe(configAwareHttpsMetadataAdapter);
     expect(configAwareHttpsMetadataAdapter.tier).toBe('config-aware-https');
+  });
+
+  it('resolves a registry key through the selected package manager', async () => {
+    detectPackageManagerMock.mockResolvedValueOnce('pnpm');
+
+    await expect(resolveMetadataRegistryKey('react', '/workspace/package.json'))
+      .resolves.toBe('https://registry.npmjs.org/');
+    expect(detectPackageManagerMock).toHaveBeenCalledWith('/workspace');
   });
 
   it('cascades from a native tier that cannot answer to the HTTPS fallback', async () => {

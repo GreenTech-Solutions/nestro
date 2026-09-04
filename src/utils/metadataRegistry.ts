@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { PackageManager } from '../clients';
 import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
-import { fetchPackageMetadataFromRegistry } from './registryClient';
+import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
 import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMetadataClient';
 
@@ -141,4 +141,19 @@ export async function fetchPackageMetadata(
   signal?: AbortSignal,
 ): Promise<PackageMetadataOutcome> {
   return await metadataAdapterRegistry.fetchMetadata({ packageName, packageFilePath, signal });
+}
+
+export async function resolveMetadataRegistryKey(
+  packageName: string,
+  packageFilePath?: string,
+): Promise<string | undefined> {
+  try {
+    const packageManager = await detectPackageManager(
+      packageFilePath === undefined ? undefined : path.dirname(packageFilePath),
+    );
+    return await resolvePackageRegistryUrl(packageName, packageFilePath, packageManager);
+  }
+  catch {
+    return undefined;
+  }
 }

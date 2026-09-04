@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import type { AuditSeverity, UpdateType } from '../utils';
+import type { AuditSeverity, ReleaseAgeState, UpdateType } from '../utils';
 
 export type PackageDependencySection = 'dependencies' | 'devDependencies';
 
@@ -17,6 +17,7 @@ export interface CanonicalPackageItem {
   readonly packageFilePath: string;
   readonly dev: boolean;
   readonly versionPrefix: string;
+  readonly releaseAge?: ReleaseAgeState;
 }
 
 export interface PackageItemRecord {

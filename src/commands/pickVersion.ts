@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
+  classifyVersionReleaseAge,
+  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   fetchPackageMetadata,
   logger,
+  readMinimumReleaseAgeDays,
   selectVersionsForPicker,
   showError,
 } from '../utils';
+import type { ReleaseAgeState } from '../utils';
 import { runResolvedPackageVersion } from './installUpdate';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
@@ -74,6 +78,11 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     const includePreReleases = vscode.workspace
       .getConfiguration('nestro')
       .get<boolean>('includePreReleases', false);
+    const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
+      vscode.workspace
+        .getConfiguration('nestro')
+        .get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+    );
     const selectedVersions = selectVersionsForPicker(
       versions,
       tags,
@@ -82,17 +91,38 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     );
     const tagByVersion = new Map(Object.entries(tags).map(([tag, version]) => [version, tag]));
     const normalizedCurrent = normalizeCurrentVersion(current.currentVersion);
+    const releaseAgeByVersion = new Map<string, ReleaseAgeState>();
+    const releaseAgeUnavailable = metadataOutcome.result.publishTimes.kind === 'not-provided';
+    if (releaseAgeUnavailable) {
+      quickPick.title = `Select version for ${current.packageName} — release age unknown; update is not blocked`;
+    }
 
-    quickPick.items = selectedVersions.map(version => ({
-      label: version === normalizedCurrent ? `★ ${version}` : version,
-      description: tagByVersion.get(version),
-      detail: version === normalizedCurrent ? 'Current version' : undefined,
-    }));
+    quickPick.items = selectedVersions.map((version) => {
+      const releaseAge = classifyVersionReleaseAge(
+        version,
+        metadataOutcome.result.publishTimes,
+        minimumReleaseAgeDays,
+      );
+      releaseAgeByVersion.set(version, releaseAge);
+      const ageDescription = releaseAge.kind === 'held-back'
+        ? `Held back until ${releaseAge.eligibleAt}`
+        : releaseAge.kind === 'unknown' && !releaseAgeUnavailable
+          ? 'Release age unknown; update is not blocked.'
+          : undefined;
+      return {
+        label: version === normalizedCurrent ? `★ ${version}` : version,
+        description: [tagByVersion.get(version), ageDescription]
+          .filter((value): value is string => value !== undefined)
+          .map(sanitizePackageText)
+          .join(' · ') || undefined,
+        detail: version === normalizedCurrent ? 'Current version' : undefined,
+      };
+    });
     quickPick.busy = false;
     quickPick.placeholder = 'Type to filter versions...';
     const allowedVersions = new Set(selectedVersions);
     const acceptListener = quickPick.onDidAccept(() => {
-      void handleVersionSelection(quickPick, pickerCapability, allowedVersions, provider);
+      void handleVersionSelection(quickPick, pickerCapability, allowedVersions, releaseAgeByVersion, provider);
     });
     disposables.push(acceptListener);
   }
@@ -110,6 +140,7 @@ async function handleVersionSelection(
   quickPick: vscode.QuickPick<vscode.QuickPickItem>,
   capability: ResolvedPackageItem,
   allowedVersions: ReadonlySet<string>,
+  releaseAgeByVersion: ReadonlyMap<string, ReleaseAgeState>,
   provider: PackagesProvider,
 ): Promise<void> {
   try {
@@ -132,7 +163,7 @@ async function handleVersionSelection(
       return;
     }
 
-    await runResolvedPackageVersion(checked, selectedVersion, provider);
+    await runResolvedPackageVersion(checked, selectedVersion, provider, releaseAgeByVersion.get(selectedVersion));
   }
   catch (err) {
     logger.error('Failed to apply the selected package version.', err);

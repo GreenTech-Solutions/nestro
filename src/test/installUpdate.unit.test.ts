@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import type { ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -11,6 +12,7 @@ const identityMocks = vi.hoisted(() => {
     latest?: string;
     installing?: boolean;
     currentVersion?: string;
+    releaseAge?: ReleaseAgeState;
   }) => ({
     item: {
       packageName: item.packageName,
@@ -22,6 +24,7 @@ const identityMocks = vi.hoisted(() => {
       packageFilePath: item.packageFilePath,
       dev: item.dev,
       versionPrefix: item.currentVersion?.match(/^[~^]/)?.[0] ?? '',
+      releaseAge: item.releaseAge,
     },
     identity: {
       packageName: item.packageName,
@@ -44,6 +47,7 @@ const identityMocks = vi.hoisted(() => {
       latest?: string;
       installing?: boolean;
       currentVersion?: string;
+      releaseAge?: ReleaseAgeState;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
@@ -304,6 +308,61 @@ describe('installUpdateCommand()', () => {
     await runResolvedPackageVersion(capability, '5.9.3', provider);
 
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('cancels an explicitly selected risky deferred update before writing', async () => {
+    mockDeferredInstall(true);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    );
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
+
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('cancels an explicitly selected risky immediate update before launching a task', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    );
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
   });
 
   it('updates package.json without running a task when deferred install is enabled', async () => {
@@ -1078,6 +1137,140 @@ describe('updateAllVisibleCommand()', () => {
 
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for a separate confirmation before a risky bulk update', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update Risky Packages' as never);
+    const provider = makeProvider([
+      new PackageItem(
+        'react',
+        '^18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        undefined,
+        '/workspace/package.json',
+        false,
+        '^',
+        { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      ),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a risky bulk update before any task starts', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const provider = makeProvider([
+      new PackageItem(
+        'react',
+        '^18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        undefined,
+        '/workspace/package.json',
+        false,
+        '^',
+        { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      ),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a newly risky deferred bulk update before marking progress', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const safeItem = new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+    const safe = identityMocks.makeCapability(safeItem);
+    const risky = identityMocks.makeCapability(new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    ));
+    const provider = makeProvider([safeItem]);
+    vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a newly risky immediate bulk update before launching a task', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const safeItem = new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+    const safe = identityMocks.makeCapability(safeItem);
+    const risky = identityMocks.makeCapability(new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    ));
+    const provider = makeProvider([safeItem]);
+    vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
   });
 
   it('splits immediate bulk updates by dependency section', async () => {

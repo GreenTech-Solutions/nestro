@@ -4,7 +4,9 @@ import * as vscode from 'vscode';
 import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
 import {
+  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   fetchAllLatestVersions,
+  fetchPackageMetadata,
   getUpdateType,
   getWorkspacePackageFilePaths,
   inferPathAttribution,
@@ -12,9 +14,12 @@ import {
   mergeAuditAdvisories,
   NcuUpdateTarget,
   readAllWorkspaceDependencies,
+  readMinimumReleaseAgeDays,
+  resolveMetadataRegistryKey,
+  resolveUpdateReleaseAge,
   showError,
 } from '../utils';
-import type { AuditSeverity, UpdateType } from '../utils';
+import type { AuditSeverity, PackageMetadataOutcome, ReleaseAgeState, UpdateType } from '../utils';
 import type {
   AuditAdvisory,
   AuditPackageManager,
@@ -84,8 +89,89 @@ export interface AuditReportSnapshot {
 }
 
 type UpdateFetchResult
-  = | { readonly accepted: true; readonly data: ReadonlyMap<string, string> }
+  = | { readonly accepted: true; readonly data: ReadonlyMap<string, CachedUpdateData> }
     | { readonly accepted: false };
+
+interface CachedUpdateData {
+  readonly acceptedVersion: string | undefined;
+  readonly releaseAge: ReleaseAgeState;
+}
+
+const METADATA_CONCURRENCY_CAP = 4;
+
+interface MetadataLookup {
+  readonly identity: PackageIdentityTuple;
+  readonly key: string;
+}
+
+async function fetchMetadataOutcomes(
+  identities: readonly PackageIdentityTuple[],
+): Promise<(PackageMetadataOutcome | undefined)[]> {
+  const lookups = await mapWithConcurrency(identities, async (identity): Promise<MetadataLookup> => {
+    let registryKey: string | undefined;
+    try {
+      registryKey = await resolveMetadataRegistryKey(identity.packageName, identity.packageFilePath);
+    }
+    catch {
+      registryKey = undefined;
+    }
+    return {
+      identity,
+      key: buildMetadataLookupKey(identity, registryKey),
+    };
+  }, METADATA_CONCURRENCY_CAP);
+  const uniqueRequests = new Map<string, PackageIdentityTuple>();
+  lookups.forEach(({ key, identity }) => {
+    if (!uniqueRequests.has(key)) {
+      uniqueRequests.set(key, identity);
+    }
+  });
+  const outcomes = await mapWithConcurrency([...uniqueRequests.entries()], async ([key, identity]) => {
+    try {
+      return [key, await fetchPackageMetadata(identity.packageName, identity.packageFilePath)] as const;
+    }
+    catch {
+      return [key, undefined] as const;
+    }
+  }, METADATA_CONCURRENCY_CAP);
+  const outcomesByKey = new Map(outcomes);
+  const keyByIdentity = new Map(lookups.map(({ identity, key }) => [packageIdentityKey(identity), key]));
+  return identities.map(identity => outcomesByKey.get(
+    keyByIdentity.get(packageIdentityKey(identity)) ?? '',
+  ));
+}
+
+function buildMetadataLookupKey(identity: PackageIdentityTuple, registryKey: string | undefined): string {
+  return [
+    identity.packageName,
+    registryKey ?? `unresolved:${identity.packageFilePath}`,
+  ].join('\u0000');
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  worker: (item: T) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(items.length, concurrency) }, async (): Promise<void> => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const item = items[index];
+      if (item === undefined) {
+        return;
+      }
+      results[index] = await worker(item);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 interface AuditOperation {
   readonly generation: number;
@@ -144,7 +230,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private updateCache: {
-    data: Map<string, string>;
+    data: Map<string, CachedUpdateData>;
     timestamp: number;
     policyKey: string;
     fingerprint: string;
@@ -466,6 +552,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         entryPackageFilePath,
         dev,
         item.versionPrefix,
+        item.releaseAge,
       ),
       dev,
       packageFilePath: entryPackageFilePath,
@@ -511,6 +598,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         row.packageFilePath,
         row.dev,
         row.versionPrefix,
+        row.releaseAge,
       ),
       dev: row.dev,
       packageFilePath: row.packageFilePath,
@@ -569,6 +657,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             row.packageFilePath,
             row.dev,
             row.versionPrefix,
+            row.releaseAge,
           ),
           dev: row.dev,
           packageFilePath: row.packageFilePath,
@@ -757,6 +846,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               e.packageFilePath,
               e.dev,
               e.versionPrefix,
+              existing.item.releaseAge,
             ),
             dev: e.dev,
             packageFilePath: e.packageFilePath,
@@ -800,6 +890,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
       const includePreReleases = config.get<boolean>('includePreReleases', false);
       const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+      const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
+        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+      );
       const source = this.allEntries.length > 0
         ? this.allEntries.map(e => ({
             name: e.item.packageName,
@@ -811,9 +904,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         : await this.readPackagesForUpdateCheck();
       const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
       const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
+      const currentVersions = new Map(identities.map((identity, index) => [
+        this.packageStateKey(identity),
+        source[index].current,
+      ]));
       // The debounce gate uses the cheap policy/file-set key: reading every manifest to
       // decide whether to skip a run would cost more than the run being skipped.
-      const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases);
+      const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases, minimumReleaseAgeDays);
       if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
         const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
         if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
@@ -822,20 +919,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           return;
         }
       }
-      const fingerprint = await this.computeUpdateFingerprint(identities, target, includePreReleases);
+      const fingerprint = await this.computeUpdateFingerprint(
+        identities,
+        target,
+        includePreReleases,
+        minimumReleaseAgeDays,
+      );
       const cacheValid = this.isCacheValid(fingerprint);
       logger.info('Checking package updates.');
       logger.info(`Checking updates for ${source.length} package(s).`);
-      let upgrades: ReadonlyMap<string, string>;
+      let upgrades: ReadonlyMap<string, CachedUpdateData>;
       if (!forceAlways && cacheValid) {
-        upgrades = this.updateCache?.data ?? new Map<string, string>();
+        upgrades = this.updateCache?.data ?? new Map<string, CachedUpdateData>();
       }
       else {
         const fetchResult = await this.fetchAndCacheUpdates(
           identities,
+          currentVersions,
           packageFiles,
           target,
           includePreReleases,
+          minimumReleaseAgeDays,
           policyKey,
           fingerprint,
           snapshotGeneration,
@@ -867,7 +971,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             packageFilePath: entry.packageFilePath,
           }));
       this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
-        const latest = upgrades.get(this.entryKey(item.packageName, packageFilePath));
+        const updateData = upgrades.get(this.packageStateKey(
+          packageIdentityFromValues(item.packageName, packageFilePath, dev),
+        ));
+        const latest = updateData?.acceptedVersion;
         const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
         return {
           item: this.createPackageItem(
@@ -879,6 +986,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             packageFilePath,
             dev,
             item.versionPrefix,
+            updateData?.releaseAge,
           ),
           dev,
           packageFilePath,
@@ -1142,6 +1250,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     packageFilePath = '',
     dev = false,
     versionPrefix = '',
+    releaseAge: ReleaseAgeState = { kind: 'accepted' },
   ): PackageItem {
     const item = new PackageItem(
       packageName,
@@ -1153,6 +1262,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       packageFilePath,
       dev,
       versionPrefix,
+      releaseAge,
     );
     const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
     const row: CanonicalPackageItem = Object.freeze({
@@ -1165,6 +1275,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       packageFilePath,
       dev,
       versionPrefix,
+      releaseAge,
     });
     const baselineLocation = this.packageLocationBaselines.get(packageFilePath);
     this.packageItemRecords.set(item, Object.freeze({ identity, row, baselineLocation }));
@@ -1214,6 +1325,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         packageFilePath,
         dev,
         item.versionPrefix,
+        item.releaseAge,
       ),
       dev,
       packageFilePath,
@@ -1258,37 +1370,72 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    */
   private async fetchAndCacheUpdates(
     identities: readonly PackageIdentityTuple[],
+    currentVersions: ReadonlyMap<string, string>,
     packageFiles: readonly string[],
     target: NcuUpdateTarget,
     includePreReleases: boolean,
+    minimumReleaseAgeDays: number,
     policyKey: string,
     beforeFingerprint: string,
     snapshotGeneration: number,
   ): Promise<UpdateFetchResult> {
     const upgrades = new Map<string, string>();
     for (const packageFilePath of packageFiles) {
-      const fileUpgrades = await fetchAllLatestVersions(packageFilePath, target, includePreReleases);
+      const fileUpgrades = await fetchAllLatestVersions(
+        packageFilePath,
+        target,
+        includePreReleases,
+        minimumReleaseAgeDays,
+      );
       for (const [packageName, version] of fileUpgrades) {
         upgrades.set(this.entryKey(packageName, packageFilePath), version);
       }
     }
 
+    const metadataOutcomes = minimumReleaseAgeDays === 0
+      ? identities.map((): PackageMetadataOutcome | undefined => undefined)
+      : await fetchMetadataOutcomes(identities);
+    const updateData = new Map<string, CachedUpdateData>();
+    identities.forEach((identity, index) => {
+      const acceptedVersion = upgrades.get(this.entryKey(identity.packageName, identity.packageFilePath));
+      updateData.set(
+        this.packageStateKey(identity),
+        {
+          acceptedVersion,
+          releaseAge: resolveUpdateReleaseAge(
+            currentVersions.get(this.packageStateKey(identity)) ?? '',
+            acceptedVersion,
+            metadataOutcomes[index],
+            minimumReleaseAgeDays,
+          ),
+        },
+      );
+    });
+
     const config = vscode.workspace.getConfiguration('nestro');
     const currentTarget = config.get<NcuUpdateTarget>('updateTarget', 'latest');
     const currentIncludePreReleases = config.get<boolean>('includePreReleases', false);
-    const afterFingerprint = await this.computeUpdateFingerprint(identities, currentTarget, currentIncludePreReleases);
+    const currentMinimumReleaseAgeDays = readMinimumReleaseAgeDays(
+      config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+    );
+    const afterFingerprint = await this.computeUpdateFingerprint(
+      identities,
+      currentTarget,
+      currentIncludePreReleases,
+      currentMinimumReleaseAgeDays,
+    );
     if (afterFingerprint !== beforeFingerprint || snapshotGeneration !== this.packageSnapshotGeneration) {
       logger.info('Update results discarded — packages or update settings changed during the check.');
       return { accepted: false };
     }
 
     this.updateCache = {
-      data: upgrades,
+      data: updateData,
       timestamp: Date.now(),
       policyKey,
       fingerprint: beforeFingerprint,
     };
-    return { accepted: true, data: upgrades };
+    return { accepted: true, data: updateData };
   }
 
   /**
@@ -1300,6 +1447,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     identities: readonly PackageIdentityTuple[],
     target: NcuUpdateTarget,
     includePreReleases: boolean,
+    minimumReleaseAgeDays: number,
   ): Promise<string> {
     const byManifest = new Map<string, PackageIdentityTuple[]>();
     for (const identity of identities) {
@@ -1334,7 +1482,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     // Plain code-unit order, not localeCompare: this key only needs to be
     // deterministic within one process, never locale- or ICU-stable.
     entryFingerprints.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ entries: entryFingerprints, target, includePreReleases });
+    return JSON.stringify({ entries: entryFingerprints, target, includePreReleases, minimumReleaseAgeDays });
   }
 
   /** Update policy plus the discovered manifest set — everything the fingerprint covers without disk reads. */
@@ -1342,9 +1490,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     packageFiles: readonly string[],
     target: NcuUpdateTarget,
     includePreReleases: boolean,
+    minimumReleaseAgeDays: number,
   ): string {
     const files = [...packageFiles].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ files, target, includePreReleases });
+    return JSON.stringify({ files, target, includePreReleases, minimumReleaseAgeDays });
   }
 
   private get workspaceRoot(): string | undefined {

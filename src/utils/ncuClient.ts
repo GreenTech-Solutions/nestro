@@ -1,3 +1,8 @@
+import {
+  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
+  readMinimumReleaseAgeDays,
+} from './releaseAge';
+
 export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
 
 const NCU_TIMEOUT_MS = 60_000;
@@ -10,6 +15,7 @@ type Run = (options: {
   removeRange: true;
   silent: true;
   timeout: number;
+  cooldown: number;
 }) => Promise<unknown>;
 
 let cachedRun: Run | undefined;
@@ -18,8 +24,10 @@ export async function fetchAllLatestVersions(
   packageFilePath: string,
   target: NcuUpdateTarget,
   includePreReleases: boolean,
+  minimumReleaseAgeDays: unknown = DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
 ): Promise<Map<string, string>> {
   const run = await getRun();
+  const minimumDays = readMinimumReleaseAgeDays(minimumReleaseAgeDays);
   const result = await run({
     packageFile: packageFilePath,
     target,
@@ -28,6 +36,7 @@ export async function fetchAllLatestVersions(
     removeRange: true,
     silent: true,
     timeout: NCU_TIMEOUT_MS,
+    cooldown: minimumDays,
   });
 
   if (!isStringRecord(result)) {

@@ -45,7 +45,9 @@ vi.mock('../commands/packageIdentity', () => identityMocks);
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const { selectVersionsForPicker: selectVersionsForPickerActual } = await vi.importActual<typeof import('../utils/registryClient')>('../utils/registryClient');
+  const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
   return {
+    ...releaseAge,
     fetchPackageMetadata: vi.fn(),
     getUpdateType: vi.fn(() => 'patch'),
     logger: {
@@ -183,6 +185,56 @@ describe('pickVersionCommand()', () => {
       '^2.0.0',
       true,
     );
+  });
+
+  it('labels a too-new version as held back while keeping it selectable', async () => {
+    const quickPick = makeQuickPick();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
+    try {
+      vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+        get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
+      } as unknown as vscode.WorkspaceConfiguration);
+      vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+        kind: 'success',
+        result: {
+          distTags: { latest: '2.0.0' },
+          publishTimes: {
+            kind: 'provided',
+            byVersion: { '2.0.0': '2026-05-26T00:00:00.000Z', '1.0.0': '2026-01-01T00:00:00.000Z' },
+          },
+          versions: ['2.0.0', '1.0.0'],
+        },
+      });
+
+      await pickVersionCommand(new PackageItem('react', '^1.0.0', undefined, 'none'), makeProvider());
+
+      const heldBack = quickPick.items.find(item => item.label === '2.0.0');
+      expect(heldBack?.description).toContain('Held back until 2026-06-02T00:00:00.000Z');
+      expect(quickPick.items.map(item => item.label)).toContain('2.0.0');
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('summarizes unavailable release age once in the picker title', async () => {
+    const quickPick = makeQuickPick();
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+      kind: 'success',
+      result: {
+        distTags: { latest: '3.0.0' },
+        publishTimes: { kind: 'not-provided' },
+        versions: ['3.0.0', '2.0.0', '1.0.0'],
+      },
+    });
+
+    await pickVersionCommand(new PackageItem('react', '^1.0.0', undefined, 'none'), makeProvider());
+
+    expect(quickPick.title).toContain('release age unknown; update is not blocked');
+    expect(quickPick.items.every(item => !item.description?.includes('Release age unknown'))).toBe(true);
   });
 
   it('does not install when the current version is selected', async () => {

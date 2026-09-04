@@ -33,6 +33,7 @@ const WIRED_KEYS: readonly { readonly key: string; readonly value: unknown; read
   { key: 'defaultFilter', value: 'patch', verify: filter => assert.strictEqual(filter.current, 'patch') },
   { key: 'updateTarget', value: 'minor' },
   { key: 'includePreReleases', value: true },
+  { key: 'minimumReleaseAgeDays', value: 14 },
 ];
 
 /**

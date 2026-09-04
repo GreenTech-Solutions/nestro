@@ -68,4 +68,40 @@ describe('PackageItem', () => {
     expect(item.contextValue).toBe('installing');
     expect(item.tooltip).not.toContain('Pin unavailable:');
   });
+
+  it('renders held-back release age in accessible row text', () => {
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '6.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    );
+
+    expect(item.description).toContain('Held back 6.0.0 until 2026-06-02T00:00:00.000Z');
+    expect(item.tooltip).toContain('Held back 6.0.0 until 2026-06-02T00:00:00.000Z');
+  });
+
+  it('renders unknown release age without blocking the row', () => {
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'unknown', version: '5.9.3' },
+    );
+
+    expect(item.description).toContain('Release age unknown for 5.9.3; update is not blocked.');
+    expect(item.contextValue).toBe('outdated-pinnable');
+  });
 });

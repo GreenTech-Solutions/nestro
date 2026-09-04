@@ -161,6 +161,7 @@ export function registerConfigurationWatcher(
       if (
         e.affectsConfiguration('nestro.updateTarget')
         || e.affectsConfiguration('nestro.includePreReleases')
+        || e.affectsConfiguration('nestro.minimumReleaseAgeDays')
       ) {
         provider.invalidateUpdateCache();
         provider.resetUpdateData();

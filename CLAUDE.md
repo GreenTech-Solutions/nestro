@@ -28,7 +28,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Data flow
 1. `activate()` creates `FilterManager` and `PackagesProvider`, then calls `provider.loadPackages()`.
 2. `loadPackages()` reads `package.json` via `readWorkspaceDependencies()` (`src/utils/packageReader.ts`) → populates `allEntries: PackageTreeEntry[]`.
-3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) → enriches each entry with `latest` + `updateType`, preserving any live `installing` state set by `markPackageUpdating()`. Update results are cached to avoid redundant network calls.
+3. `checkUpdates()` calls `fetchAllLatestVersions()` (ncuClient → `npm-check-updates`) and the metadata registry → enriches each entry with the accepted version, `updateType`, and release-age state (`accepted`, `held-back`, or `unknown`), preserving any live `installing` state set by `markPackageUpdating()`. Update results are cached to avoid redundant network calls.
 4. `getChildren()` delegates to `buildTree()` (`src/providers/treeBuilder.ts`) which returns `[FilterBarItem, ...GroupItem[]]` — groups split into Dependencies / Dev Dependencies.
 5. Commands mutate provider state via `markPackageUpdating()` / `markPackageUpdated()` / `resetUpdateData()` / `invalidateUpdateCache()`, then fire `_onDidChangeTreeData`. `markPackageUpdating()` / `markPackageUpdated()` take a required `packageFilePath` and match entries by exact path (no name-only fallback), since monorepos can have the same package name across multiple `package.json` files.
 
@@ -51,7 +51,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 `PackageItem.contextValue` is set to `"outdated"` when a package has updates; used by `viewItem == outdated` in `view/item/context` menu to show the inline update button.
 
 ### Providers (`src/providers/`)
-- `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
+- `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries`, accepted/held-back/unknown release-age state, and all async operations
 - `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
 - `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`, `toRelativeLabel()`, `resolvePackageOwnerLabel()`, `resolvePackageFileLabels()`, `comparePackageOwnerLabels()`, `resolveWorkspaceFolderDisplayNames()`, `findOwningWorkspaceFolder()`, `toWorkspaceFolderDescriptors()`; no VS Code state. Multi-root package rows are grouped and sorted by owning workspace folder (its stable `WorkspaceFolder.index`), root before subpaths within each folder, alphabetical beyond that — never a flat sort mixing roots. Every row label is `<workspace display name> — <relative path>` (root: `<workspace display name> — (root)`); when two folders share a `WorkspaceFolder.name`, the display name falls back to the shortest unique normalized path suffix, then to a stable `#<index>` suffix on a full collision. `getFilterCounts()` excludes packages currently installing
 - `PackageItem.ts`, `PackageDetailItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `SearchQueryItem.ts`, `StatusItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
@@ -74,7 +74,8 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Utils (`src/utils/`)
 - `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); returns `Map<name, latestVersion>`; results cached across calls
 - `metadataRunner.ts` — runs bounded HTTPS metadata requests with typed schema, transport, timeout, cancellation, truncation, and overflow outcomes; enforces a 15s timeout and 5MiB response limit
-- `metadataRegistry.ts` — resolves package-manager-aware metadata adapters in tier order (native CLI, config-aware HTTPS, public npm); the current registry uses native CLI for npm/pnpm and both Yarn family commands before the config-aware HTTPS fallback
+- `metadataRegistry.ts` — resolves package-manager-aware metadata adapters in tier order (native CLI, config-aware HTTPS, public npm), exposes a credential-free resolved-registry key for bounded deduplication, and uses native CLI for npm/pnpm and both Yarn family commands before the config-aware HTTPS fallback
+- `releaseAge.ts` — validates the minimum release-age setting and classifies versions using absolute UTC publish instants
 - `nativeMetadataClient.ts` — runs bounded `npm view` / `pnpm view` requests from the package root, validates the full metadata document, and maps process outcomes to the metadata taxonomy
 - `yarnMetadataClient.ts` — runs bounded Yarn Classic and Modern metadata commands after `resolveYarnFamily()` selects the matching command shape, validates each JSON document, and maps process outcomes to the metadata taxonomy
 - `bunConfig.ts` — parses the supported `bunfig.toml` registry and scope forms, expanding environment references and normalizing URL-embedded credentials

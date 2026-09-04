@@ -20,9 +20,11 @@ import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
 import { LoadingItem } from '../providers/LoadingItem';
 import {
   fetchAllLatestVersions,
+  fetchPackageMetadata,
   getWorkspacePackageFilePaths,
   logger,
   readAllWorkspaceDependencies,
+  resolveMetadataRegistryKey,
   showError,
 } from '../utils';
 import type { AuditAdvisory, AuditResult } from '../utils';
@@ -65,8 +67,11 @@ vi.mock('../clients', () => ({
 
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
   return {
+    ...releaseAge,
     fetchAllLatestVersions: vi.fn(),
+    fetchPackageMetadata: vi.fn(),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
     getWorkspacePackageFilePaths: vi.fn(),
     getUpdateType: getUpdateTypeMock,
@@ -92,6 +97,9 @@ vi.mock('../utils', async () => {
     parseDependencySpec,
     readAllWorkspaceDependencies: vi.fn(),
     readWorkspaceDependencies: vi.fn(),
+    resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (
+      Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
+    )),
     runNpmAudit: vi.fn(),
     mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
     showError: vi.fn(),
@@ -122,6 +130,14 @@ describe('PackagesProvider', () => {
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
     ]));
+    vi.mocked(fetchPackageMetadata).mockResolvedValue({
+      kind: 'success',
+      result: {
+        versions: [],
+        distTags: {},
+        publishTimes: { kind: 'not-provided' },
+      },
+    });
     vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/package.json']);
     createClientMock.mockReset();
     resolveAuditProjectsMock.mockReset();
@@ -244,6 +260,7 @@ describe('PackagesProvider', () => {
       '/workspace/package.json',
       'latest',
       false,
+      7,
     );
   });
 
@@ -258,6 +275,7 @@ describe('PackagesProvider', () => {
       '/workspace/package.json',
       'latest',
       true,
+      7,
     );
   });
 
@@ -272,7 +290,135 @@ describe('PackagesProvider', () => {
       '/workspace/package.json',
       'greatest',
       false,
+      7,
     );
+  });
+
+  it('passes zero to the NCU wrapper and skips metadata fan-out', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 0 });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      false,
+      0,
+    );
+    expect(fetchPackageMetadata).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates metadata by package and registry while capping concurrent requests', async () => {
+    const packageNames = ['react', 'vue', 'vite', 'eslint', 'typescript', 'vitest', 'react'];
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(packageNames.map((name, index) => ({
+      name,
+      current: '1.0.0',
+      dev: index === packageNames.length - 1,
+      versionPrefix: '',
+      packageFilePath: '/workspace/package.json',
+    })));
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map(
+      packageNames.map(name => [name, '1.1.0']),
+    ));
+    vi.mocked(resolveMetadataRegistryKey).mockResolvedValue('https://registry.example.test/');
+    let activeRequests = 0;
+    let maximumActiveRequests = 0;
+    vi.mocked(fetchPackageMetadata).mockImplementation(async () => {
+      activeRequests += 1;
+      maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      activeRequests -= 1;
+      return {
+        kind: 'success',
+        result: {
+          versions: ['1.1.0'],
+          distTags: { latest: '1.1.0' },
+          publishTimes: { kind: 'not-provided' },
+        },
+      };
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchPackageMetadata).toHaveBeenCalledTimes(6);
+    expect(maximumActiveRequests).toBeLessThanOrEqual(4);
+  });
+
+  it('keeps the accepted NCU version while surfacing a newer held-back release', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
+    try {
+      mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+      vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([['react', '1.1.0']]));
+      vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+        kind: 'success',
+        result: {
+          versions: ['1.1.0', '2.0.0'],
+          distTags: { latest: '2.0.0' },
+          publishTimes: {
+            kind: 'provided',
+            byVersion: {
+              '1.1.0': '2026-01-01T00:00:00.000Z',
+              '2.0.0': '2026-05-26T00:00:00.000Z',
+            },
+          },
+        },
+      });
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.checkUpdates();
+
+      const react = getPackageItems(provider).find(item => item.packageName === 'react');
+      expect(react).toMatchObject({
+        latest: '1.1.0',
+        releaseAge: {
+          kind: 'held-back',
+          version: '2.0.0',
+          eligibleAt: '2026-06-02T00:00:00.000Z',
+        },
+      });
+      expect(react?.description).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
+      expect(react?.tooltip).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces unknown release age without hiding an accepted update', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
+      name: 'react',
+      current: '1.0.0',
+      dev: false,
+      versionPrefix: '',
+      packageFilePath: '/workspace/package.json',
+    }]);
+    vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([['react', '1.1.0']]));
+    vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+      kind: 'success',
+      result: {
+        versions: ['1.1.0', '2.0.0'],
+        distTags: { latest: '2.0.0' },
+        publishTimes: { kind: 'not-provided' },
+      },
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    const react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      latest: '1.1.0',
+      releaseAge: { kind: 'unknown', version: '1.1.0' },
+    });
+    expect(react?.tooltip).toContain('Release age unknown for 1.1.0; update is not blocked.');
   });
 
   it('does not reuse update cache when the package-file set changes', async () => {
@@ -307,6 +453,7 @@ describe('PackagesProvider', () => {
       '/workspace/tools/package.json',
       'latest',
       false,
+      7,
     );
   });
 
@@ -524,6 +671,18 @@ describe('PackagesProvider', () => {
     await provider.loadPackages();
     await provider.checkUpdates();
     mockNestroConfiguration({ includePreReleases: false });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse update cache when minimum release age changes', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    mockNestroConfiguration({ minimumReleaseAgeDays: 14 });
     await provider.checkUpdates();
 
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
@@ -2649,6 +2808,28 @@ describe('update fingerprint', () => {
   afterEach(async () => {
     restoreWorkspaceFolders(previousFolders);
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('changes the update fingerprint when minimum release age changes', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    const identity = {
+      packageName: 'react',
+      packageFilePath: manifest,
+      section: 'dependencies' as const,
+    };
+    const computeFingerprint = (provider as unknown as {
+      computeUpdateFingerprint: (
+        identities: readonly typeof identity[],
+        target: 'latest',
+        includePreReleases: boolean,
+        minimumReleaseAgeDays: number,
+      ) => Promise<string>;
+    }).computeUpdateFingerprint;
+
+    const defaultFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 7);
+    const changedFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 14);
+
+    expect(changedFingerprint).not.toBe(defaultFingerprint);
   });
 
   it('rejects a fetch when the manifest changes while it is in flight, with no explicit invalidation', async () => {

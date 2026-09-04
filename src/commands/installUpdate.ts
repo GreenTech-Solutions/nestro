@@ -4,6 +4,7 @@ import {
   isPackageItem,
   PackagesProvider,
   resolvePackageFileLabels,
+  sanitizePackageText,
   toWorkspaceFolderDescriptors,
 } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
@@ -21,11 +22,12 @@ import {
   updateDependencyVersionsInFile,
   updateDependencyVersionsInFilesAtomically,
 } from '../utils';
+import type { ReleaseAgeState } from '../utils';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
 const clientManager = new ClientManager();
 
-type PackageUpdate = { capability: ResolvedPackageItem; version: string };
+type PackageUpdate = { capability: ResolvedPackageItem; version: string; releaseAge?: ReleaseAgeState };
 
 export async function installUpdateCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
@@ -55,6 +57,7 @@ export async function runResolvedPackageVersion(
   capability: ResolvedPackageItem,
   version: string,
   provider: PackagesProvider,
+  selectedReleaseAge?: ReleaseAgeState,
 ): Promise<void> {
   // Locked from the pre-write revalidation through the write or task and the
   // reconciliation that follows it; the key comes from the capability's already-canonical
@@ -70,7 +73,11 @@ export async function runResolvedPackageVersion(
     let activeCapability: ResolvedPackageItem | undefined;
     try {
       logger.info(`Preparing update for ${current.packageName} to ${version}.`);
+      const confirmedRiskyUpdates = new Set<string>();
       if (isDeferredInstallEnabled()) {
+        if (!await confirmRiskyUpdates([{ capability: checked, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
+          return;
+        }
         activeCapability = provider.markPackageUpdatingForCapability(checked, true);
         if (activeCapability === undefined) {
           return;
@@ -97,6 +104,9 @@ export async function runResolvedPackageVersion(
         return;
       }
       const taskItem = beforeTask.item;
+      if (!await confirmRiskyUpdates([{ capability: beforeTask, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
+        return;
+      }
       await runPackageUpdateTask(
         [{ capability: beforeTask, version }],
         client.buildUpdateCommand([{
@@ -195,9 +205,16 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
       if (prevalidatedUpdates === undefined) {
         return;
       }
+      const confirmedRiskyUpdates = new Set<string>();
+      if (!await confirmRiskyUpdates(prevalidatedUpdates, confirmedRiskyUpdates)) {
+        return;
+      }
       if (isDeferredInstallEnabled()) {
         const checkedUpdates = await revalidateUpdates(prevalidatedUpdates, provider);
         if (checkedUpdates === undefined) {
+          return;
+        }
+        if (!await confirmRiskyUpdates(checkedUpdates, confirmedRiskyUpdates)) {
           return;
         }
         const activeUpdates = checkedUpdates.map(update => ({
@@ -233,6 +250,9 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         if (beforeTaskUpdates === undefined) {
           return;
         }
+        if (!await confirmRiskyUpdates(beforeTaskUpdates, confirmedRiskyUpdates)) {
+          return;
+        }
         const command = client.buildUpdateCommand(
           beforeTaskUpdates.map(update => ({
             name: update.capability.item.packageName,
@@ -263,6 +283,48 @@ function isBulkUpdateConfirmationEnabled(): boolean {
   return vscode.workspace
     .getConfiguration('nestro')
     .get<boolean>('confirmBulkUpdate', true);
+}
+
+async function confirmRiskyUpdates(
+  updates: readonly PackageUpdate[],
+  confirmedRiskyUpdates: Set<string>,
+): Promise<boolean> {
+  const riskyUpdates = updates.filter(({ capability, version, releaseAge: selectedReleaseAge }) => {
+    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
+    return releaseAge?.kind === 'held-back'
+      && releaseAge.version === version
+      && !confirmedRiskyUpdates.has(getRiskyUpdateKey(capability, version));
+  });
+  if (riskyUpdates.length === 0) {
+    return true;
+  }
+
+  const labels = riskyUpdates.map(({ capability, version, releaseAge: selectedReleaseAge }) => {
+    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
+    const eligibleAt = releaseAge?.kind === 'held-back' ? releaseAge.eligibleAt : '';
+    return `${sanitizePackageText(capability.item.packageName)}@${sanitizePackageText(version)} (held back until ${sanitizePackageText(eligibleAt)})`;
+  });
+  const answer = await vscode.window.showWarningMessage(
+    `The selected update${riskyUpdates.length === 1 ? '' : 's'} ${riskyUpdates.length === 1 ? 'is' : 'are'} inside the minimum release-age window:\n${labels.join('\n')}\nUpdate anyway?`,
+    { modal: true },
+    'Update Risky Packages',
+  );
+  if (answer !== 'Update Risky Packages') {
+    return false;
+  }
+  riskyUpdates.forEach(({ capability, version }) => {
+    confirmedRiskyUpdates.add(getRiskyUpdateKey(capability, version));
+  });
+  return true;
+}
+
+function getRiskyUpdateKey(capability: ResolvedPackageItem, version: string): string {
+  return [
+    capability.packageFilePath,
+    capability.identity.section,
+    capability.item.packageName,
+    version,
+  ].join('\u0000');
 }
 
 async function runPackageUpdateTask(

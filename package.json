@@ -76,6 +76,13 @@
           "default": false,
           "description": "Include pre-release versions (alpha, beta, rc) when checking for package updates."
         },
+        "nestro.minimumReleaseAgeDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 0,
+          "maximum": 99000000,
+          "description": "Minimum age in days before a package release is accepted for updates. This overrides native package-manager release-age settings for Nestro checks. Set to 0 to disable the Nestro policy."
+        },
         "nestro.updateTarget": {
           "type": "string",
           "enum": [
