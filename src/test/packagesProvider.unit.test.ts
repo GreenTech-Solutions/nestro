@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import {
   FilterBarItem,
@@ -27,12 +29,46 @@ import {
   resolveMetadataRegistryKey,
   showError,
 } from '../utils';
-import type { AuditAdvisory, AuditResult } from '../utils';
+import type { AuditAdvisory, AuditResult, AuditSeverity } from '../utils';
 import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
 const createClientMock = vi.fn();
 const resolveAuditProjectsMock = vi.fn();
 const getUpdateTypeMock = vi.hoisted(() => vi.fn());
+
+interface ContextMenuContribution {
+  readonly command: string;
+  readonly when: string;
+  readonly group?: string;
+}
+
+interface ExtensionManifest {
+  readonly contributes: {
+    readonly menus: {
+      readonly 'view/item/context': readonly ContextMenuContribution[];
+    };
+  };
+}
+
+const manifestPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ExtensionManifest;
+const auditSeverities = ['critical', 'high', 'moderate', 'low', 'info'] as const;
+
+function compileViewItemPattern(when: string): RegExp {
+  const match = /viewItem\s*=~\s*\/(.*)\/([a-z]*)$/.exec(when);
+  if (match === null) {
+    throw new Error(`Manifest entry does not contain a viewItem regex: ${when}`);
+  }
+  return new RegExp(match[1], match[2]);
+}
+
+function getMenuPatterns(
+  predicate: (entry: ContextMenuContribution) => boolean,
+): RegExp[] {
+  return manifest.contributes.menus['view/item/context']
+    .filter(predicate)
+    .map(entry => compileViewItemPattern(entry.when));
+}
 
 async function createRealAuditProject(packageNames: readonly string[]): Promise<{
   root: string;
@@ -1062,6 +1098,109 @@ describe('PackagesProvider', () => {
     }))).toEqual([
       { currentVersion: '19.0.0', latest: undefined, updateType: 'none', installing: false },
     ]);
+  });
+
+  it.each(auditSeverities)('preserves row menu capabilities after a %s audit result', async (severity) => {
+    const packageFilePath = '/workspace/package.json';
+    const outdatedPackageName = `outdated-${severity}`;
+    const packageEntries = [
+      {
+        name: outdatedPackageName,
+        current: '^1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath,
+      },
+      {
+        name: 'current',
+        current: '^1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath,
+      },
+      {
+        name: 'installing',
+        current: '^1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath,
+      },
+      {
+        name: 'unsupported',
+        current: 'npm:real-pkg@^1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath,
+      },
+    ];
+    const latestVersions = new Map<string, string>([
+      [outdatedPackageName, '2.0.0'],
+      ['installing', '2.0.0'],
+      ['unsupported', '2.0.0'],
+    ]);
+    const vulnerabilities = new Map<string, AuditSeverity>([
+      [outdatedPackageName, severity],
+      ['current', 'high'],
+      ['installing', 'high'],
+      ['unsupported', 'high'],
+    ]);
+    const updatePatterns = getMenuPatterns(entry => entry.command === 'nestro.installUpdate');
+    const pinPatterns = getMenuPatterns(entry => entry.command === 'nestro.pinVersion');
+    const managePatterns = getMenuPatterns(entry => entry.group?.startsWith('2_manage') === true);
+
+    expect(updatePatterns).toHaveLength(1);
+    expect(pinPatterns).toHaveLength(2);
+    expect(managePatterns).toHaveLength(3);
+    const updatePattern = updatePatterns[0];
+    if (updatePattern === undefined) {
+      throw new Error('The Update menu clause is missing.');
+    }
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(packageEntries);
+    vi.mocked(fetchAllLatestVersions).mockResolvedValue(latestVersions);
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockResolvedValue(vulnerabilities),
+    });
+    mockNestroConfiguration({ checkUpdatesForceAlways: true, minimumReleaseAgeDays: 0 });
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    provider.markPackageUpdating({
+      packageName: 'installing',
+      packageFilePath,
+      section: 'dependencies',
+    }, true);
+    await provider.runAudit();
+
+    const rows = new Map(getPackageItems(provider).map(item => [item.packageName, item]));
+    const matchesAny = (patterns: readonly RegExp[], contextValue: string | undefined): boolean => (
+      patterns.some(pattern => pattern.test(contextValue ?? ''))
+    );
+    const outdatedRow = rows.get(outdatedPackageName);
+    const currentRow = rows.get('current');
+    const installingRow = rows.get('installing');
+    const unsupportedRow = rows.get('unsupported');
+
+    expect(outdatedRow?.vulnerabilitySeverity).toBe(severity);
+    expect(matchesAny([updatePattern], outdatedRow?.contextValue)).toBe(true);
+    expect(matchesAny(pinPatterns, outdatedRow?.contextValue)).toBe(true);
+    expect(matchesAny(managePatterns, outdatedRow?.contextValue)).toBe(true);
+
+    expect(currentRow?.vulnerabilitySeverity).toBe('high');
+    expect(matchesAny([updatePattern], currentRow?.contextValue)).toBe(false);
+    expect(matchesAny(pinPatterns, currentRow?.contextValue)).toBe(true);
+    expect(matchesAny(managePatterns, currentRow?.contextValue)).toBe(true);
+
+    expect(installingRow?.vulnerabilitySeverity).toBe('high');
+    expect(matchesAny([updatePattern], installingRow?.contextValue)).toBe(false);
+    expect(matchesAny(pinPatterns, installingRow?.contextValue)).toBe(false);
+    expect(matchesAny(managePatterns, installingRow?.contextValue)).toBe(false);
+
+    expect(unsupportedRow?.vulnerabilitySeverity).toBe('high');
+    expect(matchesAny([updatePattern], unsupportedRow?.contextValue)).toBe(true);
+    expect(matchesAny(pinPatterns, unsupportedRow?.contextValue)).toBe(false);
+    expect(matchesAny(managePatterns, unsupportedRow?.contextValue)).toBe(true);
   });
 
   it('keeps successful audit results and shows failed package paths', async () => {
