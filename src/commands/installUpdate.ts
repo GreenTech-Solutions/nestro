@@ -29,6 +29,15 @@ const clientManager = new ClientManager();
 
 type PackageUpdate = { capability: ResolvedPackageItem; version: string; releaseAge?: ReleaseAgeState };
 
+interface InstallPackageSelection {
+  readonly kind: 'selected';
+  readonly packageFilePath: string;
+}
+
+interface CancelledInstallPackageSelection {
+  readonly kind: 'cancelled';
+}
+
 export async function installUpdateCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
     logger.warn('nestro.installUpdate invoked without a valid package item; ignoring.');
@@ -130,7 +139,14 @@ export async function runResolvedPackageVersion(
 
 export async function runInstallCommand(): Promise<void> {
   try {
-    const packageFilePath = await resolveInstallPackageFilePath();
+    const selection = await resolveInstallPackageSelection();
+    if (selection === undefined) {
+      throw new Error('No workspace package.json found.');
+    }
+    if (selection.kind === 'cancelled') {
+      return;
+    }
+    const packageFilePath = selection.packageFilePath;
     // Locked for the full task run so a concurrent Update/Pin/Remove/Switch on the same
     // project root cannot start a second package-manager process, or write the manifest,
     // while this install is running.
@@ -463,15 +479,15 @@ async function revalidateUpdates(
   return checked;
 }
 
-async function resolveInstallPackageFilePath(): Promise<string> {
+async function resolveInstallPackageSelection(): Promise<InstallPackageSelection | CancelledInstallPackageSelection | undefined> {
   const packageFilePaths = await getWorkspacePackageFilePaths();
   if (packageFilePaths.length === 0) {
-    throw new Error('No workspace package.json found.');
+    return undefined;
   }
   const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
   const labels = resolvePackageFileLabels(packageFilePaths, folders);
   if (labels.length === 1) {
-    return labels[0].packageFilePath;
+    return { kind: 'selected', packageFilePath: labels[0].packageFilePath };
   }
 
   const selected = await vscode.window.showQuickPick(
@@ -482,8 +498,8 @@ async function resolveInstallPackageFilePath(): Promise<string> {
     { placeHolder: 'Select the package.json to install dependencies for' },
   );
   if (selected === undefined) {
-    throw new Error('Install cancelled.');
+    return { kind: 'cancelled' };
   }
 
-  return selected.packageFilePath;
+  return { kind: 'selected', packageFilePath: selected.packageFilePath };
 }

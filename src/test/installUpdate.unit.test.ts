@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { logger } from '../utils';
 import type { ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
@@ -58,6 +59,7 @@ vi.mock('../commands/packageIdentity', () => identityMocks);
 let taskProcessEndListener: ((event: vscode.TaskProcessEndEvent) => unknown) | undefined;
 let taskEndListener: ((event: vscode.TaskEndEvent) => unknown) | undefined;
 let taskExecutionCount = 0;
+const loggerErrorMock = vi.spyOn(logger, 'error');
 
 describe('installUpdateCommand()', () => {
   beforeEach(() => {
@@ -683,6 +685,7 @@ describe('runInstallCommand()', () => {
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.commandLine).toBe(command);
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
   });
 
   it('asks for a package root when the workspace has multiple package.json files', async () => {
@@ -864,7 +867,7 @@ describe('runInstallCommand()', () => {
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 
-  it('shows an error when the package root prompt is cancelled', async () => {
+  it('quietly returns when the package root prompt is cancelled', async () => {
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/workspace/package.json', path: '/workspace/package.json' },
       { fsPath: '/workspace/apps/web/package.json', path: '/workspace/apps/web/package.json' },
@@ -873,8 +876,19 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(loggerErrorMock).not.toHaveBeenCalled();
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('shows an error when package root discovery fails', async () => {
+    const error = new Error('workspace search failed');
+    vi.mocked(vscode.workspace.findFiles).mockRejectedValueOnce(error);
+
+    await runInstallCommand();
+
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to run install — Install cancelled.',
+      'Nestro: failed to run install — workspace search failed',
     );
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
