@@ -22,6 +22,11 @@ pnpm install
 VS Code `^1.125.0` or newer is required. The extension delegates package operations to the
 package-manager CLI available in `PATH`: `npm`, `pnpm`, `yarn`, or `bun`.
 
+The minimum supported VS Code `1.125.0` runs its Extension Host on Node.js 24.15.0,
+provided by Electron 42.2.0. Keep `@types/node` on the Node 24 major and keep the compiler
+target at or below the ES2022 output currently declared in `tsconfig.json`; the build
+machine's Node version does not determine the Extension Host runtime contract.
+
 ## Commands
 
 The table below is derived from the current `scripts` object in [package.json](package.json).
