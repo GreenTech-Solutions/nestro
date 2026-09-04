@@ -66,8 +66,16 @@ interface ManifestMenuEntry {
   readonly group?: string;
 }
 
+interface WorkspaceCapability {
+  readonly supported: boolean;
+  readonly description: string;
+}
+
 interface ExtensionManifest {
-  readonly capabilities?: Record<string, unknown>;
+  readonly capabilities: {
+    readonly untrustedWorkspaces: WorkspaceCapability;
+    readonly virtualWorkspaces: WorkspaceCapability;
+  };
   readonly contributes: {
     readonly commands: readonly ManifestCommand[];
     readonly menus: {
@@ -75,6 +83,7 @@ interface ExtensionManifest {
       readonly 'view/item/context': readonly ManifestMenuEntry[];
     };
   };
+  readonly extensionKind: readonly string[];
 }
 
 /** Reads the real, installed manifest rather than trusting a copy of `package.json` in test code. */
@@ -713,10 +722,19 @@ suite('Manifest Contracts', () => {
     assert.strictEqual(getManifest().contributes.commands.length, 19);
   });
 
-  test('capabilities.untrustedWorkspaces / virtualWorkspaces are not declared — implicit VS Code default today', () => {
-    // These will eventually be declared explicitly; this documents the present (absent)
-    // state as a baseline to flip later.
-    assert.strictEqual(getManifest().capabilities, undefined);
+  test('declares unsupported workspace modes and workspace-side execution', () => {
+    const manifest = getManifest();
+    assert.deepStrictEqual(manifest.capabilities, {
+      untrustedWorkspaces: {
+        supported: false,
+        description: 'Nestro reads local package files and runs package-manager processes.',
+      },
+      virtualWorkspaces: {
+        supported: false,
+        description: 'Nestro requires local package files and package-manager processes.',
+      },
+    });
+    assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
   });
 
   test('row capabilities keep update actions working and hide pin for unsupported specs', () => {

@@ -70,7 +70,7 @@ Automatically discovers multiple `package.json` files across your workspace, org
 
 ## Limitations
 
-Nestro relies on installed package managers for its operations. Make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH.
+Nestro cannot run in Restricted Mode or virtual workspaces because it reads local package files and runs package-manager processes. It also relies on installed package managers for its operations, so make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH.
 
 ## Release Notes / Changelog
 

@@ -30,6 +30,19 @@
   "engines": {
     "vscode": "^1.125.0"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Nestro reads local package files and runs package-manager processes."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Nestro requires local package files and package-manager processes."
+    }
+  },
+  "extensionKind": [
+    "workspace"
+  ],
   "categories": [
     "Other",
     "Programming Languages"

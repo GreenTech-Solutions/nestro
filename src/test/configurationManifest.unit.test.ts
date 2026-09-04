@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 interface ExtensionManifest {
+  readonly capabilities: {
+    readonly untrustedWorkspaces: WorkspaceCapability;
+    readonly virtualWorkspaces: WorkspaceCapability;
+  };
   readonly contributes: {
     readonly configuration: {
       readonly properties: {
@@ -18,6 +22,12 @@ interface ExtensionManifest {
       };
     };
   };
+  readonly extensionKind: readonly string[];
+}
+
+interface WorkspaceCapability {
+  readonly supported: boolean;
+  readonly description: string;
 }
 
 const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
@@ -33,5 +43,17 @@ describe('extension configuration manifest', () => {
     expect(setting.default).toBe(7);
     expect(setting.minimum).toBe(0);
     expect(setting.maximum).toBe(99_000_000);
+  });
+
+  it('declares unsupported workspace modes and workspace-side execution', () => {
+    expect(manifest.capabilities.untrustedWorkspaces).toEqual({
+      supported: false,
+      description: 'Nestro reads local package files and runs package-manager processes.',
+    });
+    expect(manifest.capabilities.virtualWorkspaces).toEqual({
+      supported: false,
+      description: 'Nestro requires local package files and package-manager processes.',
+    });
+    expect(manifest.extensionKind).toEqual(['workspace']);
   });
 });
