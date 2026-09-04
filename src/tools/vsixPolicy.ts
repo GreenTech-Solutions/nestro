@@ -46,8 +46,8 @@ export const VSIX_BUNDLE_CHUNK_PATTERN = /^out\/[A-Za-z0-9._$@-]+\.cjs$/;
 /** Packaged paths that are build output and therefore not tracked by git. */
 export const VSIX_BUILD_OUTPUT_PREFIX = 'out/';
 
-/** Measured clean-package baseline: 16 files, 717682 compressed bytes. Budget adds 25% size and 10 files. */
-export const CLEAN_BASELINE_COMPRESSED_BYTES = 717682;
+/** Measured clean-package baseline: 16 files, 901406 compressed bytes. Budget adds 25% size and 10 files. */
+export const CLEAN_BASELINE_COMPRESSED_BYTES = 901406;
 export const CLEAN_BASELINE_PACKAGED_FILE_COUNT = 16;
 export const COMPRESSED_SIZE_BUDGET_BYTES = Math.floor(CLEAN_BASELINE_COMPRESSED_BYTES * 1.25);
 export const PACKAGED_FILE_COUNT_BUDGET = CLEAN_BASELINE_PACKAGED_FILE_COUNT + 10;

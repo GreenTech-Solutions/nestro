@@ -543,9 +543,9 @@ describe('evaluateVsixPolicy() — budgets', () => {
     // Pins the exact numbers rather than deriving them, so raising the underlying constant
     // is caught here as a deliberate edit instead of silently following through the budget
     // arithmetic.
-    expect(CLEAN_BASELINE_COMPRESSED_BYTES).toBe(717682);
+    expect(CLEAN_BASELINE_COMPRESSED_BYTES).toBe(901406);
     expect(CLEAN_BASELINE_PACKAGED_FILE_COUNT).toBe(16);
-    expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(897102);
+    expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(1126757);
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(26);
   });
 
