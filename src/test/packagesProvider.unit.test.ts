@@ -559,6 +559,72 @@ describe('PackagesProvider', () => {
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
 
+  it('updates visible-update context and badge consistently through search and busy transitions', async () => {
+    const filterManager = new FilterManager('all');
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'vue',
+        current: '3.4.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([
+      ['react', '19.0.0'],
+      ['vue', '3.5.0'],
+    ]));
+    const provider = new PackagesProvider(filterManager);
+    const treeView = { badge: undefined, message: undefined } as unknown as vscode.TreeView<vscode.TreeItem>;
+    provider.attachTreeView(treeView);
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    expect(treeView.badge).toEqual({ tooltip: '2 package updates available', value: 2 });
+
+    const identities = provider.getPackageIdentitiesForFile('/workspace/package.json');
+    const react = identities.find(identity => identity.packageName === 'react');
+    const vue = identities.find(identity => identity.packageName === 'vue');
+    if (react === undefined || vue === undefined) {
+      throw new Error('expected both package identities');
+    }
+
+    provider.markPackageUpdating(react, { kind: 'remove' });
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    expect(treeView.badge).toEqual({ tooltip: '1 package updates available', value: 1 });
+
+    filterManager.setSearch('react');
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(false);
+    filterManager.setSearch('vue');
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    filterManager.set('patch');
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(false);
+
+    filterManager.clearSearch();
+    filterManager.set('all');
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    provider.markPackageUpdating(vue, { kind: 'pin' });
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(false);
+    expect(treeView.badge).toBeUndefined();
+
+    provider.markPackageUpdating(react, undefined);
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    provider.markPackageUpdating(vue, undefined);
+    expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
+    expect(treeView.badge).toEqual({ tooltip: '2 package updates available', value: 2 });
+
+    provider.dispose();
+  });
+
   it('reuses fresh update check results', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 

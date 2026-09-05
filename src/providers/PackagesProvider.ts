@@ -34,7 +34,14 @@ import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
-import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './treeBuilder';
+import {
+  buildTree,
+  getFilterCounts,
+  PackageTreeEntry,
+  projectPackageTree,
+  resolvePackageFileLabels,
+  toWorkspaceFolderDescriptors,
+} from './treeBuilder';
 import type { WorkspaceFolderDescriptor } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import {
@@ -499,9 +506,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.loading) {
       return [];
     }
-    return getFilteredEntries(this.allEntries, this.filterManager.current, this.filterManager.search)
-      .map(entry => entry.item)
-      .filter(item => item.updateType !== 'none' && item.latest !== undefined && item.operation === undefined);
+    return projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search)
+      .visibleOutdatedEntries
+      .map(entry => entry.item);
   }
 
   getPackageIdentitiesForFile(packageFilePath: string): PackageStateIdentity[] {
@@ -806,7 +813,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.allEntries.length === 0) {
       return;
     }
-    await this.filterManager.showPicker(getFilterCounts(this.allEntries));
+    await this.filterManager.showPicker(getFilterCounts(this.allEntries, this.filterManager.search));
   }
 
   async loadPackages(): Promise<void> {
@@ -1329,10 +1336,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private emitTreeChanged(): void {
     this.updateTreeViewState();
+    const projection = this.loading
+      ? undefined
+      : projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search);
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.canUpdateVisiblePackages',
-      this.getVisibleOutdatedPackages().length > 0,
+      projection?.canUpdateVisiblePackages ?? false,
     );
     this.setWorkspaceCapabilityContexts(this.publishedWorkspaceCapabilities());
     void vscode.commands.executeCommand(
@@ -1500,11 +1510,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
-    const outdatedCount = this.allEntries.filter(e => (
-      e.item.updateType !== 'none'
-      && e.item.latest !== undefined
-      && e.item.operation === undefined
-    )).length;
+    const outdatedCount = projectPackageTree(this.allEntries, 'all').visibleOutdatedEntries.length;
     this.treeView.badge = outdatedCount > 0
       ? { tooltip: `${outdatedCount} package updates available`, value: outdatedCount }
       : undefined;

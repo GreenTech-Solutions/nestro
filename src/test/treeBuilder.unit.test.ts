@@ -4,10 +4,12 @@ import {
   FilterBarItem,
   findOwningWorkspaceFolder,
   getFilterCounts,
+  getFilteredEntries,
   GroupItem,
   MessageItem,
   PackageItem,
   PackageTreeEntry,
+  projectPackageTree,
   resolvePackageFileLabels,
   resolvePackageOwnerLabel,
   resolveWorkspaceFolderDisplayNames,
@@ -19,6 +21,7 @@ import {
 } from '../providers';
 import * as vscode from 'vscode';
 import type { PackageOperation } from '../providers';
+import type { AuditSeverity } from '../utils';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
@@ -215,6 +218,45 @@ describe('buildTree', () => {
       label: 'Search query',
       description: 'react',
     }));
+  });
+
+  it('keeps busy rows in All while excluding them from update rows and group outdated counts', () => {
+    const entries = [
+      makeEntry(
+        'react-busy',
+        '18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        '/workspace/package.json',
+        { kind: 'remove' },
+      ),
+      makeEntry('react-ready', '1.0.0', '1.1.0', 'minor', false),
+    ];
+
+    const allTree = buildTree(entries, 'all', 'react');
+    const allFilter = allTree[1] as FilterBarItem;
+    const allGroups = allTree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(allFilter.description).toBe('All (2) | Has Updates (1) | Patch (0) | Minor (1) | Breaking (0)');
+    expect(allGroups[0].description).toBe('2 packages · 1 outdated');
+    expect(allGroups[0].children.map(child => child.label)).toEqual(['react-busy', 'react-ready']);
+
+    const updateTree = buildTree(entries, 'hasUpdates', 'react');
+    const updateGroups = updateTree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(updateGroups[0].description).toBe('1 packages · 1 outdated');
+    expect(updateGroups[0].children.map(child => child.label)).toEqual(['react-ready']);
+  });
+
+  it('keeps workspace label qualifiers stable when search hides package files', () => {
+    const folders = [makeFolder('/workspace', 'workspace', 0)];
+    const tree = buildTree([
+      makeEntry('other', '1.0.0', undefined, 'none', false, '/workspace/0-é-empty/package.json'),
+      makeEntry('alpha', '1.0.0', undefined, 'none', false, '/workspace/α/package.json'),
+      makeEntry('beta', '1.0.0', undefined, 'none', false, '/workspace/β/package.json'),
+    ], 'all', 'beta', folders);
+
+    const workspaceItems = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    expect(workspaceItems.map(item => item.label)).toEqual(['workspace — β [unicode #3]']);
   });
 });
 
@@ -705,6 +747,92 @@ describe('getFilterCounts', () => {
   });
 });
 
+describe('projectPackageTree', () => {
+  it('uses one search-scoped projection for rows, counters, groups, and update capability', () => {
+    const entries = [
+      makeEntry(
+        'react-busy',
+        '18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        '/workspace/package.json',
+        { kind: 'update', target: '19.0.0' },
+      ),
+      makeEntry('react-ready', '1.0.0', '1.1.0', 'minor', false),
+      makeEntry('react-vulnerable', '2.0.0', '3.0.0', 'breaking', false, '/workspace/package.json', undefined, 'high'),
+      makeEntry('react-unknown', '1.0.0', undefined, 'patch', false),
+    ];
+
+    const all = projectPackageTree(entries, 'all', 'React');
+
+    expect(all.searchMatchedEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-busy',
+      'react-ready',
+      'react-vulnerable',
+      'react-unknown',
+    ]);
+    expect(all.visibleEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-busy',
+      'react-ready',
+      'react-vulnerable',
+      'react-unknown',
+    ]);
+    expect(all.filterCounts).toEqual({
+      all: 4,
+      hasUpdates: 2,
+      patch: 0,
+      minor: 1,
+      breaking: 1,
+    });
+    expect(all.groups.map(group => ({
+      dev: group.dev,
+      totalCount: group.totalCount,
+      outdatedCount: group.outdatedCount,
+      names: group.entries.map(entry => entry.item.packageName),
+    }))).toEqual([{
+      dev: false,
+      totalCount: 4,
+      outdatedCount: 2,
+      names: ['react-busy', 'react-ready', 'react-vulnerable', 'react-unknown'],
+    }]);
+    expect(all.visibleOutdatedEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-ready',
+      'react-vulnerable',
+    ]);
+    expect(all.canUpdateVisiblePackages).toBe(true);
+
+    const updates = projectPackageTree(entries, 'hasUpdates', 'react');
+    expect(updates.visibleEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-vulnerable',
+      'react-ready',
+    ]);
+    expect(updates.groups[0]).toMatchObject({ totalCount: 2, outdatedCount: 2 });
+    expect(updates.canUpdateVisiblePackages).toBe(true);
+
+    const busyOnly = projectPackageTree(entries, 'hasUpdates', 'busy');
+    expect(busyOnly.visibleEntries).toEqual([]);
+    expect(busyOnly.groups).toEqual([]);
+    expect(busyOnly.canUpdateVisiblePackages).toBe(false);
+
+    const allBusy = projectPackageTree(entries, 'all', 'busy');
+    expect(allBusy.visibleEntries.map(entry => entry.item.packageName)).toEqual(['react-busy']);
+    expect(allBusy.groups[0]).toMatchObject({ totalCount: 1, outdatedCount: 0 });
+    expect(allBusy.visibleOutdatedEntries).toEqual([]);
+    expect(allBusy.canUpdateVisiblePackages).toBe(false);
+  });
+
+  it('keeps the filtered-entry helper on the same projection contract', () => {
+    const entries = [
+      makeEntry('busy', '1.0.0', '2.0.0', 'breaking', false, '/workspace/package.json', { kind: 'install' }),
+      makeEntry('ready', '1.0.0', '1.1.0', 'minor', false),
+    ];
+
+    expect(getFilteredEntries(entries, 'all', 'ready').map(entry => entry.item.packageName)).toEqual(['ready']);
+    expect(getFilteredEntries(entries, 'hasUpdates').map(entry => entry.item.packageName)).toEqual(['ready']);
+  });
+});
+
 function makeEntry(
   name: string,
   current: string,
@@ -713,9 +841,10 @@ function makeEntry(
   dev: boolean,
   packageFilePath = '/workspace/package.json',
   operation: PackageOperation | undefined = undefined,
+  vulnerabilitySeverity: AuditSeverity | undefined = undefined,
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType, operation, undefined, packageFilePath),
+    item: new PackageItem(name, current, latest, updateType, operation, vulnerabilitySeverity, packageFilePath),
     dev,
     packageFilePath,
   };
