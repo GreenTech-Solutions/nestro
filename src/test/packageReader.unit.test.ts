@@ -77,6 +77,10 @@ describe('readAllWorkspaceDependencies()', () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
   });
 
+  it('returns no entries when no workspace package.json is found', async () => {
+    await expect(readAllWorkspaceDependencies()).resolves.toEqual([]);
+  });
+
   it('returns dependencies from one package.json with the package file path', async () => {
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       vscode.Uri.file('/workspace/package.json'),
@@ -184,6 +188,13 @@ describe('updateWorkspaceDependencyVersions()', () => {
     vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
   });
 
+  afterEach(() => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [{ uri: { fsPath: '/workspace' } }],
+    });
+  });
+
   it('preserves the existing version prefix when updating package.json', async () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^17.0.0' },
@@ -253,6 +264,17 @@ describe('updateWorkspaceDependencyVersions()', () => {
     });
     expect(written).toContain('\n    "dependencies":');
     expect(written).toContain('\n        "react": "^18.0.0"');
+  });
+
+  it('throws when no workspace folder is open', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: undefined,
+    });
+
+    await expect(updateWorkspaceDependencyVersions([
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
+    ])).rejects.toThrow('No workspace folder found.');
   });
 
   it('updates only the requested section when a package exists in dependencies and devDependencies', async () => {
@@ -438,8 +460,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
     vi.mocked(vscode.workspace.fs.writeFile).mockImplementation((uri, content) => {
       writeCount++;
       calls.push({ path: uri.fsPath, bytes: Buffer.from(content).toString('utf8') });
-      // 1: write a (succeeds). 2: write b (fails, triggers rollback).
-      // 3: rollback b. 4: rollback a — both succeed and restore original bytes.
+      // 1: write a (succeeds). 2: write b (fails). 3: rollback a restores its bytes.
       if (writeCount === 2) {
         return Promise.reject(new Error('disk full on b'));
       }
@@ -448,9 +469,9 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
 
     await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(new Error('disk full on b'));
 
-    expect(writeCount).toBe(4);
-    expect(calls[2]).toEqual({ path: '/workspace/b/package.json', bytes: originalB });
-    expect(calls[3]).toEqual({ path: '/workspace/a/package.json', bytes: originalA });
+    expect(writeCount).toBe(3);
+    expect(calls[2]).toEqual({ path: '/workspace/a/package.json', bytes: originalA });
+    expect(calls).not.toContainEqual({ path: '/workspace/b/package.json', bytes: originalB });
   });
 
   it('reports a workspace-relative path when the rollback write itself fails', async () => {
@@ -465,8 +486,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
     let writeCount = 0;
     vi.mocked(vscode.workspace.fs.writeFile).mockImplementation(() => {
       writeCount++;
-      // 1: write a (succeeds). 2: write b (fails). 3: rollback b (fails too,
-      // reported below). 4: rollback a (succeeds, so it never appears in the message).
+      // 1: write a (succeeds). 2: write b (fails). 3: rollback a fails and is reported below.
       if (writeCount === 2) {
         return Promise.reject(new Error('disk full'));
       }
@@ -477,7 +497,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
     });
 
     await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(
-      'disk full; failed to roll back: apps/b/package.json',
+      'disk full; failed to roll back: apps/a/package.json',
     );
   });
 
@@ -507,6 +527,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
     await expect(pinAllWorkspaceDependencyVersions()).rejects.toThrow(
       'disk full; failed to roll back: package.json',
     );
+    expect(writeCount).toBe(3);
   });
 });
 

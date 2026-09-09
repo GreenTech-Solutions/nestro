@@ -1052,10 +1052,6 @@ describe('updateAllVisibleCommand()', () => {
       if (writeCount === 2) {
         return Promise.reject(new Error('second write failed'));
       }
-      if (writeCount === 3) {
-        expect(uri.fsPath).toBe('/workspace/apps/web/package.json');
-        expect(Buffer.from(content).toString('utf8')).toContain('"vite": "^5.0.0"');
-      }
       return Promise.resolve();
     });
     const provider = makeProvider([
@@ -1065,10 +1061,15 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(writeCount).toBe(4);
-    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[2][1]).toString('utf8'))
-      .toContain('"vite": "^5.0.0"');
-    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[3][1]).toString('utf8'))
+    const writeCalls = vi.mocked(vscode.workspace.fs.writeFile).mock.calls;
+    expect(writeCount).toBe(3);
+    expect(writeCalls).toHaveLength(3);
+    expect(writeCalls[1][0].fsPath).toBe('/workspace/apps/web/package.json');
+    expect(Buffer.from(writeCalls[1][1]).toString('utf8'))
+      .toContain('"vite": "^5.1.0"');
+    expect(writeCalls[2][0].fsPath)
+      .toBe('/workspace/package.json');
+    expect(Buffer.from(writeCalls[2][1]).toString('utf8'))
       .toContain('"react": "^18.0.0"');
     expect(provider.markPackageUpdating).toHaveBeenCalledWith({
       packageName: 'react',
@@ -1111,7 +1112,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed; failed to roll back: apps/web/package.json',
+      'Nestro: failed to update packages — second write failed; failed to roll back: package.json',
     );
   });
 

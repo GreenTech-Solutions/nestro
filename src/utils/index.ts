@@ -1,5 +1,7 @@
 export * from './dependencySpec';
 export * from './packageReader';
+export * from './packageRepository';
+export * from './packageTransforms';
 export * from './ncuClient';
 export * from './packageManager';
 export * from './versionUtils';
