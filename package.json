@@ -84,19 +84,19 @@
         "nestro.checkUpdatesOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically check for package updates when the extension activates."
+          "description": "After the initial package scan completes, run one update check on each extension activation."
         },
         "nestro.includePreReleases": {
           "type": "boolean",
           "default": false,
-          "description": "Include pre-release versions (alpha, beta, rc) when checking for package updates."
+          "description": "Include alpha, beta, and release-candidate versions in update checks and in the Pick Version version list. Disabled by default because prereleases can be less stable; enable it only when that risk is acceptable."
         },
         "nestro.minimumReleaseAgeDays": {
           "type": "number",
           "default": 7,
           "minimum": 0,
           "maximum": 99000000,
-          "description": "Minimum age in days before a package release is accepted for updates. This overrides native package-manager release-age settings for Nestro checks. Set to 0 to disable the Nestro policy."
+          "description": "Minimum age in days before Nestro accepts a release for an update check; the value must be a whole number of days, or the default is used. For Nestro checks, this value overrides native package-manager release-age settings; newer releases may be deferred to an older eligible version, missing publish times are reported as unknown, and applying an update inside the window prompts for confirmation. The default 7-day cooldown reduces newly published release risk but delays updates; set to 0 to disable this Nestro policy. It does not change package-manager install behavior."
         },
         "nestro.updateTarget": {
           "type": "string",
@@ -107,7 +107,13 @@
             "patch"
           ],
           "default": "latest",
-          "description": "Version target strategy for update checks."
+          "enumDescriptions": [
+            "Use the package's latest dist-tag version, accepting a new major version when it is published under that tag, subject to the prerelease and minimum release age settings.",
+            "Choose the highest available version, independent of dist-tags, subject to the prerelease and minimum release age settings.",
+            "Allow patch and minor upgrades while staying on the current major version, subject to the prerelease and minimum release age settings.",
+            "Allow only patch upgrades within the current major and minor version, subject to the prerelease and minimum release age settings."
+          ],
+          "description": "Select the version target used by update checks. The chosen target controls how far a dependency may move; prerelease inclusion and the release-age cooldown still apply."
         },
         "nestro.defaultFilter": {
           "type": "string",
@@ -119,12 +125,19 @@
             "breaking"
           ],
           "default": "all",
-          "description": "Default package sidebar filter."
+          "enumDescriptions": [
+            "Show every discovered dependency, including packages without updates.",
+            "Show packages with an available update of any update type.",
+            "Show only packages with patch updates.",
+            "Show only packages with minor updates.",
+            "Show only packages whose update raises the major version."
+          ],
+          "description": "Choose the package rows shown by the sidebar when Nestro starts. The Update All command acts only on the rows currently visible; the filter does not change which updates are checked. Every filter except All also hides a package while its update is in progress."
         },
         "nestro.deferInstallAfterUpdate": {
           "type": "boolean",
           "default": false,
-          "description": "Update package.json first and run dependency installation separately."
+          "description": "Write selected update versions to package.json without running the package manager. Run Nestro: Run Install separately to update installed packages and lockfiles; when disabled, each update runs the package manager immediately."
         },
         "nestro.confirmBulkUpdate": {
           "type": "boolean",
@@ -134,7 +147,7 @@
         "nestro.runAuditOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "Run npm audit automatically when the extension activates."
+          "description": "After the initial package scan completes, run one detected-package-manager security audit for each resolved project on every extension activation. This is independent of update checks and is disabled by default."
         },
         "nestro.monorepoGlob": {
           "type": "string",
@@ -145,12 +158,12 @@
           "type": "number",
           "default": 60,
           "minimum": 0,
-          "description": "Minimum seconds between consecutive Check for Updates runs. A second click within this window is ignored. Set to 0 to disable throttling."
+          "description": "Minimum seconds between update checks when the package files and update policy are unchanged. A click inside this window is ignored; after it, a valid cached result is reused without a network fetch. Set to 0 to disable this debounce. checkUpdatesForceAlways overrides this setting."
         },
         "nestro.checkUpdatesForceAlways": {
           "type": "boolean",
           "default": false,
-          "description": "Always run Check for Updates immediately, ignoring the debounce interval."
+          "description": "When no update check is already running, start every Check for Updates click immediately, bypassing checkUpdatesDebounce and the update cache. This can make a network request on every click; changes to update policy or package files already invalidate the cache and bypass the debounce."
         }
       }
     },
