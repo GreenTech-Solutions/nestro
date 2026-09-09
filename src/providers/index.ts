@@ -1,3 +1,5 @@
+export * from './packageIdentity';
+export * from './packageLoadingService';
 export * from './PackagesProvider';
 export * from './PackageItem';
 export * from './PackageDetailItem';
@@ -9,4 +11,3 @@ export * from './FilterManager';
 export * from './SearchQueryItem';
 export * from './MessageItem';
 export * from './treeBuilder';
-export * from './packageIdentity';

@@ -17,6 +17,10 @@ import {
   StatusItem,
   WorkspaceFolderItem,
 } from '../providers';
+import type {
+  PackageLoadingServiceContract,
+  PackageLoadingSnapshot,
+} from '../providers';
 import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
 // LoadingItem is not part of the providers barrel's public surface (used only internally by
 // PackagesProvider), so it must be imported directly from its implementation file.
@@ -31,7 +35,7 @@ import {
   resolveYarnFamily,
   showError,
 } from '../utils';
-import type { AuditAdvisory, AuditResult, AuditSeverity } from '../utils';
+import type { AuditAdvisory, AuditResult, AuditSeverity, PackageFileEntry } from '../utils';
 import { getUpdateType as realGetUpdateType } from '../utils/versionUtils';
 
 const createClientMock = vi.fn();
@@ -76,6 +80,25 @@ function getLastContextValue(context: string): unknown {
   const calls = vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][];
   const contextCalls = calls.filter(call => call[0] === 'setContext' && call[1] === context);
   return contextCalls.at(-1)?.[2];
+}
+
+function createLoadingSnapshot(packageName: string): PackageLoadingSnapshot {
+  const packageFilePath = '/workspace/package.json';
+  const entries: PackageFileEntry[] = [{
+    name: packageName,
+    current: '1.0.0',
+    dev: false,
+    versionPrefix: '',
+    packageFilePath,
+  }];
+  return {
+    entries,
+    packageFilePaths: [packageFilePath],
+    readablePackageFilePaths: [packageFilePath],
+    failedPackageReadPaths: [],
+    packageLocationBaselines: new Map(),
+    packageReadFailed: false,
+  };
 }
 
 async function createRealAuditProject(packageNames: readonly string[]): Promise<{
@@ -2555,6 +2578,98 @@ describe('PackagesProvider', () => {
       packageFilePaths: ['/workspace/package.json'],
       reason: 'workspace-escape',
     })]);
+  });
+
+  describe('loading service contract', () => {
+    it('aborts a superseded service load and applies only the current snapshot', async () => {
+      const oldSnapshot = createLoadingSnapshot('old-package');
+      const currentSnapshot = createLoadingSnapshot('current-package');
+      let loadInvocation = 0;
+      let oldSignal: AbortSignal | undefined;
+      let resolveOld: ((snapshot: PackageLoadingSnapshot) => void) | undefined;
+      const load = vi.fn((signal?: AbortSignal): Promise<PackageLoadingSnapshot> => {
+        if (loadInvocation === 0) {
+          loadInvocation += 1;
+          oldSignal = signal;
+          return new Promise((resolve) => {
+            resolveOld = resolve;
+          });
+        }
+        loadInvocation += 1;
+        return Promise.resolve(currentSnapshot);
+      });
+      const service: PackageLoadingServiceContract = {
+        load,
+        readPackageEntries: vi.fn().mockResolvedValue([]),
+        discoverPackageFilePaths: vi.fn().mockResolvedValue([]),
+      };
+      const provider = new PackagesProvider(new FilterManager('all'), service);
+
+      const oldLoad = provider.loadPackages();
+      expect(load).toHaveBeenCalledTimes(1);
+      const currentLoad = provider.loadPackages();
+
+      expect(oldSignal).toBeInstanceOf(AbortSignal);
+      expect(oldSignal?.aborted).toBe(true);
+      expect(load).toHaveBeenNthCalledWith(1, oldSignal);
+      expect(load.mock.calls[1]?.[0]).toBeInstanceOf(AbortSignal);
+      expect(load.mock.calls[1]?.[0]).not.toBe(oldSignal);
+
+      await currentLoad;
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['current-package']);
+
+      const finishOldLoad = resolveOld;
+      if (finishOldLoad === undefined) {
+        throw new Error('The superseded load resolver was not initialized.');
+      }
+      finishOldLoad(oldSnapshot);
+      await oldLoad;
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['current-package']);
+      provider.dispose();
+    });
+
+    it('publishes exactly start and settle updates with each context key set twice', async () => {
+      const load = vi.fn().mockResolvedValue(createLoadingSnapshot('current-package'));
+      const service: PackageLoadingServiceContract = {
+        load,
+        readPackageEntries: vi.fn().mockResolvedValue([]),
+        discoverPackageFilePaths: vi.fn().mockResolvedValue([]),
+      };
+      const provider = new PackagesProvider(new FilterManager('all'), service);
+      const contextKeys = [
+        'nestro.canUpdateVisiblePackages',
+        'nestro.hasPackageFiles',
+        'nestro.hasReadablePackageFiles',
+        'nestro.hasDependencyEntries',
+        'nestro.hasAuditableProjects',
+        'nestro.canRunInstall',
+        'nestro.canRunAudit',
+        'nestro.canSearchPackages',
+        'nestro.canFilterPackages',
+        'nestro.canPinAllVersions',
+        'nestro.noWorkspace',
+      ] as const;
+      let treeChangeCount = 0;
+      const treeChangeSubscription = provider.onDidChangeTreeData(() => {
+        treeChangeCount += 1;
+      });
+
+      await provider.loadPackages();
+
+      expect(load).toHaveBeenCalledOnce();
+      expect(load.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
+      expect(treeChangeCount).toBe(2);
+      const contextCalls = (vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][])
+        .filter(call => call[0] === 'setContext');
+      expect(contextCalls).toHaveLength(contextKeys.length * 2);
+      for (const contextKey of contextKeys) {
+        expect(contextCalls.filter(call => call[1] === contextKey)).toHaveLength(2);
+      }
+
+      treeChangeSubscription.dispose();
+      provider.dispose();
+    });
   });
 
   describe('stale-safe reload', () => {

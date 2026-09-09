@@ -8,12 +8,10 @@ import {
   fetchAllLatestVersions,
   fetchPackageMetadata,
   getUpdateType,
-  getWorkspacePackageFilePaths,
   inferPathAttribution,
   logger,
   mergeAuditAdvisories,
   NcuUpdateTarget,
-  readAllWorkspaceDependencies,
   readMinimumReleaseAgeDays,
   resolveMetadataRegistryKey,
   resolveUpdateReleaseAge,
@@ -21,6 +19,7 @@ import {
   showError,
 } from '../utils';
 import type { AuditSeverity, PackageMetadataOutcome, ReleaseAgeState, UpdateType } from '../utils';
+import type { PackageFileEntries } from '../utils';
 import type {
   AuditAdvisory,
   AuditPackageManager,
@@ -60,6 +59,8 @@ import type {
   PackageItemRecord,
   ResolvedPackageItem,
 } from './packageIdentity';
+import { PackageLoadingService } from './index';
+import type { PackageLoadingServiceContract } from './index';
 
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
@@ -234,6 +235,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private readonly filterChangeDisposable: vscode.Disposable;
+  private readonly packageLoadingService: PackageLoadingServiceContract;
   private allEntries: PackageTreeEntry[] = [];
   private packageFilePaths: string[] = [];
   /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
@@ -294,7 +296,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     fingerprint: string;
   } | undefined;
 
-  constructor(private readonly filterManager: FilterManager) {
+  constructor(
+    private readonly filterManager: FilterManager,
+    packageLoadingService: PackageLoadingServiceContract = new PackageLoadingService(),
+  ) {
+    this.packageLoadingService = packageLoadingService;
     this.filterChangeDisposable = this.filterManager.onDidChange(() => this.emitTreeChanged());
   }
 
@@ -845,59 +851,24 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
-      const entries = await readAllWorkspaceDependencies();
-      const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
-      try {
-        const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
-        packageFilePaths.push(...discoveredPackageFilePaths.filter(
-          packageFilePath => !packageFilePaths.includes(packageFilePath),
-        ));
-      }
-      catch {
-        this.packageReadFailed = true;
-        logger.warn('Failed to discover workspace package files; using loaded package entries.');
-      }
-      const failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
-      for (const packageFilePath of failedPackageReadPaths) {
-        if (!packageFilePaths.includes(packageFilePath)) {
-          packageFilePaths.push(packageFilePath);
-        }
-      }
-      const failedPackageReadPathSet = new Set(failedPackageReadPaths);
-      const readablePackageFilePaths = packageFilePaths.filter(
-        packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
-      );
-      const baselines = new Map<string, CanonicalPackageLocation>();
-      const canonicalManifestOwners = new Map<string, string>();
-      const collidingManifestPaths = new Set<string>();
-      for (const packageFilePath of new Set(entries.map(entry => entry.packageFilePath))) {
-        const location = await resolveCanonicalPackageLocation(packageFilePath);
-        if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
-          return;
-        }
-        if (location.ok) {
-          const canonicalOwner = canonicalManifestOwners.get(location.value.packageFilePath);
-          if (canonicalOwner !== undefined && canonicalOwner !== packageFilePath) {
-            collidingManifestPaths.add(canonicalOwner);
-            collidingManifestPaths.add(packageFilePath);
-            baselines.delete(canonicalOwner);
-            baselines.delete(packageFilePath);
-            continue;
-          }
-          canonicalManifestOwners.set(location.value.packageFilePath, packageFilePath);
-          if (!collidingManifestPaths.has(packageFilePath)) {
-            baselines.set(packageFilePath, freezePackageLocation(location.value));
-          }
-        }
-      }
-      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
+      const snapshot = await this.packageLoadingService.load(abortController.signal);
+      if (snapshot === undefined || this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
-      this.packageLocationBaselines = baselines;
-      this.packageFilePaths = packageFilePaths;
+      const {
+        entries,
+        packageFilePaths,
+        readablePackageFilePaths,
+        failedPackageReadPaths,
+        packageLocationBaselines,
+        packageReadFailed,
+      } = snapshot;
+      this.packageReadFailed = packageReadFailed;
+      this.packageLocationBaselines = new Map(packageLocationBaselines);
+      this.packageFilePaths = [...packageFilePaths];
       this.ownerLabelCache = undefined;
-      this.readablePackageFilePaths = readablePackageFilePaths;
-      this.failedPackageReadPaths = failedPackageReadPaths;
+      this.readablePackageFilePaths = [...readablePackageFilePaths];
+      this.failedPackageReadPaths = [...failedPackageReadPaths];
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -1739,15 +1710,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return knownPackageFilePaths;
     }
 
-    const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
+    const discoveredPackageFilePaths = await this.packageLoadingService.discoverPackageFilePaths();
     const failedPackageReadPathSet = new Set(this.failedPackageReadPaths);
     return discoveredPackageFilePaths.filter(
       packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
     );
   }
 
-  private async readPackagesForUpdateCheck(): Promise<Awaited<ReturnType<typeof readAllWorkspaceDependencies>>> {
-    const entries = await readAllWorkspaceDependencies();
+  private async readPackagesForUpdateCheck(): Promise<PackageFileEntries> {
+    const entries = await this.packageLoadingService.readPackageEntries();
     this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
     return entries;
   }
@@ -2105,13 +2076,6 @@ function sameCanonicalPackageLocation(
     && left.workspaceFolderPath === right.workspaceFolderPath
     && left.manifestDigest === right.manifestDigest
     && samePackageFileStamp(left.fileStamp, right.fileStamp);
-}
-
-function freezePackageLocation(location: CanonicalPackageLocation): CanonicalPackageLocation {
-  return Object.freeze({
-    ...location,
-    fileStamp: Object.freeze({ ...location.fileStamp }),
-  });
 }
 
 function countProjectVulnerablePackages(projects: readonly AuditProjectSummary[]): number {
