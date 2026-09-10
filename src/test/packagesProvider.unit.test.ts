@@ -4174,28 +4174,6 @@ describe('update fingerprint', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('changes the update fingerprint when minimum release age changes', async () => {
-    const provider = new PackagesProvider(new FilterManager('all'));
-    const identity = {
-      packageName: 'react',
-      packageFilePath: manifest,
-      section: 'dependencies' as const,
-    };
-    const computeFingerprint = (provider as unknown as {
-      computeUpdateFingerprint: (
-        identities: readonly typeof identity[],
-        target: 'latest',
-        includePreReleases: boolean,
-        minimumReleaseAgeDays: number,
-      ) => Promise<string>;
-    }).computeUpdateFingerprint;
-
-    const defaultFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 7);
-    const changedFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 14);
-
-    expect(changedFingerprint).not.toBe(defaultFingerprint);
-  });
-
   it('rejects a fetch when the manifest changes while it is in flight, with no explicit invalidation', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();

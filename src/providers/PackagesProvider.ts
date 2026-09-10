@@ -1,13 +1,11 @@
 import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { ClientManager, resolveAuditProjects, resolveMutationCoordinatorKey } from '../clients';
+import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
 import {
   createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
-  fetchAllLatestVersions,
-  fetchPackageMetadata,
   getUpdateType,
   inferPathAttribution,
   logger,
@@ -15,16 +13,12 @@ import {
   NcuUpdateTarget,
   OperationCoordinator,
   readMinimumReleaseAgeDays,
-  resolveMetadataRegistryKey,
-  resolveUpdateReleaseAge,
   resolveYarnFamily,
   runRootOperations,
   showError,
-  startRootOperations,
 } from '../utils';
 import type {
   AuditSeverity,
-  PackageMetadataOutcome,
   ReleaseAgeState,
   UpdateType,
 } from '../utils';
@@ -56,7 +50,6 @@ import {
   packageIdentityFromValues,
   packageIdentityKey,
   readCanonicalDependencySpec,
-  readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
   samePackageFileStamp,
 } from './packageIdentity';
@@ -68,8 +61,15 @@ import type {
   PackageItemRecord,
   ResolvedPackageItem,
 } from './packageIdentity';
-import { PackageLoadingService } from './index';
-import type { PackageLoadingServiceContract } from './index';
+import {
+  PackageLoadingService,
+  UpdateOrchestrationService,
+} from './index';
+import type {
+  PackageLoadingServiceContract,
+  UpdateFingerprintPolicy,
+  UpdateOrchestrationServiceContract,
+} from './index';
 
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
@@ -105,21 +105,6 @@ export interface AuditProjectFailure {
 export interface AuditReportSnapshot {
   readonly projects: readonly AuditProjectSummary[];
   readonly failures: readonly AuditProjectFailure[];
-}
-
-type UpdateFetchResult
-  = | {
-    readonly accepted: true;
-    readonly data: ReadonlyMap<string, CachedUpdateData>;
-    readonly failedPackageFilePaths: readonly string[];
-    readonly allFailed: boolean;
-    readonly failure?: unknown;
-  }
-  | { readonly accepted: false };
-
-interface CachedUpdateData {
-  readonly acceptedVersion: string | undefined;
-  readonly releaseAge: ReleaseAgeState;
 }
 
 /** Global workspace capabilities used by toolbar and Command Palette contexts. */
@@ -159,123 +144,10 @@ const WORKSPACE_CAPABILITY_CONTEXTS = {
   canPinAllVersions: 'nestro.canPinAllVersions',
 } as const;
 
-interface MetadataLookup {
-  readonly identity: PackageIdentityTuple;
-  readonly key: string;
-  readonly coordinationKey: string;
-}
-
 /** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
 export const METADATA_CONCURRENCY_CAP = 4;
 
 type PackageOperationInput = PackageOperation | boolean | undefined;
-
-async function fetchMetadataOutcomes(
-  identities: readonly PackageIdentityTuple[],
-  signal: AbortSignal,
-  checkCoordinator: OperationCoordinator,
-  metadataCoordinator: OperationCoordinator,
-): Promise<(PackageMetadataOutcome | undefined)[] | undefined> {
-  const lookupRun = startRootOperations(
-    identities,
-    identity => identity.packageFilePath,
-    checkCoordinator,
-    signal,
-    (identity): Promise<MetadataLookup> => metadataCoordinator.runExclusive(
-      identity.packageFilePath,
-      async (): Promise<MetadataLookup> => {
-        let registryKey: string | undefined;
-        let coordinationKey = identity.packageFilePath;
-        try {
-          registryKey = await resolveMetadataRegistryKey(identity.packageName, identity.packageFilePath);
-        }
-        catch {
-          registryKey = undefined;
-        }
-        try {
-          coordinationKey = await resolveMutationCoordinatorKey(identity.packageFilePath);
-        }
-        catch {
-          coordinationKey = identity.packageFilePath;
-        }
-        return {
-          identity,
-          key: buildMetadataLookupKey(identity, registryKey),
-          coordinationKey,
-        };
-      },
-    ),
-  );
-  const lookupResults = await lookupRun.result;
-  if (signal.aborted) {
-    return undefined;
-  }
-  const lookups: MetadataLookup[] = lookupResults.map((result, index) => {
-    if (result.status === 'success') {
-      return result.value;
-    }
-    const identity = identities[index];
-    return {
-      identity,
-      key: buildMetadataLookupKey(identity, undefined),
-      coordinationKey: identity.packageFilePath,
-    };
-  });
-  const uniqueRequests = new Map<string, MetadataLookup>();
-  lookups.forEach((lookup) => {
-    const { key } = lookup;
-    if (!uniqueRequests.has(key)) {
-      uniqueRequests.set(key, lookup);
-    }
-  });
-  const uniqueEntries = [...uniqueRequests.entries()];
-  const outcomeRun = startRootOperations(
-    uniqueEntries,
-    ([, lookup]) => lookup.coordinationKey,
-    checkCoordinator,
-    signal,
-    ([key, lookup], requestSignal): Promise<readonly [string, PackageMetadataOutcome | undefined]> => (
-      metadataCoordinator.runExclusive(
-        `${lookup.coordinationKey}\u0000${lookup.key}`,
-        async (): Promise<readonly [string, PackageMetadataOutcome | undefined]> => {
-          try {
-            return [key, await fetchPackageMetadata(
-              lookup.identity.packageName,
-              lookup.identity.packageFilePath,
-              requestSignal,
-            )];
-          }
-          catch {
-            return [key, undefined];
-          }
-        },
-      )
-    ),
-  );
-  const outcomes = await outcomeRun.result;
-  if (signal.aborted) {
-    return undefined;
-  }
-  const outcomesByKey = new Map<string, PackageMetadataOutcome | undefined>();
-  outcomes.forEach((result, index) => {
-    const entry = uniqueEntries[index];
-    if (entry === undefined) {
-      return;
-    }
-    outcomesByKey.set(entry[0], result.status === 'success' ? result.value[1] : undefined);
-  });
-  const keyByIdentity = new Map(lookups.map(({ identity, key }) => [packageIdentityKey(identity), key]));
-  return identities.map(identity => outcomesByKey.get(
-    keyByIdentity.get(packageIdentityKey(identity)) ?? '',
-  ));
-}
-
-function buildMetadataLookupKey(identity: PackageIdentityTuple, registryKey: string | undefined): string {
-  return [
-    identity.packageName,
-    registryKey ?? `unresolved:${identity.packageFilePath}`,
-  ].join('\u0000');
-}
 
 interface AuditOperation {
   readonly generation: number;
@@ -302,8 +174,6 @@ interface UpdateOperation {
 }
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
-  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
-
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
@@ -362,6 +232,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly checkCoordinator = createCheckCoordinator();
   /** Nested metadata profile; every metadata request also holds a shared check slot. */
   private readonly metadataCoordinator = new OperationCoordinator(METADATA_CONCURRENCY_CAP);
+  private readonly updateOrchestrationService: UpdateOrchestrationServiceContract;
   private lastAuditCount: number | undefined;
   private lastAuditSuccessfulRootCount: number | undefined;
   private failedAuditPaths: string[] = [];
@@ -369,18 +240,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private disposed = false;
-  private updateCache: {
-    data: Map<string, CachedUpdateData>;
-    timestamp: number;
-    policyKey: string;
-    fingerprint: string;
-  } | undefined;
 
   constructor(
     private readonly filterManager: FilterManager,
     packageLoadingService: PackageLoadingServiceContract = new PackageLoadingService(),
+    updateOrchestrationService?: UpdateOrchestrationServiceContract,
   ) {
     this.packageLoadingService = packageLoadingService;
+    this.updateOrchestrationService = updateOrchestrationService
+      ?? UpdateOrchestrationService.withCoordinators(this.checkCoordinator, this.metadataCoordinator);
     this.filterChangeDisposable = this.filterManager.onDidChange(() => this.emitTreeChanged());
   }
 
@@ -678,7 +546,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   invalidateUpdateCache(): void {
-    this.updateCache = undefined;
+    this.updateOrchestrationService.invalidateCache();
     this.lastCheckTime = undefined;
     logger.info('Update cache invalidated.');
   }
@@ -1068,6 +936,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
               config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
             );
+            const debounceSeconds = config.get<number>('checkUpdatesDebounce', 60);
             const source = this.allEntries.length > 0
               ? this.allEntries.map(e => ({
                   name: e.item.packageName,
@@ -1086,66 +955,45 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               this.packageStateKey(identity),
               source[index].current,
             ]));
-            // The debounce gate uses the cheap policy/file-set key: reading every manifest to
-            // decide whether to skip a run would cost more than the run being skipped.
-            const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases, minimumReleaseAgeDays);
-            if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
-              const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
-              if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
-                logger.info('Check for updates skipped — debounce interval has not elapsed.');
-                this.checkState = 'done';
-                return;
-              }
-            }
-            const fingerprint = await this.computeUpdateFingerprint(
+            const result = await this.updateOrchestrationService.check({
               identities,
+              currentVersions,
+              packageFiles,
               target,
               includePreReleases,
               minimumReleaseAgeDays,
-            );
+              forceAlways,
+              debounceSeconds,
+              lastCheckTime: this.lastCheckTime?.getTime(),
+              signal: operation.abortController.signal,
+              isCurrent: () => this.isUpdateCurrent(operation),
+              resolveCurrentPolicy: () => this.currentUpdatePolicy(),
+              onCheckStarted: () => {
+                logger.info('Checking package updates.');
+                logger.info(`Checking updates for ${source.length} package(s).`);
+              },
+              onRootFailure: () => logger.error('Update check failed for a package root; other roots still completed.'),
+              onDiscarded: () => logger.info('Update results discarded — packages or update settings changed during the check.'),
+            });
             if (!this.isUpdateCurrent(operation)) {
               return;
             }
-            const cacheValid = this.isCacheValid(fingerprint);
-            logger.info('Checking package updates.');
-            logger.info(`Checking updates for ${source.length} package(s).`);
-            let upgrades: ReadonlyMap<string, CachedUpdateData>;
-            if (!forceAlways && cacheValid) {
-              upgrades = this.updateCache?.data ?? new Map<string, CachedUpdateData>();
-            }
-            else {
-              const fetchResult = await this.fetchAndCacheUpdates(
-                identities,
-                currentVersions,
-                packageFiles,
-                target,
-                includePreReleases,
-                minimumReleaseAgeDays,
-                policyKey,
-                fingerprint,
-                operation,
-              );
-              if (!this.isUpdateCurrent(operation)) {
-                return;
-              }
-              if (!fetchResult.accepted) {
-                this.checkState = 'idle';
-                return;
-              }
-              upgrades = fetchResult.data;
-              this.failedUpdatePaths = [...fetchResult.failedPackageFilePaths];
-              if (fetchResult.failedPackageFilePaths.length > 0) {
-                this.updateCache = undefined;
-              }
-              if (fetchResult.allFailed) {
-                const failureMessage = fetchResult.failure instanceof Error
-                  ? fetchResult.failure.message
-                  : fetchResult.failure === undefined ? 'all package roots failed' : String(fetchResult.failure);
-                showError(`failed to check updates — ${failureMessage}`, fetchResult.failure);
-              }
-            }
-            if (!this.isUpdateCurrent(operation)) {
+            if (result.kind === 'debounced') {
+              logger.info('Check for updates skipped — debounce interval has not elapsed.');
+              this.checkState = 'done';
               return;
+            }
+            if (result.kind === 'discarded') {
+              this.checkState = 'idle';
+              return;
+            }
+            const upgrades = result.data;
+            this.failedUpdatePaths = [...result.failedPackageFilePaths];
+            if (result.allFailed) {
+              const failureMessage = result.failure instanceof Error
+                ? result.failure.message
+                : result.failure === undefined ? 'all package roots failed' : String(result.failure);
+              showError(`failed to check updates — ${failureMessage}`, result.failure);
             }
             const liveEntries = this.allEntries.length > 0
               ? this.allEntries
@@ -1212,6 +1060,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
       }
     }
+  }
+
+  /** Reads the update policy live, so a fetch in flight can detect a setting changed mid-check. */
+  private currentUpdatePolicy(): UpdateFingerprintPolicy {
+    const config = vscode.workspace.getConfiguration('nestro');
+    return {
+      target: config.get<NcuUpdateTarget>('updateTarget', 'latest'),
+      includePreReleases: config.get<boolean>('includePreReleases', false),
+      minimumReleaseAgeDays: readMinimumReleaseAgeDays(
+        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+      ),
+    };
   }
 
   /** Cancels the in-flight update check and discards its late result. */
@@ -1713,240 +1573,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.treeView.message = undefined;
   }
 
-  private isCacheValid(fingerprint: string): boolean {
-    if (this.updateCache === undefined || this.updateCache.fingerprint !== fingerprint) {
-      return false;
-    }
-    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
-  }
-
-  /** Cheap half of cache validity: update policy and package-file set, without reading manifests. */
-  private isCachePolicyCurrent(policyKey: string): boolean {
-    if (this.updateCache === undefined || this.updateCache.policyKey !== policyKey) {
-      return false;
-    }
-    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
-  }
-
-  /**
-   * Fetches latest versions, then re-reads manifests and config immediately before
-   * committing the result. A mismatch against the pre-fetch fingerprint, or a newer
-   * load superseding this one, discards the fetch instead of caching or applying it.
-   */
-  private async fetchAndCacheUpdates(
-    identities: readonly PackageIdentityTuple[],
-    currentVersions: ReadonlyMap<string, string>,
-    packageFiles: readonly string[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-    policyKey: string,
-    beforeFingerprint: string,
-    operation: UpdateOperation,
-  ): Promise<UpdateFetchResult> {
-    const upgrades = new Map<string, string>();
-    const failedPackageFilePaths = new Set<string>();
-    let firstFailure: unknown;
-    const coordinationKeys = await this.resolveCheckCoordinationKeys(
-      packageFiles,
-      operation.abortController.signal,
-    );
-    if (coordinationKeys === undefined) {
-      return { accepted: false };
-    }
-    const fetchRun = startRootOperations(
-      packageFiles,
-      packageFilePath => coordinationKeys.get(packageFilePath) ?? packageFilePath,
-      this.checkCoordinator,
-      operation.abortController.signal,
-      packageFilePath => fetchAllLatestVersions(packageFilePath, target, includePreReleases, minimumReleaseAgeDays),
-    );
-    const fetchOutcomes = await fetchRun.result;
-    fetchOutcomes.forEach((outcome, index) => {
-      const packageFilePath = packageFiles[index];
-      if (outcome.status === 'success') {
-        for (const [packageName, version] of outcome.value) {
-          upgrades.set(this.entryKey(packageName, packageFilePath), version);
-        }
-      }
-      else if (outcome.status === 'failure') {
-        failedPackageFilePaths.add(packageFilePath);
-        firstFailure ??= outcome.error;
-        logger.error('Update check failed for a package root; other roots still completed.');
-      }
-    });
-    if (operation.abortController.signal.aborted) {
-      return { accepted: false };
-    }
-    const allFailed = packageFiles.length > 0 && failedPackageFilePaths.size === packageFiles.length;
-    if (allFailed) {
-      return {
-        accepted: true,
-        data: new Map(),
-        failedPackageFilePaths: [...failedPackageFilePaths],
-        allFailed: true,
-        failure: firstFailure,
-      };
-    }
-
-    const successfulIdentities = identities.filter(identity => !failedPackageFilePaths.has(identity.packageFilePath));
-    const metadataOutcomes = minimumReleaseAgeDays === 0
-      ? successfulIdentities.map((): PackageMetadataOutcome | undefined => undefined)
-      : await fetchMetadataOutcomes(
-          successfulIdentities,
-          operation.abortController.signal,
-          this.checkCoordinator,
-          this.metadataCoordinator,
-        );
-    if (metadataOutcomes === undefined || operation.abortController.signal.aborted) {
-      return { accepted: false };
-    }
-    const updateData = new Map<string, CachedUpdateData>();
-    successfulIdentities.forEach((identity, index) => {
-      const acceptedVersion = upgrades.get(this.entryKey(identity.packageName, identity.packageFilePath));
-      updateData.set(
-        this.packageStateKey(identity),
-        {
-          acceptedVersion,
-          releaseAge: resolveUpdateReleaseAge(
-            currentVersions.get(this.packageStateKey(identity)) ?? '',
-            acceptedVersion,
-            metadataOutcomes[index],
-            minimumReleaseAgeDays,
-          ),
-        },
-      );
-    });
-
-    const config = vscode.workspace.getConfiguration('nestro');
-    const currentTarget = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-    const currentIncludePreReleases = config.get<boolean>('includePreReleases', false);
-    const currentMinimumReleaseAgeDays = readMinimumReleaseAgeDays(
-      config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
-    );
-    const afterFingerprint = await this.computeUpdateFingerprint(
-      identities,
-      currentTarget,
-      currentIncludePreReleases,
-      currentMinimumReleaseAgeDays,
-    );
-    if (operation.abortController.signal.aborted
-      || afterFingerprint !== beforeFingerprint
-      || operation.snapshotGeneration !== this.packageSnapshotGeneration) {
-      logger.info('Update results discarded — packages or update settings changed during the check.');
-      return { accepted: false };
-    }
-
-    // Only a fully successful fetch is cache-worthy; a partial result would otherwise
-    // replay stale data for the failed root once its failure state is no longer tracked.
-    if (failedPackageFilePaths.size === 0) {
-      this.updateCache = {
-        data: updateData,
-        timestamp: Date.now(),
-        policyKey,
-        fingerprint: beforeFingerprint,
-      };
-    }
-    return {
-      accepted: true,
-      data: updateData,
-      failedPackageFilePaths: [...failedPackageFilePaths],
-      allFailed: false,
-    };
-  }
-
-  /** Resolves canonical project keys before update roots enter the shared read boundary. */
-  private async resolveCheckCoordinationKeys(
-    packageFiles: readonly string[],
-    signal: AbortSignal,
-  ): Promise<ReadonlyMap<string, string> | undefined> {
-    const resolutionRun = startRootOperations(
-      packageFiles,
-      packageFilePath => packageFilePath,
-      this.checkCoordinator,
-      signal,
-      async (packageFilePath): Promise<string> => {
-        try {
-          return await resolveMutationCoordinatorKey(packageFilePath);
-        }
-        catch {
-          return packageFilePath;
-        }
-      },
-    );
-    const results = await resolutionRun.result;
-    if (signal.aborted) {
-      return undefined;
-    }
-    const keys = new Map<string, string>();
-    results.forEach((result, index) => {
-      const packageFilePath = packageFiles[index];
-      if (packageFilePath === undefined) {
-        return;
-      }
-      keys.set(packageFilePath, result.status === 'success' ? result.value : packageFilePath);
-    });
-    return keys;
-  }
-
-  /**
-   * Deterministic key over exactly what makes a cached update result valid: each
-   * package's canonical location, section, name, on-disk spec, and the update policy.
-   * Adding a future policy setting (e.g. a release cooldown) is one extra field here.
-   */
-  private async computeUpdateFingerprint(
-    identities: readonly PackageIdentityTuple[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-  ): Promise<string> {
-    const byManifest = new Map<string, PackageIdentityTuple[]>();
-    for (const identity of identities) {
-      const group = byManifest.get(identity.packageFilePath);
-      if (group === undefined) {
-        byManifest.set(identity.packageFilePath, [identity]);
-      }
-      else {
-        group.push(identity);
-      }
-    }
-    const entryFingerprints: string[] = [];
-    for (const [packageFilePath, manifestIdentities] of byManifest) {
-      const location = await resolveCanonicalPackageLocation(packageFilePath);
-      if (!location.ok) {
-        // The rejection reason stays in the key, so an unresolvable manifest cannot
-        // collapse the fingerprint into a path-only key that accepts any spec change.
-        for (const identity of manifestIdentities) {
-          entryFingerprints.push(JSON.stringify([
-            packageFilePath, identity.section, identity.packageName, null, location.reason,
-          ]));
-        }
-        continue;
-      }
-      const specs = await readCanonicalDependencySpecs(location.value, manifestIdentities);
-      manifestIdentities.forEach((identity, index) => {
-        entryFingerprints.push(JSON.stringify([
-          location.value.packageFilePath, identity.section, identity.packageName, specs[index] ?? null, 'ok',
-        ]));
-      });
-    }
-    // Plain code-unit order, not localeCompare: this key only needs to be
-    // deterministic within one process, never locale- or ICU-stable.
-    entryFingerprints.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ entries: entryFingerprints, target, includePreReleases, minimumReleaseAgeDays });
-  }
-
-  /** Update policy plus the discovered manifest set — everything the fingerprint covers without disk reads. */
-  private updatePolicyKey(
-    packageFiles: readonly string[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-  ): string {
-    const files = [...packageFiles].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ files, target, includePreReleases, minimumReleaseAgeDays });
-  }
-
   private get workspaceRoot(): string | undefined {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
@@ -2190,10 +1816,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           },
       packageFilePaths: [...failure.packageFilePaths],
     };
-  }
-
-  private entryKey(packageName: string, packageFilePath: string): string {
-    return `${packageFilePath}\0${packageName}`;
   }
 
   private auditEntryKey(packageName: string, packageFilePath: string, dev: boolean): string {
