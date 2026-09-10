@@ -11,8 +11,16 @@ import {
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
+  // Real scheduler primitives: checkUpdates() now schedules NCU fetches through
+  // these, so this suite needs the genuine bounded coordinator, not undefined exports.
+  const operationCoordinator = await vi.importActual<
+    typeof import('../utils/operationCoordinator')
+  >('../utils/operationCoordinator');
+  const rootOperation = await vi.importActual<typeof import('../utils/rootOperation')>('../utils/rootOperation');
   return {
     ...releaseAge,
+    ...operationCoordinator,
+    ...rootOperation,
     fetchAllLatestVersions: vi.fn(),
     fetchPackageMetadata: vi.fn(),
     getUpdateType: vi.fn((current: string, latest: string) => (

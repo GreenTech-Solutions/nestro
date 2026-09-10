@@ -109,3 +109,15 @@ export const MUTATION_CONCURRENCY_CAP = 8;
 
 /** Shared coordinator instance used by every command that mutates a package project. */
 export const mutationCoordinator = new OperationCoordinator(MUTATION_CONCURRENCY_CAP);
+
+/**
+ * Bounded profile for read/process work such as update and audit checks. It is kept
+ * separate from the mutation cap because native package-manager processes have a
+ * different CPU and latency profile.
+ */
+export const CHECK_CONCURRENCY_CAP = 6;
+
+/** Creates a read/process coordinator; concurrent flows share the provider-owned instance. */
+export function createCheckCoordinator(): OperationCoordinator {
+  return new OperationCoordinator(CHECK_CONCURRENCY_CAP);
+}

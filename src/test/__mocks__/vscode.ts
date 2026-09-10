@@ -77,7 +77,23 @@ export const window = {
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
   createTreeView: vi.fn(() => ({ dispose: vi.fn(), badge: undefined, message: undefined })),
   createOutputChannel: vi.fn(() => outputChannel),
+  withProgress: vi.fn((
+    _options: unknown,
+    task: (progress: { report: () => void }, token: {
+      isCancellationRequested: boolean;
+      onCancellationRequested: () => { dispose: () => void };
+    }) => Promise<unknown>,
+  ) => task(
+    { report: vi.fn() },
+    { isCancellationRequested: false, onCancellationRequested: vi.fn(() => ({ dispose: vi.fn() })) },
+  )),
 };
+
+export const ProgressLocation = {
+  SourceControl: 1,
+  Window: 10,
+  Notification: 15,
+} as const;
 
 export const tasks = {
   executeTask: vi.fn().mockResolvedValue({ id: 'task-execution' }),

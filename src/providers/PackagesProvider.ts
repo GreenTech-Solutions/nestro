@@ -1,9 +1,10 @@
 import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { ClientManager, resolveAuditProjects } from '../clients';
+import { ClientManager, resolveAuditProjects, resolveMutationCoordinatorKey } from '../clients';
 import type { AuditProject } from '../clients';
 import {
+  createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   fetchAllLatestVersions,
   fetchPackageMetadata,
@@ -12,13 +13,21 @@ import {
   logger,
   mergeAuditAdvisories,
   NcuUpdateTarget,
+  OperationCoordinator,
   readMinimumReleaseAgeDays,
   resolveMetadataRegistryKey,
   resolveUpdateReleaseAge,
   resolveYarnFamily,
+  runRootOperations,
   showError,
+  startRootOperations,
 } from '../utils';
-import type { AuditSeverity, PackageMetadataOutcome, ReleaseAgeState, UpdateType } from '../utils';
+import type {
+  AuditSeverity,
+  PackageMetadataOutcome,
+  ReleaseAgeState,
+  UpdateType,
+} from '../utils';
 import type { PackageFileEntries } from '../utils';
 import type {
   AuditAdvisory,
@@ -74,7 +83,7 @@ export type { PackageIdentityResolution, ResolvedPackageItem } from './packageId
  */
 export interface AuditProjectSummary {
   readonly project: AuditProject;
-  readonly status: 'success' | 'failure';
+  readonly status: 'success' | 'failure' | 'cancelled';
   readonly manager: AuditPackageManager;
   readonly schema?: AuditSchemaId;
   readonly vulnerabilities: ReadonlyMap<string, AuditSeverity>;
@@ -99,15 +108,19 @@ export interface AuditReportSnapshot {
 }
 
 type UpdateFetchResult
-  = | { readonly accepted: true; readonly data: ReadonlyMap<string, CachedUpdateData> }
-    | { readonly accepted: false };
+  = | {
+    readonly accepted: true;
+    readonly data: ReadonlyMap<string, CachedUpdateData>;
+    readonly failedPackageFilePaths: readonly string[];
+    readonly allFailed: boolean;
+    readonly failure?: unknown;
+  }
+  | { readonly accepted: false };
 
 interface CachedUpdateData {
   readonly acceptedVersion: string | undefined;
   readonly releaseAge: ReleaseAgeState;
 }
-
-const METADATA_CONCURRENCY_CAP = 4;
 
 /** Global workspace capabilities used by toolbar and Command Palette contexts. */
 export interface WorkspaceCapabilities {
@@ -149,41 +162,108 @@ const WORKSPACE_CAPABILITY_CONTEXTS = {
 interface MetadataLookup {
   readonly identity: PackageIdentityTuple;
   readonly key: string;
+  readonly coordinationKey: string;
 }
+
+/** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
+export const METADATA_CONCURRENCY_CAP = 4;
 
 type PackageOperationInput = PackageOperation | boolean | undefined;
 
 async function fetchMetadataOutcomes(
   identities: readonly PackageIdentityTuple[],
-): Promise<(PackageMetadataOutcome | undefined)[]> {
-  const lookups = await mapWithConcurrency(identities, async (identity): Promise<MetadataLookup> => {
-    let registryKey: string | undefined;
-    try {
-      registryKey = await resolveMetadataRegistryKey(identity.packageName, identity.packageFilePath);
+  signal: AbortSignal,
+  checkCoordinator: OperationCoordinator,
+  metadataCoordinator: OperationCoordinator,
+): Promise<(PackageMetadataOutcome | undefined)[] | undefined> {
+  const lookupRun = startRootOperations(
+    identities,
+    identity => identity.packageFilePath,
+    checkCoordinator,
+    signal,
+    (identity): Promise<MetadataLookup> => metadataCoordinator.runExclusive(
+      identity.packageFilePath,
+      async (): Promise<MetadataLookup> => {
+        let registryKey: string | undefined;
+        let coordinationKey = identity.packageFilePath;
+        try {
+          registryKey = await resolveMetadataRegistryKey(identity.packageName, identity.packageFilePath);
+        }
+        catch {
+          registryKey = undefined;
+        }
+        try {
+          coordinationKey = await resolveMutationCoordinatorKey(identity.packageFilePath);
+        }
+        catch {
+          coordinationKey = identity.packageFilePath;
+        }
+        return {
+          identity,
+          key: buildMetadataLookupKey(identity, registryKey),
+          coordinationKey,
+        };
+      },
+    ),
+  );
+  const lookupResults = await lookupRun.result;
+  if (signal.aborted) {
+    return undefined;
+  }
+  const lookups: MetadataLookup[] = lookupResults.map((result, index) => {
+    if (result.status === 'success') {
+      return result.value;
     }
-    catch {
-      registryKey = undefined;
-    }
+    const identity = identities[index];
     return {
       identity,
-      key: buildMetadataLookupKey(identity, registryKey),
+      key: buildMetadataLookupKey(identity, undefined),
+      coordinationKey: identity.packageFilePath,
     };
-  }, METADATA_CONCURRENCY_CAP);
-  const uniqueRequests = new Map<string, PackageIdentityTuple>();
-  lookups.forEach(({ key, identity }) => {
+  });
+  const uniqueRequests = new Map<string, MetadataLookup>();
+  lookups.forEach((lookup) => {
+    const { key } = lookup;
     if (!uniqueRequests.has(key)) {
-      uniqueRequests.set(key, identity);
+      uniqueRequests.set(key, lookup);
     }
   });
-  const outcomes = await mapWithConcurrency([...uniqueRequests.entries()], async ([key, identity]) => {
-    try {
-      return [key, await fetchPackageMetadata(identity.packageName, identity.packageFilePath)] as const;
+  const uniqueEntries = [...uniqueRequests.entries()];
+  const outcomeRun = startRootOperations(
+    uniqueEntries,
+    ([, lookup]) => lookup.coordinationKey,
+    checkCoordinator,
+    signal,
+    ([key, lookup], requestSignal): Promise<readonly [string, PackageMetadataOutcome | undefined]> => (
+      metadataCoordinator.runExclusive(
+        `${lookup.coordinationKey}\u0000${lookup.key}`,
+        async (): Promise<readonly [string, PackageMetadataOutcome | undefined]> => {
+          try {
+            return [key, await fetchPackageMetadata(
+              lookup.identity.packageName,
+              lookup.identity.packageFilePath,
+              requestSignal,
+            )];
+          }
+          catch {
+            return [key, undefined];
+          }
+        },
+      )
+    ),
+  );
+  const outcomes = await outcomeRun.result;
+  if (signal.aborted) {
+    return undefined;
+  }
+  const outcomesByKey = new Map<string, PackageMetadataOutcome | undefined>();
+  outcomes.forEach((result, index) => {
+    const entry = uniqueEntries[index];
+    if (entry === undefined) {
+      return;
     }
-    catch {
-      return [key, undefined] as const;
-    }
-  }, METADATA_CONCURRENCY_CAP);
-  const outcomesByKey = new Map(outcomes);
+    outcomesByKey.set(entry[0], result.status === 'success' ? result.value[1] : undefined);
+  });
   const keyByIdentity = new Map(lookups.map(({ identity, key }) => [packageIdentityKey(identity), key]));
   return identities.map(identity => outcomesByKey.get(
     keyByIdentity.get(packageIdentityKey(identity)) ?? '',
@@ -197,32 +277,25 @@ function buildMetadataLookupKey(identity: PackageIdentityTuple, registryKey: str
   ].join('\u0000');
 }
 
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  worker: (item: T) => Promise<R>,
-  concurrency: number,
-): Promise<R[]> {
-  if (items.length === 0) {
-    return [];
-  }
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(items.length, concurrency) }, async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      const item = items[index];
-      if (item === undefined) {
-        return;
-      }
-      results[index] = await worker(item);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+interface AuditOperation {
+  readonly generation: number;
+  readonly snapshotGeneration: number;
+  readonly abortController: AbortController;
 }
 
-interface AuditOperation {
+/** One project's raw audit call result, before it is folded into the report snapshot. */
+type ProjectAuditOutcome
+  = | {
+    readonly kind: 'structured';
+    readonly manager: AuditPackageManager;
+    readonly schema: AuditSchemaId;
+    readonly vulnerabilities: ReadonlyMap<string, AuditSeverity>;
+    readonly advisories: readonly AuditAdvisory[];
+  }
+  | { readonly kind: 'legacy'; readonly vulnerabilities: ReadonlyMap<string, AuditSeverity> }
+  | { readonly kind: 'unrecognized' };
+
+interface UpdateOperation {
   readonly generation: number;
   readonly snapshotGeneration: number;
   readonly abortController: AbortController;
@@ -274,7 +347,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditResults: Map<string, AuditSeverity> = new Map();
   private auditProjects: AuditProjectSummary[] = [];
   private auditFailures: AuditProjectFailure[] = [];
-  private checkState: 'idle' | 'running' | 'done' = 'idle';
+  private checkState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastCheckTime: Date | undefined;
   private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   /**
@@ -283,9 +356,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    */
   private auditGeneration = 0;
   private auditOperation: AuditOperation | undefined;
+  private updateGeneration = 0;
+  private updateOperation: UpdateOperation | undefined;
+  /** Shared read/process boundary for concurrent update and audit runs. */
+  private readonly checkCoordinator = createCheckCoordinator();
+  /** Nested metadata profile; every metadata request also holds a shared check slot. */
+  private readonly metadataCoordinator = new OperationCoordinator(METADATA_CONCURRENCY_CAP);
   private lastAuditCount: number | undefined;
   private lastAuditSuccessfulRootCount: number | undefined;
   private failedAuditPaths: string[] = [];
+  private failedUpdatePaths: string[] = [];
   private failedPackageReadPaths: string[] = [];
   private readonly clientManager = new ClientManager();
   private disposed = false;
@@ -827,6 +907,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const snapshotGeneration = this.packageSnapshotGeneration + 1;
     this.packageSnapshotGeneration = snapshotGeneration;
     this.loadAbortController?.abort();
+    this.updateOperation?.abortController.abort();
+    this.updateOperation = undefined;
+    const activeAudit = this.auditOperation;
+    if (activeAudit !== undefined) {
+      activeAudit.abortController.abort();
+      this.auditOperation = undefined;
+      this.auditGeneration += 1;
+    }
+    this.checkState = 'idle';
+    this.auditState = 'idle';
     const abortController = new AbortController();
     this.loadAbortController = abortController;
     this.packageLocationBaselines = new Map();
@@ -837,17 +927,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     // actions to disabled while it is in flight. It is only overwritten once this load settles.
     this.packageReadFailed = false;
     this.loading = true;
-    // A reload must not clear another operation's own running guard; only reset audit
-    // state when no audit is currently in flight for it to own.
-    if (this.auditState !== 'running') {
-      this.auditResults = new Map();
-      this.auditProjects = [];
-      this.auditFailures = [];
-      this.auditState = 'idle';
-      this.lastAuditCount = undefined;
-      this.lastAuditSuccessfulRootCount = undefined;
-      this.failedAuditPaths = [];
-    }
+    this.auditResults = new Map();
+    this.auditProjects = [];
+    this.auditFailures = [];
+    this.lastAuditCount = undefined;
+    this.lastAuditSuccessfulRootCount = undefined;
+    this.failedAuditPaths = [];
     this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
@@ -954,125 +1039,190 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const snapshotGeneration = this.packageSnapshotGeneration;
     this.checkState = 'running';
+    this.failedUpdatePaths = [];
+    const operation: UpdateOperation = {
+      generation: this.updateGeneration + 1,
+      snapshotGeneration,
+      abortController: new AbortController(),
+    };
+    this.updateGeneration = operation.generation;
+    this.updateOperation = operation;
     this.emitTreeChanged();
     try {
-      const config = vscode.workspace.getConfiguration('nestro');
-      const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-      const includePreReleases = config.get<boolean>('includePreReleases', false);
-      const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-      const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
-        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Checking package updates…',
+          cancellable: true,
+        },
+        async (_progress, token): Promise<void> => {
+          const cancellation = token.onCancellationRequested(() => this.cancelCheckUpdates());
+          try {
+            if (token.isCancellationRequested) {
+              this.cancelCheckUpdates();
+            }
+            const config = vscode.workspace.getConfiguration('nestro');
+            const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
+            const includePreReleases = config.get<boolean>('includePreReleases', false);
+            const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+            const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
+              config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+            );
+            const source = this.allEntries.length > 0
+              ? this.allEntries.map(e => ({
+                  name: e.item.packageName,
+                  current: e.item.currentVersion,
+                  dev: e.dev,
+                  versionPrefix: e.item.versionPrefix,
+                  packageFilePath: e.packageFilePath,
+                }))
+              : await this.readPackagesForUpdateCheck();
+            if (!this.isUpdateCurrent(operation)) {
+              return;
+            }
+            const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
+            const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
+            const currentVersions = new Map(identities.map((identity, index) => [
+              this.packageStateKey(identity),
+              source[index].current,
+            ]));
+            // The debounce gate uses the cheap policy/file-set key: reading every manifest to
+            // decide whether to skip a run would cost more than the run being skipped.
+            const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases, minimumReleaseAgeDays);
+            if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
+              const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
+              if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
+                logger.info('Check for updates skipped — debounce interval has not elapsed.');
+                this.checkState = 'done';
+                return;
+              }
+            }
+            const fingerprint = await this.computeUpdateFingerprint(
+              identities,
+              target,
+              includePreReleases,
+              minimumReleaseAgeDays,
+            );
+            if (!this.isUpdateCurrent(operation)) {
+              return;
+            }
+            const cacheValid = this.isCacheValid(fingerprint);
+            logger.info('Checking package updates.');
+            logger.info(`Checking updates for ${source.length} package(s).`);
+            let upgrades: ReadonlyMap<string, CachedUpdateData>;
+            if (!forceAlways && cacheValid) {
+              upgrades = this.updateCache?.data ?? new Map<string, CachedUpdateData>();
+            }
+            else {
+              const fetchResult = await this.fetchAndCacheUpdates(
+                identities,
+                currentVersions,
+                packageFiles,
+                target,
+                includePreReleases,
+                minimumReleaseAgeDays,
+                policyKey,
+                fingerprint,
+                operation,
+              );
+              if (!this.isUpdateCurrent(operation)) {
+                return;
+              }
+              if (!fetchResult.accepted) {
+                this.checkState = 'idle';
+                return;
+              }
+              upgrades = fetchResult.data;
+              this.failedUpdatePaths = [...fetchResult.failedPackageFilePaths];
+              if (fetchResult.failedPackageFilePaths.length > 0) {
+                this.updateCache = undefined;
+              }
+              if (fetchResult.allFailed) {
+                const failureMessage = fetchResult.failure instanceof Error
+                  ? fetchResult.failure.message
+                  : fetchResult.failure === undefined ? 'all package roots failed' : String(fetchResult.failure);
+                showError(`failed to check updates — ${failureMessage}`, fetchResult.failure);
+              }
+            }
+            if (!this.isUpdateCurrent(operation)) {
+              return;
+            }
+            const liveEntries = this.allEntries.length > 0
+              ? this.allEntries
+              : source.map(entry => ({
+                  item: this.createPackageItem(
+                    entry.name,
+                    entry.current,
+                    undefined,
+                    'none',
+                    undefined,
+                    entry.packageFilePath,
+                    entry.dev,
+                    entry.versionPrefix,
+                  ),
+                  dev: entry.dev,
+                  packageFilePath: entry.packageFilePath,
+                }));
+            this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
+              const updateData = upgrades.get(this.packageStateKey(
+                packageIdentityFromValues(item.packageName, packageFilePath, dev),
+              ));
+              const latest = updateData?.acceptedVersion;
+              const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
+              return {
+                item: this.createPackageItem(
+                  item.packageName,
+                  item.currentVersion,
+                  latest,
+                  updateType,
+                  item.operation,
+                  packageFilePath,
+                  dev,
+                  item.versionPrefix,
+                  updateData?.releaseAge,
+                ),
+                dev,
+                packageFilePath,
+              };
+            });
+            logger.info(`Checked updates for ${source.length} package(s).`);
+            this.checkState = this.failedUpdatePaths.length === 0 ? 'done' : 'incomplete';
+            this.lastCheckTime = new Date();
+          }
+          finally {
+            cancellation.dispose();
+          }
+        },
       );
-      const source = this.allEntries.length > 0
-        ? this.allEntries.map(e => ({
-            name: e.item.packageName,
-            current: e.item.currentVersion,
-            dev: e.dev,
-            versionPrefix: e.item.versionPrefix,
-            packageFilePath: e.packageFilePath,
-          }))
-        : await this.readPackagesForUpdateCheck();
-      const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-      const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
-      const currentVersions = new Map(identities.map((identity, index) => [
-        this.packageStateKey(identity),
-        source[index].current,
-      ]));
-      // The debounce gate uses the cheap policy/file-set key: reading every manifest to
-      // decide whether to skip a run would cost more than the run being skipped.
-      const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases, minimumReleaseAgeDays);
-      if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
-        const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
-        if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
-          logger.info('Check for updates skipped — debounce interval has not elapsed.');
-          this.checkState = 'done';
-          return;
-        }
-      }
-      const fingerprint = await this.computeUpdateFingerprint(
-        identities,
-        target,
-        includePreReleases,
-        minimumReleaseAgeDays,
-      );
-      const cacheValid = this.isCacheValid(fingerprint);
-      logger.info('Checking package updates.');
-      logger.info(`Checking updates for ${source.length} package(s).`);
-      let upgrades: ReadonlyMap<string, CachedUpdateData>;
-      if (!forceAlways && cacheValid) {
-        upgrades = this.updateCache?.data ?? new Map<string, CachedUpdateData>();
-      }
-      else {
-        const fetchResult = await this.fetchAndCacheUpdates(
-          identities,
-          currentVersions,
-          packageFiles,
-          target,
-          includePreReleases,
-          minimumReleaseAgeDays,
-          policyKey,
-          fingerprint,
-          snapshotGeneration,
-        );
-        if (!fetchResult.accepted) {
-          this.checkState = 'idle';
-          return;
-        }
-        upgrades = fetchResult.data;
-      }
-      if (snapshotGeneration !== this.packageSnapshotGeneration) {
-        this.checkState = 'idle';
-        return;
-      }
-      const liveEntries = this.allEntries.length > 0
-        ? this.allEntries
-        : source.map(entry => ({
-            item: this.createPackageItem(
-              entry.name,
-              entry.current,
-              undefined,
-              'none',
-              undefined,
-              entry.packageFilePath,
-              entry.dev,
-              entry.versionPrefix,
-            ),
-            dev: entry.dev,
-            packageFilePath: entry.packageFilePath,
-          }));
-      this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
-        const updateData = upgrades.get(this.packageStateKey(
-          packageIdentityFromValues(item.packageName, packageFilePath, dev),
-        ));
-        const latest = updateData?.acceptedVersion;
-        const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
-        return {
-          item: this.createPackageItem(
-            item.packageName,
-            item.currentVersion,
-            latest,
-            updateType,
-            item.operation,
-            packageFilePath,
-            dev,
-            item.versionPrefix,
-            updateData?.releaseAge,
-          ),
-          dev,
-          packageFilePath,
-        };
-      });
-      logger.info(`Checked updates for ${source.length} package(s).`);
-      this.checkState = 'done';
-      this.lastCheckTime = new Date();
     }
     catch (err) {
-      this.checkState = 'idle';
-      showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
+      if (this.isUpdateCurrent(operation)) {
+        this.checkState = 'idle';
+        showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
+      }
     }
     finally {
-      this.emitTreeChanged();
+      if (this.updateOperation === operation) {
+        this.updateOperation = undefined;
+        if (this.checkState === 'running') {
+          this.checkState = 'idle';
+        }
+        if (!operation.abortController.signal.aborted) {
+          this.emitTreeChanged();
+        }
+      }
     }
+  }
+
+  /** Cancels the in-flight update check and discards its late result. */
+  cancelCheckUpdates(): void {
+    const operation = this.updateOperation;
+    if (this.checkState !== 'running' || operation === undefined) {
+      return;
+    }
+    operation.abortController.abort();
+    this.checkState = 'idle';
+    this.emitTreeChanged();
   }
 
   dispose(): void {
@@ -1085,6 +1235,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.writeSuppressionTimers.clear();
     this.writeSuppressionDepth = 0;
     this.loadAbortController?.abort();
+    this.cancelCheckUpdates();
     this.cancelAudit();
     this.disposed = true;
     this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
@@ -1112,6 +1263,32 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async runAudit(): Promise<void> {
+    if (this.auditState === 'running') {
+      return;
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Running package audit…',
+        cancellable: true,
+      },
+      async (_progress, token): Promise<void> => {
+        const cancellation = token.onCancellationRequested(() => this.cancelAudit());
+        try {
+          if (token.isCancellationRequested) {
+            this.cancelAudit();
+          }
+          await this.runAuditCore();
+        }
+        finally {
+          cancellation.dispose();
+        }
+      },
+    );
+  }
+
+  private async runAuditCore(): Promise<void> {
     if (this.auditState === 'running') {
       return;
     }
@@ -1167,58 +1344,48 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
       let successfulAuditRootCount = 0;
       let failedProjectCount = 0;
-      for (const project of projects) {
-        if (!this.isAuditCurrent(operation)) {
-          return;
-        }
-        try {
+      const projectOutcomes = await runRootOperations(
+        projects,
+        project => project.projectRoot,
+        this.checkCoordinator,
+        operation.abortController.signal,
+        async (project, signal): Promise<ProjectAuditOutcome> => {
           const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
           const reportRunner = client as unknown as {
             runAuditReport?: (signal?: AbortSignal) => Promise<unknown>;
           };
           const rawResult = typeof reportRunner.runAuditReport === 'function'
-            ? await reportRunner.runAuditReport(operation.abortController.signal)
-            : await client.runAudit(operation.abortController.signal);
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
-          successfulAuditRootCount += 1;
+            ? await reportRunner.runAuditReport(signal)
+            : await client.runAudit(signal);
           if (this.isAuditResult(rawResult)) {
-            const advisories = mergeAuditAdvisories(rawResult.advisories);
-            auditProjects.push({
-              project,
-              status: 'success',
+            return {
+              kind: 'structured',
               manager: rawResult.manager,
               schema: rawResult.schema,
               vulnerabilities: new Map(rawResult.vulnerabilities),
-              advisories: advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
-            });
-            await this.applyStructuredProjectAuditResults(project, advisories, auditResults);
-            if (!this.isAuditCurrent(operation)) {
-              return;
-            }
+              advisories: mergeAuditAdvisories(rawResult.advisories),
+            };
           }
-          else if (rawResult instanceof Map) {
-            const vulnerabilities = new Map(rawResult as Map<string, AuditSeverity>);
-            auditProjects.push({
-              project,
-              status: 'success',
-              manager: project.packageManager,
-              vulnerabilities,
-              advisories: [],
-            });
-            this.applyLegacyProjectAuditResults(project, vulnerabilities, auditResults);
+          if (rawResult instanceof Map) {
+            return { kind: 'legacy', vulnerabilities: new Map(rawResult as Map<string, AuditSeverity>) };
           }
-          else {
-            throw new Error('Audit client returned an unrecognized audit result.');
-          }
+          return { kind: 'unrecognized' };
+        },
+      );
+
+      if (!this.isAuditCurrent(operation)) {
+        return;
+      }
+
+      for (let index = 0; index < projects.length; index += 1) {
+        const project = projects[index];
+        const outcome = projectOutcomes[index];
+        if (outcome.status === 'cancelled') {
+          continue;
         }
-        catch (err) {
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
+        if (outcome.status === 'failure') {
           failedAuditPaths.push(...project.originManifests);
-          const failure = describeAuditFailure(err);
+          const failure = describeAuditFailure(outcome.error);
           auditProjects.push({
             project,
             status: 'failure',
@@ -1235,7 +1402,56 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             detail: failure.detail,
           });
           failedProjectCount += 1;
+          continue;
         }
+
+        const { value } = outcome;
+        if (value.kind === 'unrecognized') {
+          failedAuditPaths.push(...project.originManifests);
+          const failure = describeAuditFailure(new Error('Audit client returned an unrecognized audit result.'));
+          auditProjects.push({
+            project,
+            status: 'failure',
+            manager: project.packageManager,
+            vulnerabilities: new Map(),
+            advisories: [],
+            failure,
+          });
+          auditFailures.push({
+            project,
+            packageFilePaths: [...project.originManifests],
+            manager: project.packageManager,
+            reason: failure.reason,
+            detail: failure.detail,
+          });
+          failedProjectCount += 1;
+          continue;
+        }
+        if (value.kind === 'structured') {
+          successfulAuditRootCount += 1;
+          auditProjects.push({
+            project,
+            status: 'success',
+            manager: value.manager,
+            schema: value.schema,
+            vulnerabilities: new Map(value.vulnerabilities),
+            advisories: value.advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
+          });
+          await this.applyStructuredProjectAuditResults(project, value.advisories, auditResults);
+          if (!this.isAuditCurrent(operation)) {
+            return;
+          }
+          continue;
+        }
+        successfulAuditRootCount += 1;
+        auditProjects.push({
+          project,
+          status: 'success',
+          manager: project.packageManager,
+          vulnerabilities: value.vulnerabilities,
+          advisories: [],
+        });
+        this.applyLegacyProjectAuditResults(project, value.vulnerabilities, auditResults);
       }
 
       if (!this.isAuditCurrent(operation)) {
@@ -1302,6 +1518,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       && operation.generation === this.auditGeneration
       && operation.snapshotGeneration === this.packageSnapshotGeneration
       && this.auditState === 'running'
+      && !operation.abortController.signal.aborted;
+  }
+
+  /** An update check is current only while its operation owns the provider and snapshot. */
+  private isUpdateCurrent(operation: UpdateOperation): boolean {
+    return this.updateOperation === operation
+      && operation.generation === this.updateGeneration
+      && operation.snapshotGeneration === this.packageSnapshotGeneration
+      && this.checkState === 'running'
       && !operation.abortController.signal.aborted;
   }
 
@@ -1517,26 +1742,67 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     minimumReleaseAgeDays: number,
     policyKey: string,
     beforeFingerprint: string,
-    snapshotGeneration: number,
+    operation: UpdateOperation,
   ): Promise<UpdateFetchResult> {
     const upgrades = new Map<string, string>();
-    for (const packageFilePath of packageFiles) {
-      const fileUpgrades = await fetchAllLatestVersions(
-        packageFilePath,
-        target,
-        includePreReleases,
-        minimumReleaseAgeDays,
-      );
-      for (const [packageName, version] of fileUpgrades) {
-        upgrades.set(this.entryKey(packageName, packageFilePath), version);
+    const failedPackageFilePaths = new Set<string>();
+    let firstFailure: unknown;
+    const coordinationKeys = await this.resolveCheckCoordinationKeys(
+      packageFiles,
+      operation.abortController.signal,
+    );
+    if (coordinationKeys === undefined) {
+      return { accepted: false };
+    }
+    const fetchRun = startRootOperations(
+      packageFiles,
+      packageFilePath => coordinationKeys.get(packageFilePath) ?? packageFilePath,
+      this.checkCoordinator,
+      operation.abortController.signal,
+      packageFilePath => fetchAllLatestVersions(packageFilePath, target, includePreReleases, minimumReleaseAgeDays),
+    );
+    const fetchOutcomes = await fetchRun.result;
+    fetchOutcomes.forEach((outcome, index) => {
+      const packageFilePath = packageFiles[index];
+      if (outcome.status === 'success') {
+        for (const [packageName, version] of outcome.value) {
+          upgrades.set(this.entryKey(packageName, packageFilePath), version);
+        }
       }
+      else if (outcome.status === 'failure') {
+        failedPackageFilePaths.add(packageFilePath);
+        firstFailure ??= outcome.error;
+        logger.error('Update check failed for a package root; other roots still completed.');
+      }
+    });
+    if (operation.abortController.signal.aborted) {
+      return { accepted: false };
+    }
+    const allFailed = packageFiles.length > 0 && failedPackageFilePaths.size === packageFiles.length;
+    if (allFailed) {
+      return {
+        accepted: true,
+        data: new Map(),
+        failedPackageFilePaths: [...failedPackageFilePaths],
+        allFailed: true,
+        failure: firstFailure,
+      };
     }
 
+    const successfulIdentities = identities.filter(identity => !failedPackageFilePaths.has(identity.packageFilePath));
     const metadataOutcomes = minimumReleaseAgeDays === 0
-      ? identities.map((): PackageMetadataOutcome | undefined => undefined)
-      : await fetchMetadataOutcomes(identities);
+      ? successfulIdentities.map((): PackageMetadataOutcome | undefined => undefined)
+      : await fetchMetadataOutcomes(
+          successfulIdentities,
+          operation.abortController.signal,
+          this.checkCoordinator,
+          this.metadataCoordinator,
+        );
+    if (metadataOutcomes === undefined || operation.abortController.signal.aborted) {
+      return { accepted: false };
+    }
     const updateData = new Map<string, CachedUpdateData>();
-    identities.forEach((identity, index) => {
+    successfulIdentities.forEach((identity, index) => {
       const acceptedVersion = upgrades.get(this.entryKey(identity.packageName, identity.packageFilePath));
       updateData.set(
         this.packageStateKey(identity),
@@ -1564,18 +1830,63 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       currentIncludePreReleases,
       currentMinimumReleaseAgeDays,
     );
-    if (afterFingerprint !== beforeFingerprint || snapshotGeneration !== this.packageSnapshotGeneration) {
+    if (operation.abortController.signal.aborted
+      || afterFingerprint !== beforeFingerprint
+      || operation.snapshotGeneration !== this.packageSnapshotGeneration) {
       logger.info('Update results discarded — packages or update settings changed during the check.');
       return { accepted: false };
     }
 
-    this.updateCache = {
+    // Only a fully successful fetch is cache-worthy; a partial result would otherwise
+    // replay stale data for the failed root once its failure state is no longer tracked.
+    if (failedPackageFilePaths.size === 0) {
+      this.updateCache = {
+        data: updateData,
+        timestamp: Date.now(),
+        policyKey,
+        fingerprint: beforeFingerprint,
+      };
+    }
+    return {
+      accepted: true,
       data: updateData,
-      timestamp: Date.now(),
-      policyKey,
-      fingerprint: beforeFingerprint,
+      failedPackageFilePaths: [...failedPackageFilePaths],
+      allFailed: false,
     };
-    return { accepted: true, data: updateData };
+  }
+
+  /** Resolves canonical project keys before update roots enter the shared read boundary. */
+  private async resolveCheckCoordinationKeys(
+    packageFiles: readonly string[],
+    signal: AbortSignal,
+  ): Promise<ReadonlyMap<string, string> | undefined> {
+    const resolutionRun = startRootOperations(
+      packageFiles,
+      packageFilePath => packageFilePath,
+      this.checkCoordinator,
+      signal,
+      async (packageFilePath): Promise<string> => {
+        try {
+          return await resolveMutationCoordinatorKey(packageFilePath);
+        }
+        catch {
+          return packageFilePath;
+        }
+      },
+    );
+    const results = await resolutionRun.result;
+    if (signal.aborted) {
+      return undefined;
+    }
+    const keys = new Map<string, string>();
+    results.forEach((result, index) => {
+      const packageFilePath = packageFiles[index];
+      if (packageFilePath === undefined) {
+        return;
+      }
+      keys.set(packageFilePath, result.status === 'success' ? result.value : packageFilePath);
+    });
+    return keys;
   }
 
   /**
@@ -2004,6 +2315,14 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         'Last update check',
         this.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         'clock',
+      ));
+    }
+    else if (this.checkState === 'incomplete') {
+      items.push(new StatusItem(
+        'Update check incomplete',
+        `Failed: ${this.failedUpdatePaths.join(', ')}`,
+        'warning',
+        'charts.yellow',
       ));
     }
 

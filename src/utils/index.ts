@@ -9,6 +9,7 @@ export * from './registryClient';
 export * from './notify';
 export * from './logger';
 export * from './operationCoordinator';
+export * from './rootOperation';
 export * from './auditClient';
 export * from './auditReport';
 export * from './auditReportFormatter';
