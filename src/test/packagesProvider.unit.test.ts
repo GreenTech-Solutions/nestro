@@ -20,6 +20,7 @@ import {
   WorkspaceFolderItem,
 } from '../providers';
 import type {
+  AuditOrchestrationServiceContract,
   PackageLoadingServiceContract,
   PackageLoadingSnapshot,
 } from '../providers';
@@ -145,6 +146,19 @@ vi.mock('../utils', async () => {
     typeof import('../utils/operationCoordinator')
   >('../utils/operationCoordinator');
   const rootOperation = await vi.importActual<typeof import('../utils/rootOperation')>('../utils/rootOperation');
+  const cloneAuditAdvisory = (advisory: AuditAdvisory): AuditAdvisory => ({
+    ...advisory,
+    sources: [...advisory.sources],
+    titles: [...advisory.titles],
+    urls: [...advisory.urls],
+    affectedRanges: [...advisory.affectedRanges],
+    resolvedPaths: [...advisory.resolvedPaths],
+    resolvedVersions: [...advisory.resolvedVersions],
+    via: advisory.via.map(via => ({ ...via })),
+    fixAvailable: typeof advisory.fixAvailable === 'object' && advisory.fixAvailable !== null
+      ? { ...advisory.fixAvailable }
+      : advisory.fixAvailable,
+  });
   return {
     ...releaseAge,
     ...operationCoordinator,
@@ -181,6 +195,7 @@ vi.mock('../utils', async () => {
       Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
     )),
     runNpmAudit: vi.fn(),
+    cloneAuditAdvisory,
     mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
     showError: vi.fn(),
   };
@@ -2053,6 +2068,96 @@ describe('PackagesProvider', () => {
       packageFilePaths: ['/workspace/packages/ui/package.json'],
       project: expect.objectContaining({ projectRoot: '/workspace/packages/ui' }),
     })]);
+  });
+
+  it('passes the current package snapshot to the audit service and keeps a discarded result silent', async () => {
+    const auditService: AuditOrchestrationServiceContract = {
+      run: vi.fn().mockResolvedValue({ kind: 'discarded', reason: 'cancelled' }),
+    };
+    const provider = new PackagesProvider(new FilterManager('all'), undefined, undefined, auditService);
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(auditService.run).toHaveBeenCalledWith(expect.objectContaining({
+      packageFilePaths: ['/workspace/package.json'],
+      rows: expect.arrayContaining([
+        expect.objectContaining({
+          packageName: 'react',
+          packageFilePath: '/workspace/package.json',
+          dev: false,
+          currentVersion: '18.0.0',
+        }),
+      ]),
+      signal: expect.any(AbortSignal),
+      isCurrent: expect.any(Function),
+    }));
+    expect(provider.getAuditProjects()).toEqual([]);
+    expect(provider.getAuditFailures()).toEqual([]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && (
+      item.label === 'Audit complete' || item.label === 'Audit incomplete'
+    ))).toBe(false);
+  });
+
+  it('applies a service failure without pretending the audit completed', async () => {
+    const auditService: AuditOrchestrationServiceContract = {
+      run: vi.fn().mockResolvedValue({
+        kind: 'failed',
+        reason: 'unresolvable-path',
+        detail: 'Manifest disappeared.',
+      }),
+    };
+    const provider = new PackagesProvider(new FilterManager('all'), undefined, undefined, auditService);
+
+    await provider.loadPackages();
+    await provider.runAudit();
+
+    expect(provider.getAuditFailures()).toEqual([{
+      packageFilePaths: [],
+      reason: 'unresolvable-path',
+      detail: 'Manifest disappeared.',
+    }]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && (
+      item.label === 'Audit complete' || item.label === 'Audit incomplete'
+    ))).toBe(false);
+    expect(showError).toHaveBeenCalledWith('package audit failed — the security audit report is incomplete.');
+  });
+
+  it('shows the running audit state and contains package detail paths defensively', async () => {
+    let releaseAudit: (value: Map<string, AuditSeverity>) => void = () => {};
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockReturnValue(new Promise<Map<string, AuditSeverity>>((resolve) => {
+        releaseAudit = resolve;
+      })),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    const audit = provider.runAudit();
+
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Running audit…')).toBe(true);
+    releaseAudit(new Map());
+    await audit;
+
+    const emptyPathItem = new PackageItem('empty', '1.0.0', undefined, 'none', undefined, undefined, '');
+    const outsidePathItem = new PackageItem('outside', '1.0.0', undefined, 'none', undefined, undefined, '/outside/package.json');
+    expect(provider.getChildren(emptyPathItem)).toHaveLength(2);
+    expect(provider.getChildren(outsidePathItem)).toEqual([
+      expect.objectContaining({ label: 'Dependency' }),
+      expect.objectContaining({ label: 'Current: 1.0.0' }),
+      expect.objectContaining({ label: 'File: /outside/package.json' }),
+    ]);
+  });
+
+  it('keeps search clearing and invalid capability input side-effect free', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    provider.clearSearch();
+
+    await expect(provider.resolvePackageItem(undefined)).resolves.toEqual({
+      ok: false,
+      reason: 'invalid-item',
+    });
+    expect(provider.getVisibleOutdatedPackages()).toEqual([]);
   });
 
   it('bounds independent audit roots and retains deterministic project ordering', async () => {
