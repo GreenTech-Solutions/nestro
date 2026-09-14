@@ -4,9 +4,18 @@ on:
   pull_request:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   EXPECTED_SHA: ${{ github.sha }}
@@ -17,6 +26,21 @@ jobs:
     name: Quality gates
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve the dispatched pull request
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]
+          pr="$(gh api "repos/${{ github.repository }}/pulls/$DISPATCH_PR_NUMBER")"
+          test "$(echo "$pr" | jq -r '.head.sha')" = "$DISPATCH_HEAD_SHA"
+          test "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"
+          test "$(echo "$pr" | jq -r '.state')" = "open"
+          test "$(echo "$pr" | jq -r '.base.ref')" = "master"
       - name: Checkout exact tested commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +83,7 @@ jobs:
           printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \
             | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color .github/workflows/ci.yml
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml
       - name: Workflow policy
         run: pnpm run ci:policy
       - name: Unit coverage
@@ -151,7 +175,7 @@ jobs:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_PR_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
       - name: Upload immutable evidence
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

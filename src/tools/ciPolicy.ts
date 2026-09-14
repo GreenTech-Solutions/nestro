@@ -22,6 +22,7 @@ const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38': 'v6.5.0',
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020': 'v7.0.0',
   'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a': 'v7.0.1',
+  'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db': 'v2.0.0',
   'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
   'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
 };
@@ -51,7 +52,7 @@ curl --fail --silent --show-error --location \\
 printf '%s  %s\\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \\
   | sha256sum --check --strict
 tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-"$RUNNER_TEMP/actionlint" -color .github/workflows/ci.yml`;
+"$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml`;
 
 export interface CiPolicyViolation {
   readonly rule: string;
@@ -134,7 +135,19 @@ const COMMON_SETUP_STEPS: readonly UnknownRecord[] = [
   NODE_STEP,
   INSTALL_STEP,
 ];
+const DISPATCH_RESOLUTION_STEP: UnknownRecord = {
+  name: 'Resolve the dispatched pull request',
+  if: '${{ github.event_name == \'workflow_dispatch\' }}',
+  shell: 'bash',
+  env: {
+    GH_TOKEN: '${{ github.token }}',
+    DISPATCH_PR_NUMBER: '${{ inputs.pr_number }}',
+    DISPATCH_HEAD_SHA: '${{ inputs.head_sha }}',
+  },
+  run: 'set -euo pipefail\n[[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]\npr="$(gh api "repos/${{ github.repository }}/pulls/$DISPATCH_PR_NUMBER")"\ntest "$(echo "$pr" | jq -r \'.head.sha\')" = "$DISPATCH_HEAD_SHA"\ntest "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"\ntest "$(echo "$pr" | jq -r \'.state\')" = "open"\ntest "$(echo "$pr" | jq -r \'.base.ref\')" = "master"',
+};
 const QUALITY_STEPS: readonly UnknownRecord[] = [
+  DISPATCH_RESOLUTION_STEP,
   ...COMMON_SETUP_STEPS,
   { name: 'Audit dependencies', run: 'pnpm run audit:dependencies' },
   { name: 'Audit dependency signatures', run: 'pnpm run audit:signatures' },
@@ -171,7 +184,7 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
   {
     env: {
       CI_EVENT_NAME: '${{ github.event_name }}',
-      CI_PR_HEAD_SHA: '${{ github.event.pull_request.head.sha }}',
+      CI_PR_HEAD_SHA: '${{ github.event_name == \'workflow_dispatch\' && inputs.head_sha || github.event.pull_request.head.sha }}',
       CI_RUN_ATTEMPT: '${{ github.run_attempt }}',
       CI_RUN_ID: '${{ github.run_id }}',
       CI_SOURCE_SHA: '${{ env.EXPECTED_SHA }}',
@@ -454,10 +467,14 @@ export function evaluateWorkflowActionPolicy(source: string): CiPolicyViolation[
   return violations;
 }
 
-function assertExternalActionsPinned(jobs: UnknownRecord, violations: CiPolicyViolation[]): void {
+function assertExternalActionsPinned(
+  jobs: UnknownRecord,
+  violations: CiPolicyViolation[],
+  rejectJobPermissions = true,
+): void {
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob, `jobs.${jobId}`, violations);
-    if (job.permissions !== undefined) {
+    if (rejectJobPermissions && job.permissions !== undefined) {
       add(violations, 'least-permissions', `${jobId} must not override workflow-level permissions`);
     }
     if (job['continue-on-error'] !== undefined || job.defaults !== undefined) {
@@ -522,8 +539,14 @@ function assertSetup(jobId: string, job: UnknownRecord, violations: CiPolicyViol
 
 function assertQuality(job: UnknownRecord, violations: CiPolicyViolation[]): void {
   const steps = getSteps(job);
-  if (steps.length !== 14) {
-    add(violations, 'step-allowlist', 'quality must contain exactly the fourteen reviewed gate steps');
+  if (steps.length !== 15) {
+    add(violations, 'step-allowlist', 'quality must contain exactly the fifteen reviewed gate steps');
+  }
+  const dispatchStep = steps.find(step => step.name === 'Resolve the dispatched pull request');
+  if (dispatchStep === undefined
+    || !isDeepStrictEqual(normalizedStep(dispatchStep), DISPATCH_RESOLUTION_STEP)
+    || steps[0] !== dispatchStep) {
+    add(violations, 'dispatch-identity', 'quality must resolve and verify a dispatched pull request first');
   }
   for (const command of [
     'pnpm run audit:dependencies',
@@ -699,16 +722,24 @@ export function evaluateCiWorkflowPolicy(source: string): CiPolicyViolation[] {
   const pullRequestIsUnconfigured = triggers.pull_request === null
     || (isRecord(triggers.pull_request) && Object.keys(triggers.pull_request).length === 0);
   const pushBranches = asStringArray(push.branches);
-  if (Object.keys(triggers).sort((left, right) => left.localeCompare(right)).join(',') !== 'pull_request,push'
+  const dispatch = asRecord(triggers.workflow_dispatch, 'on.workflow_dispatch', violations);
+  const dispatchInputs = asRecord(dispatch.inputs, 'on.workflow_dispatch.inputs', violations);
+  const expectedDispatchInputs: UnknownRecord = {
+    pr_number: { required: true, type: 'string' },
+    head_sha: { required: true, type: 'string' },
+  };
+  if (Object.keys(triggers).sort((left, right) => left.localeCompare(right)).join(',') !== 'pull_request,push,workflow_dispatch'
     || !pullRequestIsUnconfigured
     || Object.keys(push).length !== 1
     || pushBranches.length !== 1
-    || pushBranches[0] !== 'master') {
-    add(violations, 'safe-trigger', 'workflow must use normal pull_request and push, never pull_request_target');
+    || pushBranches[0] !== 'master'
+    || Object.keys(dispatch).length !== 1
+    || !isDeepStrictEqual(dispatchInputs, expectedDispatchInputs)) {
+    add(violations, 'safe-trigger', 'workflow must use normal pull_request, push and a verified workflow_dispatch, never pull_request_target');
   }
   const permissions = asRecord(root.permissions, 'permissions', violations);
-  if (Object.keys(permissions).length !== 1 || permissions.contents !== 'read') {
-    add(violations, 'least-permissions', 'workflow permissions must be exactly contents: read');
+  if (Object.keys(permissions).length !== 2 || permissions.contents !== 'read' || permissions['pull-requests'] !== 'read') {
+    add(violations, 'least-permissions', 'workflow permissions must be exactly contents: read and pull-requests: read');
   }
   const env = asRecord(root.env, 'env', violations);
   if (Object.keys(env).sort((left, right) => left.localeCompare(right)).join(',') !== 'CI_ARTIFACT_DIR,EXPECTED_SHA'

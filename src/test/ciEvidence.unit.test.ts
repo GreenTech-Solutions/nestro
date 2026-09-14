@@ -62,6 +62,24 @@ describe('CI evidence identity', () => {
     expect(evidence).toMatchObject({ pullRequestHeadSha: null, releaseEligible: false });
   });
 
+  it('records manually dispatched PR evidence with the exact requested head', async () => {
+    const { dir } = await createArtifactDir();
+
+    const evidence = await createCiEvidence(dir, {
+      sourceSha: SOURCE_SHA,
+      runId: '2',
+      runAttempt: '1',
+      eventName: 'workflow_dispatch',
+      pullRequestHeadSha: PR_HEAD_SHA,
+    });
+
+    expect(evidence).toMatchObject({
+      eventName: 'workflow_dispatch',
+      pullRequestHeadSha: PR_HEAD_SHA,
+      releaseEligible: false,
+    });
+  });
+
   it.each([
     ['wrong VSIX digest', (dir: string) => writeFile(join(dir, VSIX_FILE), 'substituted')],
     ['wrong sidecar file name', (dir: string) => writeFile(join(dir, `${VSIX_FILE}.sha256`), `${'a'.repeat(64)}  forged.vsix\n`)],

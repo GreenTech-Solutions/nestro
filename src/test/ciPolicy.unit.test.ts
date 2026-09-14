@@ -10,11 +10,12 @@ import {
   evaluateCodeownersPolicy,
   evaluateDependabotConfigPolicy,
   evaluateWorkflowActionPolicy,
+  RELEASE_CANDIDATE_WORKFLOW_PATH,
 } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const canonicalSource = readFileSync(resolve(repositoryRoot, CI_WORKFLOW_PATH), 'utf8');
-const releaseWorkflowPath = '.github/workflows/release.yml';
+const releaseWorkflowPath = RELEASE_CANDIDATE_WORKFLOW_PATH;
 const canonicalReleaseSource = readFileSync(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
 const canonicalCodeownersSource = readFileSync(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8');
 const canonicalDependabotSource = readFileSync(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8');
@@ -363,7 +364,7 @@ describe('CI workflow policy', () => {
 });
 
 describe('immutable workflow action policy', () => {
-  const checkoutReference = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
+  const checkoutReference = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
 
   it('accepts every reviewed action reference and version comment in the current workflows', () => {
     expect(evaluateWorkflowActionPolicy(canonicalSource)).toEqual([]);
@@ -374,8 +375,8 @@ describe('immutable workflow action policy', () => {
     'rejects a mutable or non-full release checkout ref %s',
     (ref) => {
       const mutated = canonicalReleaseSource.replace(
-        `${checkoutReference} # v6.1.0`,
-        `actions/checkout@${ref} # v6.1.0`,
+        `${checkoutReference} # v7.0.1`,
+        `actions/checkout@${ref} # v7.0.1`,
       );
       expectRejectedAction(mutated, 'immutable-action');
     },
@@ -397,11 +398,8 @@ describe('immutable workflow action policy', () => {
   });
 
   it('requires the exact version comment attached to the uses scalar', () => {
-    expectRejectedAction(canonicalReleaseSource.replace(' # v6.1.0', ''), 'action-version-comment');
-    expectRejectedAction(canonicalReleaseSource.replace('# v6.1.0', '# v6.0.0'), 'action-version-comment');
-    expectRejectedAction(canonicalReleaseSource
-      .replace(`${checkoutReference} # v6.1.0`, checkoutReference)
-      .replace('name: 1. Checkout', 'name: 1. Checkout # v6.1.0'), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource.replace(' # v7.0.1', ''), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource.replace('# v7.0.1', '# v7.0.0'), 'action-version-comment');
   });
 
   it.each([
@@ -433,9 +431,8 @@ describe('immutable workflow action policy', () => {
 
   it('does not treat a release topology or permissions change as an action-policy violation', () => {
     const mutated = canonicalReleaseSource
-      .replace('contents: write', 'contents: read')
-      .replace('branches: [master]', 'branches: [release]')
-      .replace('      - name: 7. Release', '      - name: Extra run-only step\n        run: echo unchanged-action-policy\n\n      - name: 7. Release');
+      .replace('contents: read', 'contents: write')
+      .replace('      - name: Upload the immutable candidate', '      - name: Extra run-only step\n        run: echo unchanged-action-policy\n\n      - name: Upload the immutable candidate');
     expect(evaluateWorkflowActionPolicy(mutated)).toEqual([]);
   });
 
@@ -447,7 +444,7 @@ describe('immutable workflow action policy', () => {
 });
 
 describe('reviewed action update policy', () => {
-  const releaseCheckoutV6 = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0';
+  const releaseCheckoutV6 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
   const reviewedCheckoutV7 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
 
   it('accepts only the canonical standalone GitHub Actions updater and .github owner', () => {

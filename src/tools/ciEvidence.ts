@@ -40,9 +40,9 @@ function requirePositiveInteger(value: string | undefined, label: string): strin
   return value;
 }
 
-function requireEventName(value: string | undefined): string {
-  if (value !== 'pull_request' && value !== 'push') {
-    throw new Error('CI_EVENT_NAME must be pull_request or push');
+function requireEventName(value: string | undefined): 'pull_request' | 'push' | 'workflow_dispatch' {
+  if (value !== 'pull_request' && value !== 'push' && value !== 'workflow_dispatch') {
+    throw new Error('CI_EVENT_NAME must be pull_request, push or workflow_dispatch');
   }
   return value;
 }
@@ -77,7 +77,7 @@ export async function createCiEvidence(
   }
   const sourceSha = requireCommitSha(environment.sourceSha, 'CI_SOURCE_SHA');
   const eventName = requireEventName(environment.eventName);
-  const pullRequestHeadSha = eventName === 'pull_request'
+  const pullRequestHeadSha = eventName === 'pull_request' || eventName === 'workflow_dispatch'
     ? requireCommitSha(environment.pullRequestHeadSha, 'CI_PR_HEAD_SHA')
     : null;
   return {
