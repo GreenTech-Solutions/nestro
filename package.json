@@ -450,6 +450,7 @@
     "audit:dependencies": "pnpm audit --audit-level high",
     "audit:signatures": "pnpm run test:compile && node out/tools/auditSignaturesCli.js",
     "ci:evidence": "pnpm run test:compile && node out/tools/ciEvidenceCli.js",
+    "release:provenance": "pnpm run test:compile && node out/tools/artifactProvenanceCli.js",
     "ci:policy": "pnpm run test:compile && node out/tools/ciPolicyCli.js",
     "release:prepare": "pnpm run test:compile && node out/tools/releasePrepareCli.js",
     "release:candidate": "pnpm run test:compile && node out/tools/releaseCandidateCli.js",

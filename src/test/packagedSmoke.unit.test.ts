@@ -4,6 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildArtifactProvenance,
+  buildArtifactSbom,
+  buildNormalizedManifest,
+  parsePackagedIdentity,
+  readRuntimeDependencies,
+  readVsixArchive,
+  selectDeliveredRuntimeFiles,
+} from '../tools';
+import {
+  buildZipFixture,
+  CLEAN_EXTENSION_IDENTITY,
+  CLEAN_VSIX_MANIFEST,
+  cleanVsixFixtureEntries,
+} from './fixtures/vsixFixtures';
+import {
   assertSmokeSocketPathFits,
   buildVsixInstallArgs,
   installPackagedVsix,
@@ -14,24 +29,82 @@ import {
 import type { PackagedSmokeDependencies } from './packagedSmokeCli';
 
 const SOURCE_SHA = 'c'.repeat(40);
+const CI_RUN_ID = '42';
+const CI_RUN_ATTEMPT = '1';
 const VSIX_FILE = 'nestro-0.4.2.vsix';
 const roots: string[] = [];
 
 async function createEvidenceDir(): Promise<{ dir: string; digest: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'nestro-packaged-evidence-'));
   roots.push(dir);
-  const bytes = Buffer.from('downloaded-vsix');
+  const bytes = buildZipFixture(cleanVsixFixtureEntries().map((entry) => {
+    if (entry.path === 'extension/package.json') {
+      return {
+        ...entry,
+        content: JSON.stringify({
+          ...CLEAN_EXTENSION_IDENTITY,
+          version: '0.4.2',
+          main: './out/extension.cjs',
+          icon: 'resources/icon.png',
+        }),
+      };
+    }
+    if (entry.path === 'extension.vsixmanifest') {
+      return { ...entry, content: CLEAN_VSIX_MANIFEST.replaceAll('9.9.9', '0.4.2') };
+    }
+    return entry;
+  }));
   const digest = createHash('sha256').update(bytes).digest('hex');
+  const archiveEntries = readVsixArchive(bytes);
+  const packageEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
+  if (packageEntry === undefined) {
+    throw new Error('fixture package manifest missing');
+  }
+  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const packagedManifest = JSON.parse(new TextDecoder().decode(packageEntry.bytes)) as unknown;
+  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
+  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
+  const normalizedManifest = buildNormalizedManifest(archiveEntries);
+  const manifestSha256 = createHash('sha256').update(normalizedManifest).digest('hex');
+  const sbomContents = `${JSON.stringify(buildArtifactSbom({
+    identity,
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    runtimeFiles,
+    dependencies: runtimeDependencies.dependencies,
+    optionalDependencies: runtimeDependencies.optionalDependencies,
+  }), undefined, 2)}\n`;
+  const sbomSha256 = createHash('sha256').update(sbomContents).digest('hex');
+  const provenanceContents = `${JSON.stringify(buildArtifactProvenance({
+    sourceSha: SOURCE_SHA,
+    ciRunId: CI_RUN_ID,
+    ciRunAttempt: CI_RUN_ATTEMPT,
+    eventName: 'push',
+    repository: 'local/repository',
+    signerWorkflow: 'local/repository/.github/workflows/ci.yml',
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    manifestFile: `${VSIX_FILE}.manifest.txt`,
+    manifestSha256,
+    sbomFile: 'sbom.json',
+    sbomSha256,
+  }), undefined, 2)}\n`;
   await writeFile(join(dir, VSIX_FILE), bytes);
   await writeFile(join(dir, `${VSIX_FILE}.sha256`), `${digest}  ${VSIX_FILE}\n`, 'utf8');
-  await writeFile(join(dir, `${VSIX_FILE}.manifest.txt`), `${digest}  extension/package.json\n`, 'utf8');
+  await writeFile(join(dir, `${VSIX_FILE}.manifest.txt`), normalizedManifest, 'utf8');
   await writeFile(join(dir, 'evidence.json'), JSON.stringify({
     schemaVersion: 1,
     sourceSha: SOURCE_SHA,
     vsixFile: VSIX_FILE,
     vsixSha256: digest,
+    runId: CI_RUN_ID,
+    runAttempt: CI_RUN_ATTEMPT,
+    eventName: 'push',
+    pullRequestHeadSha: null,
     releaseEligible: false,
   }), 'utf8');
+  await writeFile(join(dir, 'sbom.json'), sbomContents, 'utf8');
+  await writeFile(join(dir, 'provenance.json'), provenanceContents, 'utf8');
   return { dir, digest };
 }
 

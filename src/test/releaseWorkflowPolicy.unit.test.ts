@@ -192,6 +192,75 @@ describe('release workflow policies', () => {
     })), 'candidate-integrity');
   });
 
+  it('rejects suppressed, commented-out and unbounded provenance checks', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');
+      attestation!.run = `${String(attestation!.run)} || true`;
+    })), 'attestation');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');
+      attestation!.run = `set -euo pipefail\n# ${String(attestation!.run).replaceAll('\n', '\n# ')}`;
+    })), 'attestation');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = 'set -euo pipefail\ntrue';
+    })), 'post-publish');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run).replace('--proto \'=https\' --proto-redir \'=https\' --max-redirs 3', '--location');
+    })), 'post-publish');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run)
+        .replace('MAX_ENTRIES = 26', 'MAX_ENTRIES = 1')
+        .replace('def fail(message):', 'MAX_ENTRIES = 26\n\ndef fail(message):');
+    })), 'post-publish');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run)
+        .replace('MAX_UNCOMPRESSED_BYTES = 10485760', 'MAX_UNCOMPRESSED_BYTES = 10485760\n\nglobals().update(MAX_ENTRIES=1)');
+    })), 'post-publish');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run).replace('def inspect(path):', 'fail = lambda message: None\n\ndef inspect(path):');
+    })), 'post-publish');
+    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
+      const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
+      verify!.run = `${String(verify!.run)} || true`;
+    })), 'candidate-integrity');
+  });
+
+  it('requires fail-closed finalizer shell steps', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
+      tag!.run = 'set -euo pipefail\ntrue';
+    })), 'finalizer-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const create = steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent');
+      create!.run = `${String(create!.run)}\ntrue || true`;
+    })), 'finalizer-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const existing = steps(workflow, 'finalize').find(step => step.name === 'Verify an existing GitHub release safely');
+      existing!.run = String(existing!.run).replace('set -euo pipefail', 'set -euo pipefail\nset +e');
+    })), 'retry-safety');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
+      tag!.run = String(tag!.run).replace('set -euo pipefail', 'set -euo pipefail\ntrap \'true\' EXIT');
+    })), 'finalizer-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
+      tag!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s\\n" "git/ref/tags/" ".sourceSha" "refs/tags/v"';
+    })), 'finalizer-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const create = steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent');
+      create!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s %s\\n" "gh release create" "candidate.json" "$VSIX_FILE" "--verify-tag"';
+    })), 'finalizer-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const existing = steps(workflow, 'finalize').find(step => step.name === 'Verify an existing GitHub release safely');
+      existing!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s %s %s\\n" "release download" "release upload" "cmp " "expected_names" "asset_names"';
+    })), 'retry-safety');
+  });
+
   it('rejects non-literal workflow documents and forbidden preparation side effects', () => {
     expectViolation(evaluateReleasePrepareWorkflowPolicy('name: Release\njobs: &jobs {}\n'), 'yaml');
     expectViolation(evaluateReleasePrepareWorkflowPolicy('- Release\n'), 'workflow-shape');

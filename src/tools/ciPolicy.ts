@@ -10,6 +10,7 @@ const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const ACTION_REFERENCE_PATTERN = /^([^/]+\/[^/@]+)@(.+)$/u;
 const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
   'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'actions/attest-build-provenance': 'e8998f949152b193b063cb0ec769d69d929409be',
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
@@ -17,6 +18,7 @@ const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
 };
 const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1': 'v7.0.1',
+  'actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be': 'v2.2.2',
   'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803': 'v6.1.0',
   'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c': 'v8.0.1',
   'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38': 'v6.5.0',
@@ -193,6 +195,39 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
     run: 'pnpm run ci:evidence --out-dir "$CI_ARTIFACT_DIR"',
   },
   {
+    env: {
+      PROVENANCE_CI_RUN_ATTEMPT: '${{ github.run_attempt }}',
+      PROVENANCE_CI_RUN_ID: '${{ github.run_id }}',
+      PROVENANCE_EVENT_NAME: '${{ github.event_name }}',
+      PROVENANCE_REPOSITORY: '${{ github.repository }}',
+      PROVENANCE_SIGNER_WORKFLOW: '${{ github.repository }}/.github/workflows/ci.yml',
+      PROVENANCE_SOURCE_SHA: '${{ env.EXPECTED_SHA }}',
+    },
+    name: 'Write deterministic provenance bundle',
+    run: 'pnpm run release:provenance -- --artifact-dir "$CI_ARTIFACT_DIR"',
+  },
+  {
+    name: 'Resolve the exact VSIX attestation subject',
+    id: 'subject',
+    shell: 'bash',
+    run: `set -euo pipefail
+mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
+test "\${#subjects[@]}" = 1
+case "\${subjects[0]}" in
+  "$CI_ARTIFACT_DIR"/*.vsix) ;;
+  *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
+esac
+printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`,
+  },
+  {
+    if: '${{ github.event_name == \'push\' && github.ref == \'refs/heads/master\' }}',
+    name: 'Attest the exact VSIX subject',
+    uses: 'actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be',
+    with: {
+      'subject-path': '${{ steps.subject.outputs.path }}',
+    },
+  },
+  {
     id: 'upload',
     name: 'Upload immutable evidence',
     uses: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
@@ -200,7 +235,7 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
       'if-no-files-found': 'error',
       name: 'verify-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
       overwrite: false,
-      path: '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n',
+      path: '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n${{ env.CI_ARTIFACT_DIR }}/sbom.json\n${{ env.CI_ARTIFACT_DIR }}/provenance.json\n',
       'retention-days': 7,
     },
   },
@@ -474,7 +509,9 @@ function assertExternalActionsPinned(
 ): void {
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob, `jobs.${jobId}`, violations);
-    if (rejectJobPermissions && job.permissions !== undefined) {
+    const packagePermissionsAreReviewed = jobId === 'package'
+      && isDeepStrictEqual(job.permissions, { attestations: 'write', contents: 'read', 'id-token': 'write' });
+    if (rejectJobPermissions && job.permissions !== undefined && !packagePermissionsAreReviewed) {
       add(violations, 'least-permissions', `${jobId} must not override workflow-level permissions`);
     }
     if (job['continue-on-error'] !== undefined || job.defaults !== undefined) {
@@ -600,7 +637,7 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
     add(violations, 'failure-safe-needs', 'package must run only after successful quality and Extension Host gates');
   }
   const steps = getSteps(job);
-  if (steps.length !== 9 || !hasRequiredRunStep(steps, 'pnpm run build')) {
+  if (steps.length !== 12 || !hasRequiredRunStep(steps, 'pnpm run build')) {
     add(violations, 'step-allowlist', 'package must contain only the reviewed setup, build, verify, evidence and upload steps');
   }
   const outputs = asRecord(job.outputs, 'jobs.package.outputs', violations);
@@ -615,6 +652,27 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
   if (!hasRequiredRunStep(steps, 'pnpm run ci:evidence --out-dir "$CI_ARTIFACT_DIR"')) {
     add(violations, 'evidence-only', 'package must write its non-release evidence identity');
   }
+  if (!hasRequiredRunStep(steps, 'pnpm run release:provenance -- --artifact-dir "$CI_ARTIFACT_DIR"')) {
+    add(violations, 'provenance', 'package must write the deterministic provenance bundle before attestation');
+  }
+  const subject = steps.find(step => step.name === 'Resolve the exact VSIX attestation subject');
+  const expectedSubjectRun = `set -euo pipefail
+mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
+test "\${#subjects[@]}" = 1
+case "\${subjects[0]}" in
+  "$CI_ARTIFACT_DIR"/*.vsix) ;;
+  *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
+esac
+printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`;
+  if (subject?.id !== 'subject' || subject.shell !== 'bash' || normalizedRun(subject) !== expectedSubjectRun) {
+    add(violations, 'attestation-subject', 'package must resolve exactly one VSIX as the attestation subject');
+  }
+  const attestation = findActionStep(steps, 'actions/attest-build-provenance');
+  if (attestation?.name !== 'Attest the exact VSIX subject'
+    || attestation.if !== '${{ github.event_name == \'push\' && github.ref == \'refs/heads/master\' }}'
+    || !isDeepStrictEqual(attestation.with, { 'subject-path': '${{ steps.subject.outputs.path }}' })) {
+    add(violations, 'attestation-subject', 'package must attest only the exact VSIX subject on trusted release-eligible pushes');
+  }
   const upload = findActionStep(steps, 'actions/upload-artifact');
   const options = isRecord(upload?.with) ? upload.with : {};
   if (upload?.id !== 'upload') {
@@ -623,8 +681,8 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
   if (options['if-no-files-found'] !== 'error' || options.overwrite !== false || options['retention-days'] !== 7) {
     add(violations, 'immutable-artifact', 'upload must fail closed, forbid overwrite and retain evidence briefly');
   }
-  if (options.path !== '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n') {
-    add(violations, 'artifact-members', 'upload must contain only the verified VSIX bundle and evidence identity');
+  if (options.path !== '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n${{ env.CI_ARTIFACT_DIR }}/sbom.json\n${{ env.CI_ARTIFACT_DIR }}/provenance.json\n') {
+    add(violations, 'artifact-members', 'upload must contain only the verified six-member provenance bundle');
   }
 }
 
@@ -791,6 +849,11 @@ export function evaluateCiWorkflowPolicy(source: string): CiPolicyViolation[] {
       outputs: {
         'artifact-digest': '${{ steps.upload.outputs.artifact-digest }}',
         'artifact-id': '${{ steps.upload.outputs.artifact-id }}',
+      },
+      permissions: {
+        attestations: 'write',
+        contents: 'read',
+        'id-token': 'write',
       },
       'runs-on': 'ubuntu-latest',
     },

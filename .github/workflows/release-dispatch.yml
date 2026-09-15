@@ -68,19 +68,36 @@ jobs:
         run: |
           set -euo pipefail
           candidate=dist/release-candidate/candidate.json
-          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunId,digest,notes,schemaVersion,sourceSha,version,vsixFile'
-          test "$(jq -r '.schemaVersion' "$candidate")" = 1
+          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunAttempt,ciRunId,digest,digestFile,manifestFile,manifestSha256,notes,provenanceFile,provenanceSha256,schemaVersion,sbomFile,sbomSha256,sourceSha,version,vsixFile'
+          test "$(jq -r '.schemaVersion' "$candidate")" = 2
           test "$(jq -r '.candidateRunId' "$candidate")" = "$CANDIDATE_RUN_ID"
           source_sha="$(jq -r '.sourceSha' "$candidate")"
           ci_run_id="$(jq -r '.ciRunId' "$candidate")"
+          ci_run_attempt="$(jq -r '.ciRunAttempt' "$candidate")"
           version="$(jq -r '.version' "$candidate")"
           vsix_file="$(jq -r '.vsixFile' "$candidate")"
           digest="$(jq -r '.digest' "$candidate")"
+          digest_file="$(jq -r '.digestFile' "$candidate")"
+          manifest_file="$(jq -r '.manifestFile' "$candidate")"
+          manifest_sha="$(jq -r '.manifestSha256' "$candidate")"
+          sbom_file="$(jq -r '.sbomFile' "$candidate")"
+          sbom_sha="$(jq -r '.sbomSha256' "$candidate")"
+          provenance_file="$(jq -r '.provenanceFile' "$candidate")"
+          provenance_sha="$(jq -r '.provenanceSha256' "$candidate")"
           [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$source_sha" = "$SOURCE_SHA"
           [[ "$ci_run_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ci_run_attempt" =~ ^[1-9][0-9]*$ ]]
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$vsix_file" =~ ^[A-Za-z0-9._-]+\.vsix$ ]]
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          test "$digest_file" = "$vsix_file.sha256"
+          test "$manifest_file" = "$vsix_file.manifest.txt"
+          test "$sbom_file" = sbom.json
+          test "$provenance_file" = provenance.json
+          [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$sbom_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$provenance_sha" =~ ^[0-9a-f]{64}$ ]]
           ci_run="$(gh api "repos/${{ github.repository }}/actions/runs/$ci_run_id")"
           test "$(jq -r '.name' <<<"$ci_run")" = Verify
           test "$(jq -r '.event' <<<"$ci_run")" = push
@@ -88,7 +105,13 @@ jobs:
           test "$(jq -r '.head_sha' <<<"$ci_run")" = "$source_sha"
           test "$(jq -r '.conclusion' <<<"$ci_run")" = success
           test "$(sha256sum "dist/release-candidate/$vsix_file" | cut -d ' ' -f 1)" = "$digest"
-          sha256sum --check --strict "dist/release-candidate/$vsix_file.sha256"
+          expected_members="$(printf '%s\n' "$vsix_file" "$manifest_file" "$digest_file" "$sbom_file" "$provenance_file" candidate.json | sort)"
+          actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual_members" = "$expected_members"
+          sha256sum --check --strict "dist/release-candidate/$digest_file"
+          test "$(sha256sum "dist/release-candidate/$manifest_file" | cut -d ' ' -f 1)" = "$manifest_sha"
+          test "$(sha256sum "dist/release-candidate/$sbom_file" | cut -d ' ' -f 1)" = "$sbom_sha"
+          test "$(sha256sum "dist/release-candidate/$provenance_file" | cut -d ' ' -f 1)" = "$provenance_sha"
           {
             echo "source-sha=$source_sha"
             echo "tag=v$version"

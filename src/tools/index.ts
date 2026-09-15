@@ -15,3 +15,6 @@ export * from './releasePrepareCli';
 export * from './releaseCandidate';
 export * from './releaseCandidateCli';
 export * from './releaseWorkflowPolicy';
+export * from './artifactProvenance';
+export * from './artifactProvenanceCli';
+export * from './publishedArtifact';

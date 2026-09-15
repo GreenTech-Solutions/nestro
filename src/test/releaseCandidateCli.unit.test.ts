@@ -5,11 +5,28 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mainReleaseCandidate, parseReleaseCandidateArgs } from '../tools';
+import {
+  buildArtifactProvenance,
+  buildArtifactSbom,
+  buildNormalizedManifest,
+  mainReleaseCandidate,
+  parsePackagedIdentity,
+  parseReleaseCandidateArgs,
+  readRuntimeDependencies,
+  readVsixArchive,
+  selectDeliveredRuntimeFiles,
+} from '../tools';
+import {
+  buildZipFixture,
+  CLEAN_EXTENSION_IDENTITY,
+  CLEAN_VSIX_MANIFEST,
+  cleanVsixFixtureEntries,
+} from './fixtures/vsixFixtures';
 
 const execFileAsync = promisify(execFile);
 const SOURCE_SHA = 'a'.repeat(40);
 const CI_RUN_ID = '42';
+const CI_RUN_ATTEMPT = '1';
 const VSIX_FILE = 'nestro-0.5.0.vsix';
 const roots: string[] = [];
 
@@ -25,10 +42,60 @@ async function createCandidateFixture(): Promise<{ root: string; artifact: strin
     'utf8',
   );
   const artifact = join(root, 'dist', 'ci');
-  const bytes = Buffer.from('verified-vsix-bytes');
+  const bytes = buildZipFixture(cleanVsixFixtureEntries().map((entry) => {
+    if (entry.path === 'extension/package.json') {
+      return {
+        ...entry,
+        content: JSON.stringify({
+          ...CLEAN_EXTENSION_IDENTITY,
+          version: '0.5.0',
+          main: './out/extension.cjs',
+          icon: 'resources/icon.png',
+        }),
+      };
+    }
+    if (entry.path === 'extension.vsixmanifest') {
+      return { ...entry, content: CLEAN_VSIX_MANIFEST.replaceAll('9.9.9', '0.5.0') };
+    }
+    return entry;
+  }));
   const digest = createHash('sha256').update(bytes).digest('hex');
+  const archiveEntries = readVsixArchive(bytes);
+  const packageEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
+  if (packageEntry === undefined) {
+    throw new Error('fixture package manifest missing');
+  }
+  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const packagedManifest = JSON.parse(new TextDecoder('utf-8').decode(packageEntry.bytes)) as unknown;
+  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
+  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
+  const normalizedManifest = buildNormalizedManifest(archiveEntries);
+  const manifestSha256 = createHash('sha256').update(normalizedManifest).digest('hex');
+  const sbomContents = `${JSON.stringify(buildArtifactSbom({
+    identity,
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    runtimeFiles,
+    dependencies: runtimeDependencies.dependencies,
+    optionalDependencies: runtimeDependencies.optionalDependencies,
+  }), undefined, 2)}\n`;
+  const sbomSha256 = createHash('sha256').update(sbomContents).digest('hex');
+  const provenanceContents = `${JSON.stringify(buildArtifactProvenance({
+    sourceSha: SOURCE_SHA,
+    ciRunId: CI_RUN_ID,
+    ciRunAttempt: CI_RUN_ATTEMPT,
+    eventName: 'push',
+    repository: 'local/repository',
+    signerWorkflow: 'local/repository/.github/workflows/ci.yml',
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    manifestFile: `${VSIX_FILE}.manifest.txt`,
+    manifestSha256,
+    sbomFile: 'sbom.json',
+    sbomSha256,
+  }), undefined, 2)}\n`;
   await writeFile(join(artifact, VSIX_FILE), bytes);
-  await writeFile(join(artifact, `${VSIX_FILE}.manifest.txt`), `${digest}  extension/package.json\n`, 'utf8');
+  await writeFile(join(artifact, `${VSIX_FILE}.manifest.txt`), normalizedManifest, 'utf8');
   await writeFile(join(artifact, `${VSIX_FILE}.sha256`), `${digest}  ${VSIX_FILE}\n`, 'utf8');
   await writeFile(join(artifact, 'evidence.json'), `${JSON.stringify({
     schemaVersion: 1,
@@ -41,6 +108,8 @@ async function createCandidateFixture(): Promise<{ root: string; artifact: strin
     vsixSha256: digest,
     releaseEligible: false,
   })}\n`, 'utf8');
+  await writeFile(join(artifact, 'sbom.json'), sbomContents, 'utf8');
+  await writeFile(join(artifact, 'provenance.json'), provenanceContents, 'utf8');
   return { root, artifact, digest };
 }
 
@@ -48,7 +117,7 @@ function invokeCandidate(root: string, env: NodeJS.ProcessEnv = {}): Promise<num
   return mainReleaseCandidate(
     ['--artifact-dir', 'dist/ci', '--out-dir', 'dist/release-candidate'],
     root,
-    env,
+    { RELEASE_CANDIDATE_RUN_ID: '43', ...env },
   );
 }
 
@@ -86,16 +155,22 @@ describe('release candidate CLI', () => {
       'candidate.json',
       `${VSIX_FILE}.manifest.txt`,
       `${VSIX_FILE}.sha256`,
+      'provenance.json',
+      'sbom.json',
       VSIX_FILE,
     ].sort((left, right) => left.localeCompare(right)));
     expect(JSON.parse(await readFile(join(candidateDir, 'candidate.json'), 'utf8'))).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       version: '0.5.0',
       sourceSha: SOURCE_SHA,
       ciRunId: CI_RUN_ID,
       candidateRunId: '43',
       vsixFile: VSIX_FILE,
       digest,
+      digestFile: `${VSIX_FILE}.sha256`,
+      manifestFile: `${VSIX_FILE}.manifest.txt`,
+      sbomFile: 'sbom.json',
+      provenanceFile: 'provenance.json',
     });
     expect(await readFile(output, 'utf8')).toContain('is-candidate=true');
     expect(await readFile(output, 'utf8')).toContain(`artifact-name=release-candidate-0.5.0-${SOURCE_SHA}`);
@@ -149,7 +224,11 @@ describe('release candidate CLI', () => {
       await expect(mainReleaseCandidate(
         ['--artifact-dir', 'dist/ci', '--out-dir', 'dist/release-candidate'],
         second.root,
-        { RELEASE_SOURCE_SHA: SOURCE_SHA, RELEASE_CI_RUN_ID: CI_RUN_ID },
+        {
+          RELEASE_SOURCE_SHA: SOURCE_SHA,
+          RELEASE_CI_RUN_ID: CI_RUN_ID,
+          RELEASE_CANDIDATE_RUN_ID: '43',
+        },
       )).resolves.toBe(1);
       expect(secondError).toHaveBeenCalledWith(expect.stringContaining('no release notes'));
     }

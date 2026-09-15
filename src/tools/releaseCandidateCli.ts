@@ -1,14 +1,25 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import {
+  ARTIFACT_PROVENANCE_FILE,
+  ARTIFACT_SBOM_FILE,
+  findArtifactProvenanceViolation,
+  findArtifactSbomViolation,
+  findNormalizedManifestViolation,
+  parsePackagedIdentity,
+  readRuntimeDependencies,
+  selectDeliveredRuntimeFiles,
+} from './artifactProvenance';
 import { buildReleaseCandidate } from './releaseCandidate';
-import type { ReleaseCandidateEvidence } from './releaseCandidate';
+import type { ReleaseCandidateArtifact, ReleaseCandidateEvidence } from './releaseCandidate';
 import { normalizeArtifactOutDir } from './verifyVsix';
+import { readVsixArchive } from './vsixArchive';
 
 const execFileAsync = promisify(execFile);
-const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\r?\n?$/u;
+const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RUN_ID_PATTERN = /^[1-9]\d*$/u;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
@@ -89,16 +100,16 @@ function readRequiredEvidence(source: unknown): ReleaseCandidateEvidence {
   if (!/^[0-9a-f]{64}$/u.test(vsixSha256)) {
     throw new Error('evidence.json vsixSha256 must be a lowercase SHA-256 digest');
   }
-  const evidence: ReleaseCandidateEvidence = {
+  return {
     sourceSha,
     runId,
+    runAttempt,
     vsixFile,
     vsixSha256,
     eventName: record.eventName,
     pullRequestHeadSha: null,
     releaseEligible: false,
   };
-  return evidence;
 }
 
 async function listExistingTags(cwd: string): Promise<string[]> {
@@ -147,26 +158,109 @@ async function readPackageVersion(cwd: string): Promise<string> {
   return (value as Record<string, unknown>).version as string;
 }
 
-async function verifyEvidenceFiles(artifactDir: string, evidence: ReleaseCandidateEvidence): Promise<void> {
-  const expectedEntries = [
-    'evidence.json',
-    evidence.vsixFile,
-    `${evidence.vsixFile}.manifest.txt`,
-    `${evidence.vsixFile}.sha256`,
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function parseJson(bytes: Uint8Array, label: string): unknown {
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+  }
+  catch (error) {
+    throw new Error(`${label} is not valid JSON`, { cause: error });
+  }
+}
+
+function expectedBundleEntries(vsixFile: string, includeEvidence: boolean): string[] {
+  return [
+    ...(includeEvidence ? ['evidence.json'] : ['candidate.json']),
+    vsixFile,
+    `${vsixFile}.manifest.txt`,
+    `${vsixFile}.sha256`,
+    ARTIFACT_PROVENANCE_FILE,
+    ARTIFACT_SBOM_FILE,
   ].sort((left, right) => left.localeCompare(right));
+}
+
+async function verifyEvidenceFiles(
+  artifactDir: string,
+  evidence: ReleaseCandidateEvidence,
+  environment: NodeJS.ProcessEnv,
+): Promise<ReleaseCandidateArtifact> {
   const entries = (await readdir(artifactDir)).sort((left, right) => left.localeCompare(right));
-  if (entries.join('\n') !== expectedEntries.join('\n')) {
-    throw new Error('verified evidence must contain exactly evidence.json and the VSIX bundle');
+  const expectedEntries = expectedBundleEntries(evidence.vsixFile, true);
+  if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
+    throw new Error('verified evidence must contain exactly the six-member provenance bundle');
   }
-  const digestPath = resolve(artifactDir, `${evidence.vsixFile}.sha256`);
-  const digestMatch = SHA256_LINE_PATTERN.exec(await readFile(digestPath, 'utf8'));
-  if (digestMatch === null || digestMatch[2] !== evidence.vsixFile || digestMatch[1] !== evidence.vsixSha256) {
-    throw new Error('candidate evidence digest sidecar does not match evidence.json');
-  }
-  const actualDigest = createHash('sha256').update(await readFile(resolve(artifactDir, evidence.vsixFile))).digest('hex');
+  const vsixBytes = await readFile(resolve(artifactDir, evidence.vsixFile));
+  const actualDigest = sha256Hex(vsixBytes);
   if (actualDigest !== evidence.vsixSha256) {
     throw new Error('candidate VSIX digest does not match evidence.json');
   }
+  const digestFile = `${evidence.vsixFile}.sha256`;
+  const digestMatch = SHA256_LINE_PATTERN.exec(await readFile(resolve(artifactDir, digestFile), 'utf8'));
+  if (digestMatch === null || digestMatch[2] !== evidence.vsixFile || digestMatch[1] !== evidence.vsixSha256) {
+    throw new Error('candidate evidence digest sidecar does not match evidence.json');
+  }
+  const archiveEntries = readVsixArchive(vsixBytes);
+  const manifestFile = `${evidence.vsixFile}.manifest.txt`;
+  const manifestContents = await readFile(resolve(artifactDir, manifestFile), 'utf8');
+  const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
+  if (manifestViolation !== undefined) {
+    throw new Error(manifestViolation);
+  }
+  const packagedManifest = archiveEntries.find(entry => entry.path === 'extension/package.json');
+  if (packagedManifest === undefined) {
+    throw new Error('VSIX must contain extension/package.json');
+  }
+  const identity = parsePackagedIdentity(packagedManifest.bytes);
+  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
+  const runtimeDependencies = readRuntimeDependencies(parseJson(packagedManifest.bytes, 'extension/package.json'));
+  const manifestSha256 = sha256Hex(new TextEncoder().encode(manifestContents));
+  const sbomBytes = await readFile(resolve(artifactDir, ARTIFACT_SBOM_FILE));
+  const sbomSha256 = sha256Hex(sbomBytes);
+  const sbom = parseJson(sbomBytes, ARTIFACT_SBOM_FILE);
+  const sbomViolation = findArtifactSbomViolation(sbom, {
+    identity,
+    artifactFile: evidence.vsixFile,
+    artifactSha256: evidence.vsixSha256,
+    runtimeFiles,
+    dependencies: runtimeDependencies.dependencies,
+    optionalDependencies: runtimeDependencies.optionalDependencies,
+  });
+  if (sbomViolation !== undefined) {
+    throw new Error(sbomViolation);
+  }
+  const provenanceBytes = await readFile(resolve(artifactDir, ARTIFACT_PROVENANCE_FILE));
+  const provenance = parseJson(provenanceBytes, ARTIFACT_PROVENANCE_FILE);
+  const provenanceViolation = findArtifactProvenanceViolation(provenance, {
+    sourceSha: evidence.sourceSha,
+    ciRunId: evidence.runId,
+    ciRunAttempt: evidence.runAttempt,
+    eventName: 'push',
+    repository: environment.RELEASE_REPOSITORY ?? 'local/repository',
+    signerWorkflow: environment.RELEASE_SIGNER_WORKFLOW ?? `${environment.RELEASE_REPOSITORY ?? 'local/repository'}/.github/workflows/ci.yml`,
+    artifactFile: evidence.vsixFile,
+    artifactSha256: evidence.vsixSha256,
+    manifestFile,
+    manifestSha256,
+    sbomFile: ARTIFACT_SBOM_FILE,
+    sbomSha256,
+  });
+  if (provenanceViolation !== undefined) {
+    throw new Error(provenanceViolation);
+  }
+  return {
+    vsixFile: evidence.vsixFile,
+    digestFile,
+    digest: evidence.vsixSha256,
+    manifestFile,
+    manifestSha256,
+    sbomFile: ARTIFACT_SBOM_FILE,
+    sbomSha256,
+    provenanceFile: ARTIFACT_PROVENANCE_FILE,
+    provenanceSha256: sha256Hex(provenanceBytes),
+  };
 }
 
 async function writeGithubOutput(path: string | undefined, key: string, value: string): Promise<void> {
@@ -183,7 +277,6 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
     const resolvedOutDir = resolve(cwd, outDir);
     const evidenceSource = JSON.parse(await readFile(resolve(resolvedArtifactDir, 'evidence.json'), 'utf8')) as unknown;
     const evidence = readRequiredEvidence(evidenceSource);
-    await verifyEvidenceFiles(resolvedArtifactDir, evidence);
     if (evidence.eventName !== 'push' || evidence.pullRequestHeadSha !== null || evidence.releaseEligible !== false) {
       throw new Error('candidate input must be successful push evidence with releaseEligible=false');
     }
@@ -195,13 +288,19 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
     if (expectedCiRunId !== undefined && (!RUN_ID_PATTERN.test(expectedCiRunId) || evidence.runId !== expectedCiRunId)) {
       throw new Error('candidate evidence run ID does not match the upstream workflow run');
     }
+    const candidateRunId = env.RELEASE_CANDIDATE_RUN_ID;
+    if (candidateRunId === undefined || !RUN_ID_PATTERN.test(candidateRunId)) {
+      throw new Error('RELEASE_CANDIDATE_RUN_ID must be a positive integer');
+    }
+    const artifact = await verifyEvidenceFiles(resolvedArtifactDir, evidence, env);
     const packageVersion = await readPackageVersion(cwd);
     const existingTags = await listExistingTags(cwd);
     const notes = await readReleaseNotes(cwd, packageVersion);
     const outcome = buildReleaseCandidate(evidence, packageVersion, existingTags, notes, {
       expectedSourceSha,
       expectedCiRunId,
-      candidateRunId: env.RELEASE_CANDIDATE_RUN_ID,
+      candidateRunId,
+      artifact,
     });
     if (!outcome.isCandidate) {
       await writeGithubOutput(env.GITHUB_OUTPUT, 'is-candidate', 'false');
@@ -209,15 +308,13 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
       return 0;
     }
     await mkdir(resolvedOutDir, { recursive: true });
-    await copyFile(resolve(resolvedArtifactDir, evidence.vsixFile), resolve(resolvedOutDir, evidence.vsixFile));
-    await copyFile(
-      resolve(resolvedArtifactDir, `${evidence.vsixFile}.manifest.txt`),
-      resolve(resolvedOutDir, `${basename(evidence.vsixFile)}.manifest.txt`),
-    );
-    await copyFile(
-      resolve(resolvedArtifactDir, `${evidence.vsixFile}.sha256`),
-      resolve(resolvedOutDir, `${basename(evidence.vsixFile)}.sha256`),
-    );
+    const outputEntries = await readdir(resolvedOutDir);
+    if (outputEntries.length > 0) {
+      throw new Error('release candidate output directory must be empty');
+    }
+    for (const file of [artifact.vsixFile, artifact.manifestFile, artifact.digestFile, artifact.sbomFile, artifact.provenanceFile]) {
+      await copyFile(resolve(resolvedArtifactDir, file), resolve(resolvedOutDir, file));
+    }
     await writeFile(resolve(resolvedOutDir, 'candidate.json'), `${JSON.stringify(outcome.manifest, undefined, 2)}\n`, 'utf8');
     await writeGithubOutput(env.GITHUB_OUTPUT, 'is-candidate', 'true');
     await writeGithubOutput(env.GITHUB_OUTPUT, 'version', outcome.manifest.version);
