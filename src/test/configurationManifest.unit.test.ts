@@ -30,10 +30,107 @@ interface WorkspaceCapability {
   readonly description: string;
 }
 
+type ManifestValue = null | boolean | number | string | ManifestValue[] | { readonly [key: string]: ManifestValue };
+
+type MessageCatalog = Readonly<Record<string, string>>;
+
+const LOCALIZATION_TOKEN = /%([A-Za-z0-9_.-]+)%/g;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateMessageCatalog(value: unknown): MessageCatalog {
+  if (!isRecord(value)) {
+    throw new Error('package.nls.json must contain an object');
+  }
+
+  const catalog: Record<string, string> = {};
+  for (const [key, message] of Object.entries(value)) {
+    if (key.trim().length === 0 || typeof message !== 'string' || message.trim().length === 0) {
+      throw new Error(`package.nls.json entry "${key}" must have a non-empty string value`);
+    }
+    catalog[key] = message;
+  }
+  return catalog;
+}
+
+function resolveMessage(
+  key: string,
+  catalog: MessageCatalog,
+  resolvingKeys: ReadonlySet<string>,
+  location: string,
+): string {
+  if (!Object.hasOwn(catalog, key)) {
+    throw new Error(`Missing localization key "${key}" at ${location}`);
+  }
+  if (resolvingKeys.has(key)) {
+    throw new Error(`Circular localization reference "${key}" at ${location}`);
+  }
+
+  const nextResolvingKeys = new Set(resolvingKeys);
+  nextResolvingKeys.add(key);
+  return catalog[key].replace(LOCALIZATION_TOKEN, (_token, nestedKey: string) => (
+    resolveMessage(nestedKey, catalog, nextResolvingKeys, location)
+  ));
+}
+
+function resolveManifestValue(
+  value: ManifestValue,
+  catalog: MessageCatalog,
+  location: string,
+): ManifestValue {
+  if (typeof value === 'string') {
+    return value.replace(LOCALIZATION_TOKEN, (_token, key: string) => (
+      resolveMessage(key, catalog, new Set(), location)
+    ));
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => resolveManifestValue(item, catalog, `${location}[${index}]`));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        resolveManifestValue(child as ManifestValue, catalog, `${location}.${key}`),
+      ]),
+    );
+  }
+  return value;
+}
+
+function resolveManifestLocalization(value: ManifestValue, catalogValue: unknown): ManifestValue {
+  return resolveManifestValue(value, validateMessageCatalog(catalogValue), 'manifest');
+}
+
 const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
-const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ExtensionManifest;
+const nlsPath = path.resolve(path.dirname(manifestPath), 'package.nls.json');
+const rawManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ManifestValue;
+const manifest = resolveManifestLocalization(
+  rawManifest,
+  JSON.parse(readFileSync(nlsPath, 'utf8')),
+) as unknown as ExtensionManifest;
 
 describe('extension configuration manifest', () => {
+  it('resolves every manifest token against a non-empty English catalog', () => {
+    expect(JSON.stringify(manifest)).not.toMatch(LOCALIZATION_TOKEN);
+  });
+
+  it('recursively resolves nested manifest values and catalog references', () => {
+    expect(resolveManifestLocalization(
+      { contents: ['%outer%', { text: 'prefix %outer%' }] },
+      { outer: 'English %inner%', inner: 'baseline' },
+    )).toEqual({ contents: ['English baseline', { text: 'prefix English baseline' }] });
+  });
+
+  it.each([
+    ['a missing key', { value: '%missing%' }, { known: 'Known' }, 'Missing localization key "missing"'],
+    ['an empty message', { value: '%empty%' }, { empty: '   ' }, 'must have a non-empty string value'],
+    ['an empty catalog key', { value: 'plain' }, { '': 'value' }, 'must have a non-empty string value'],
+  ])('rejects %s in the manifest localization boundary', (_label, value, catalog, message) => {
+    expect(() => resolveManifestLocalization(value, catalog)).toThrow(message);
+  });
+
   it('keeps prerelease updates opt-in by default', () => {
     expect(manifest.contributes.configuration.properties['nestro.includePreReleases'].default).toBe(false);
   });

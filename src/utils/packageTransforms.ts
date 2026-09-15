@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
@@ -24,7 +25,7 @@ export interface PreparedPinAllVersions {
 
 export class VersionPinConflictError extends Error {
   constructor() {
-    super('Package action is no longer available. Refresh the package list and try again.');
+    super(vscode.l10n.t('Package action is no longer available. Refresh the package list and try again.'));
     this.name = 'VersionPinConflictError';
   }
 }
@@ -46,8 +47,18 @@ export class DependencyTypeConflictError extends Error {
     const safeExpectedSourceSpec = sanitizeConflictText(expectedSourceSpec);
     const safeActualSourceSpec = sanitizeConflictText(actualSourceSpec);
     const message = !hasTargetSpec
-      ? `Cannot switch ${safePackageName}: source spec changed from ${safeExpectedSourceSpec} to ${safeActualSourceSpec}.`
-      : `Cannot switch ${safePackageName}: source spec ${safeActualSourceSpec} conflicts with target spec ${sanitizeConflictText(targetSpec)}.`;
+      ? vscode.l10n.t(
+          'Cannot switch {0}: source spec changed from {1} to {2}.',
+          safePackageName,
+          safeExpectedSourceSpec,
+          safeActualSourceSpec,
+        )
+      : vscode.l10n.t(
+          'Cannot switch {0}: source spec {1} conflicts with target spec {2}.',
+          safePackageName,
+          safeActualSourceSpec,
+          sanitizeConflictText(targetSpec),
+        );
     super(message);
     this.name = 'DependencyTypeConflictError';
     this.expectedSourceSpec = expectedSourceSpec;
@@ -103,7 +114,7 @@ export function transformDependencyVersions(
   }
 
   if (missing.length > 0) {
-    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
+    throw new Error(vscode.l10n.t('Packages not found in package.json: {0}', missing.join(', ')));
   }
 
   return transformed;
@@ -166,7 +177,7 @@ export function transformVersionPin(
   }
   const parsed = parseDependencySpec(current);
   if (!parsed.supported) {
-    throw new Error(`Cannot toggle pin for ${packageName}: ${parsed.reason}.`);
+    throw new Error(vscode.l10n.t('Cannot toggle pin for {0}: {1}.', packageName, parsed.reason));
   }
   transformed[section] = {
     ...(isRecord(transformed[section]) ? transformed[section] : {}),

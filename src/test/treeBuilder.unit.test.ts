@@ -38,8 +38,8 @@ describe('buildTree', () => {
     expect(tree[1]).toBeInstanceOf(FilterBarItem);
     const groups = tree.slice(2).filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups.map(group => group.label)).toEqual(['Dependencies', 'Dev Dependencies']);
-    expect(groups[0].description).toBe('1 packages · 1 outdated');
-    expect(groups[1].description).toBe('1 packages');
+    expect(groups[0].description).toBe('1 package · 1 outdated');
+    expect(groups[1].description).toBe('1 package');
     expect(groups[0].iconPath).toBeInstanceOf(vscode.ThemeIcon);
     expect(groups[1].iconPath).toBeInstanceOf(vscode.ThemeIcon);
     expect((groups[0].iconPath as vscode.ThemeIcon).id).toBe('package');
@@ -243,7 +243,7 @@ describe('buildTree', () => {
 
     const updateTree = buildTree(entries, 'hasUpdates', 'react');
     const updateGroups = updateTree.filter((item): item is GroupItem => item instanceof GroupItem);
-    expect(updateGroups[0].description).toBe('1 packages · 1 outdated');
+    expect(updateGroups[0].description).toBe('1 package · 1 outdated');
     expect(updateGroups[0].children.map(child => child.label)).toEqual(['react-ready']);
   });
 
@@ -658,6 +658,21 @@ describe('resolvePackageOwnerLabel', () => {
       '/workspace/(root)/package.json',
     ], folders);
     expect(new Set(rows.map(row => row.owner.label)).size).toBe(2);
+  });
+
+  it('localizes only the semantic root, not a nested folder named like the root sentinel', () => {
+    const rows = resolvePackageFileLabels([
+      '/workspace/package.json',
+      '/workspace/(root)/package.json',
+    ], [makeFolder('/workspace', 'workspace', 0)], {
+      rootLabel: '(localized root)',
+      formatUnicodeDiscriminator: (base, ordinal) => `${base} [localized unicode #${ordinal}]`,
+    });
+
+    expect(rows.map(row => row.owner.label)).toEqual([
+      'workspace — (localized root)',
+      'workspace — (root)',
+    ]);
   });
 
   it('sorts the actual root before a nested folder named like the root sentinel', () => {

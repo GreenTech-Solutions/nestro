@@ -45,6 +45,12 @@ export const env = {
   },
 };
 
+export const l10n = {
+  t: vi.fn((message: string, ...args: unknown[]) => message.replace(/\{(\d+)\}/g, (placeholder, index: string) => (
+    args[Number(index)] === undefined ? placeholder : String(args[Number(index)])
+  ))),
+};
+
 export const window = {
   showInformationMessage: vi.fn<() => void>(),
   showErrorMessage: vi.fn<() => void>(),

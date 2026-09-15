@@ -13,6 +13,7 @@
 
 # Extension manifest and the marketplace-facing documents.
 !package.json
+!package.nls.json
 !README.md
 !CHANGELOG.md
 !LICENSE

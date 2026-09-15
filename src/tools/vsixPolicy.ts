@@ -26,6 +26,7 @@ export interface StaticAllowlistRule {
  */
 export const VSIX_STATIC_ALLOWLIST: readonly StaticAllowlistRule[] = [
   { packagePath: 'package.json', sourcePath: 'package.json' },
+  { packagePath: 'package.nls.json', sourcePath: 'package.nls.json' },
   { packagePath: 'readme.md', sourcePath: 'README.md' },
   { packagePath: 'changelog.md', sourcePath: 'CHANGELOG.md' },
   { packagePath: 'LICENSE.txt', sourcePath: 'LICENSE' },

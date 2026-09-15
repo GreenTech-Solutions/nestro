@@ -517,7 +517,7 @@ describe('removePackageCommand()', () => {
     await removePackageCommand(item, provider);
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      'Remove eslint from devDependencies?',
+      'Remove eslint from dev dependencies?',
       { modal: true },
       'Remove Package',
     );

@@ -60,6 +60,11 @@ export interface PackageFileLabel {
   readonly owner: PackageOwnerLabel;
 }
 
+export interface PackageLabelFormatting {
+  readonly rootLabel: string;
+  readonly formatUnicodeDiscriminator: (base: string, ordinal: number) => string;
+}
+
 interface PackageLabelRow {
   packageFilePath: string;
   owner: PackageOwnerLabel;
@@ -68,6 +73,17 @@ interface PackageLabelRow {
 
 const UNOWNED_FOLDER_INDEX = Number.MAX_SAFE_INTEGER;
 const UNSAFE_LABEL_CODE_POINT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const DEFAULT_PACKAGE_LABEL_FORMATTING: PackageLabelFormatting = {
+  rootLabel: '(root)',
+  formatUnicodeDiscriminator: (base, ordinal) => `${base} [unicode #${ordinal}]`,
+};
+
+export function getLocalizedPackageLabelFormatting(): PackageLabelFormatting {
+  return {
+    rootLabel: vscode.l10n.t('(root)'),
+    formatUnicodeDiscriminator: (base, ordinal) => vscode.l10n.t('{0} [unicode #{1}]', base, ordinal),
+  };
+}
 
 export function buildTree(
   entries: readonly PackageTreeEntry[],
@@ -153,6 +169,7 @@ export function resolvePackageOwnerLabel(
   packageFilePath: string,
   folders: readonly WorkspaceFolderDescriptor[],
   displayNames: ReadonlyMap<string, string>,
+  formatting: PackageLabelFormatting = DEFAULT_PACKAGE_LABEL_FORMATTING,
 ): PackageOwnerLabel {
   const owner = findOwningWorkspaceFolder(packageFilePath, folders);
   if (owner === undefined) {
@@ -161,10 +178,10 @@ export function resolvePackageOwnerLabel(
   }
 
   const rawRelativeLabel = toRelativeLabel(packageFilePath, owner.path);
-  const relativeLabel = sanitizeLabelText(rawRelativeLabel);
-  const displayName = displayNames.get(owner.path) ?? sanitizeLabelText(owner.name);
   const isRoot = getPathInfo(normalizedPackageFileDirectory(packageFilePath)).comparisonPath
     === getPathInfo(owner.path).comparisonPath;
+  const relativeLabel = sanitizeLabelText(isRoot ? formatting.rootLabel : rawRelativeLabel);
+  const displayName = displayNames.get(owner.path) ?? sanitizeLabelText(owner.name);
   return {
     label: `${displayName} — ${relativeLabel}`,
     folderIndex: owner.index,
@@ -177,6 +194,7 @@ export function resolvePackageOwnerLabel(
 export function resolvePackageFileLabels(
   packageFilePaths: readonly string[],
   folders: readonly WorkspaceFolderDescriptor[],
+  formatting: PackageLabelFormatting = DEFAULT_PACKAGE_LABEL_FORMATTING,
 ): PackageFileLabel[] {
   const uniquePaths: string[] = [];
   const seenPaths = new Set<string>();
@@ -191,11 +209,11 @@ export function resolvePackageFileLabels(
   const displayNames = resolveWorkspaceFolderDisplayNames(folders);
   const rows = uniquePaths.map(packageFilePath => ({
     packageFilePath,
-    owner: resolvePackageOwnerLabel(packageFilePath, folders, displayNames),
+    owner: resolvePackageOwnerLabel(packageFilePath, folders, displayNames, formatting),
     needsUnicodeDiscriminator: packageLabelNeedsUnicodeDiscriminator(packageFilePath, folders, displayNames),
   }));
   ensureUniquePackageLabels(rows);
-  ensureUnicodeDiscriminators(rows);
+  ensureUnicodeDiscriminators(rows, formatting);
   ensureUniquePackageLabels(rows);
   rows.sort((left, right) => comparePackageOwnerLabels(left.owner, right.owner)
     || compareText(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
@@ -276,11 +294,13 @@ function buildGroups(
   search: string,
 ): vscode.TreeItem[] {
   if (groupsProjection.length === 0) {
-    return [new MessageItem(search === '' ? 'No packages match the current filter.' : 'No packages match the current search.')];
+    return [new MessageItem(search === ''
+      ? vscode.l10n.t('No packages match the current filter.')
+      : vscode.l10n.t('No packages match the current search.'))];
   }
 
   return groupsProjection.map(group => new GroupItem(
-    group.dev ? 'Dev Dependencies' : 'Dependencies',
+    group.dev ? vscode.l10n.t('Dev Dependencies') : vscode.l10n.t('Dependencies'),
     group.entries.map(entry => entry.item),
     group.totalCount,
     group.outdatedCount,
@@ -323,7 +343,7 @@ function buildWorkspaceGroups(
   const packageFilePaths = allPackageFilePaths !== undefined && allPackageFilePaths.length > 0
     ? allPackageFilePaths
     : projection.allPackageFilePaths;
-  const labels = resolvePackageFileLabels(packageFilePaths, workspaceFolders)
+  const labels = resolvePackageFileLabels(packageFilePaths, workspaceFolders, getLocalizedPackageLabelFormatting())
     .filter(({ packageFilePath }) => visibleFileKeys.has(getPathInfo(packageFilePath).comparisonPath));
   const groupsByPath = new Map(fileGroups.map(fileGroup => [
     getPathInfo(fileGroup.packageFilePath).comparisonPath,
@@ -337,8 +357,8 @@ function buildWorkspaceGroups(
   return rows.length > 0
     ? rows
     : [new MessageItem(projection.search === ''
-        ? 'No packages match the current filter.'
-        : 'No packages match the current search.')];
+        ? vscode.l10n.t('No packages match the current filter.')
+        : vscode.l10n.t('No packages match the current search.'))];
 }
 
 function buildFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
@@ -633,7 +653,10 @@ function ensureUniquePackageLabels(rows: PackageLabelRow[]): void {
   });
 }
 
-function ensureUnicodeDiscriminators(rows: PackageLabelRow[]): void {
+function ensureUnicodeDiscriminators(
+  rows: PackageLabelRow[],
+  formatting: PackageLabelFormatting,
+): void {
   const unicodeRows = rows
     .filter(row => row.needsUnicodeDiscriminator)
     .sort((left, right) => compareText(
@@ -644,7 +667,7 @@ function ensureUnicodeDiscriminators(rows: PackageLabelRow[]): void {
   unicodeRows.forEach((row, position) => {
     const ordinal = position + 1;
     const base = row.owner.label;
-    row.owner = { ...row.owner, label: `${base} [unicode #${ordinal}]` };
+    row.owner = { ...row.owner, label: formatting.formatUnicodeDiscriminator(base, ordinal) };
   });
 }
 

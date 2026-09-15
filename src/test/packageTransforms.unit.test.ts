@@ -97,7 +97,7 @@ describe('transformDependencyVersions()', () => {
     expect(() => transformDependencyVersions(json, [
       { name: 'vue', version: '3.0.0', section: 'dependencies' },
       { name: 'vite', version: '5.0.0', section: 'devDependencies' },
-    ])).toThrow('Package(s) not found in package.json: vue (dependencies), vite (devDependencies)');
+    ])).toThrow('Packages not found in package.json: vue (dependencies), vite (devDependencies)');
   });
 
   it('does not mutate the input document', () => {

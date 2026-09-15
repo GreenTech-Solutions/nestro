@@ -3,6 +3,7 @@ import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
+  formatDependencySectionLabel,
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
   logger,
@@ -30,12 +31,17 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
   }
 
   const current = capability.item;
+  const removeAction = vscode.l10n.t('Remove Package');
   const confirmed = await vscode.window.showWarningMessage(
-    `Remove ${sanitizePackageText(current.packageName)} from ${capability.identity.section}?`,
+    vscode.l10n.t(
+      'Remove {0} from {1}?',
+      sanitizePackageText(current.packageName),
+      formatDependencySectionLabel(capability.identity.section),
+    ),
     { modal: true },
-    'Remove Package',
+    removeAction,
   );
-  if (confirmed !== 'Remove Package') {
+  if (confirmed !== removeAction) {
     return;
   }
 
@@ -63,7 +69,7 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
       }
       const command = client.buildRemoveCommand([beforeTask.item.packageName]);
       logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
-      const taskName = `Remove ${beforeTask.item.packageName}`;
+      const taskName = vscode.l10n.t('Remove {0}', sanitizePackageText(beforeTask.item.packageName));
       const exitCode = await runShellTaskAndWait(command, taskName, beforeTask.packageDirectory);
       provider.invalidateUpdateCache();
       if (exitCode === 0) {
@@ -78,7 +84,7 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
       if (activeCapability !== undefined) {
         provider.markPackageUpdatingForCapability(activeCapability, undefined);
       }
-      showError(`failed to remove package — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t('failed to remove package — {0}', err instanceof Error ? err.message : String(err)), err);
     }
   });
 }

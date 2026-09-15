@@ -80,7 +80,7 @@ export type PackageIdentityResolution
 
 /** Keep identity failures actionable without exposing workspace or package-controlled paths. */
 export const PACKAGE_IDENTITY_REJECTED_MESSAGE
-  = 'Package action is no longer available. Refresh the package list and try again.';
+  = vscode.l10n.t('Package action is no longer available. Refresh the package list and try again.');
 
 export function packageSection(dev: boolean): PackageDependencySection {
   return dev ? 'devDependencies' : 'dependencies';

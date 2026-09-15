@@ -1,7 +1,7 @@
 {
   "name": "nestro",
   "displayName": "Nestro",
-  "description": "Manage npm/pnpm/yarn packages from the VS Code sidebar with update status and version switching",
+  "description": "%extension.description%",
   "version": "0.4.2",
   "publisher": "greentech-solutions",
   "icon": "resources/icon.png",
@@ -33,11 +33,11 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Nestro reads local package files and runs package-manager processes."
+      "description": "%capabilities.untrustedWorkspaces.description%"
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "Nestro requires local package files and package-manager processes."
+      "description": "%capabilities.virtualWorkspaces.description%"
     }
   },
   "extensionKind": [
@@ -65,7 +65,7 @@
       "nestro": [
         {
           "id": "nestro.packagesView",
-          "name": "Packages",
+          "name": "%views.packages.name%",
           "when": "workbenchState != empty",
           "icon": "resources/icon.svg"
         }
@@ -74,7 +74,7 @@
     "viewsWelcome": [
       {
         "view": "nestro.packagesView",
-        "contents": "No Node.js project found in the workspace.\n[Open Folder](command:vscode.openFolder)",
+        "contents": "%viewsWelcome.noWorkspace.contents%",
         "when": "nestro.noWorkspace"
       }
     ],
@@ -84,19 +84,19 @@
         "nestro.checkUpdatesOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "After the initial package scan completes, run one update check on each extension activation."
+          "description": "%configuration.checkUpdatesOnStartup.description%"
         },
         "nestro.includePreReleases": {
           "type": "boolean",
           "default": false,
-          "description": "Include alpha, beta, and release-candidate versions in update checks and in the Pick Version version list. Disabled by default because prereleases can be less stable; enable it only when that risk is acceptable."
+          "description": "%configuration.includePreReleases.description%"
         },
         "nestro.minimumReleaseAgeDays": {
           "type": "number",
           "default": 7,
           "minimum": 0,
           "maximum": 99000000,
-          "description": "Minimum age in days before Nestro accepts a release for an update check; the value must be a whole number of days, or the default is used. For Nestro checks, this value overrides native package-manager release-age settings; newer releases may be deferred to an older eligible version, missing publish times are reported as unknown, and applying an update inside the window prompts for confirmation. The default 7-day cooldown reduces newly published release risk but delays updates; set to 0 to disable this Nestro policy. It does not change package-manager install behavior."
+          "description": "%configuration.minimumReleaseAgeDays.description%"
         },
         "nestro.updateTarget": {
           "type": "string",
@@ -108,12 +108,12 @@
           ],
           "default": "latest",
           "enumDescriptions": [
-            "Use the package's latest dist-tag version, accepting a new major version when it is published under that tag, subject to the prerelease and minimum release age settings.",
-            "Choose the highest available version, independent of dist-tags, subject to the prerelease and minimum release age settings.",
-            "Allow patch and minor upgrades while staying on the current major version, subject to the prerelease and minimum release age settings.",
-            "Allow only patch upgrades within the current major and minor version, subject to the prerelease and minimum release age settings."
+            "%configuration.updateTarget.enum.latest%",
+            "%configuration.updateTarget.enum.greatest%",
+            "%configuration.updateTarget.enum.minor%",
+            "%configuration.updateTarget.enum.patch%"
           ],
-          "description": "Select the version target used by update checks. The chosen target controls how far a dependency may move; prerelease inclusion and the release-age cooldown still apply."
+          "description": "%configuration.updateTarget.description%"
         },
         "nestro.defaultFilter": {
           "type": "string",
@@ -126,151 +126,151 @@
           ],
           "default": "all",
           "enumDescriptions": [
-            "Show every discovered dependency, including packages without updates.",
-            "Show packages with an available update of any update type.",
-            "Show only packages with patch updates.",
-            "Show only packages with minor updates.",
-            "Show only packages whose update raises the major version."
+            "%configuration.defaultFilter.enum.all%",
+            "%configuration.defaultFilter.enum.hasUpdates%",
+            "%configuration.defaultFilter.enum.patch%",
+            "%configuration.defaultFilter.enum.minor%",
+            "%configuration.defaultFilter.enum.breaking%"
           ],
-          "description": "Choose the package rows shown by the sidebar when Nestro starts. The Update All command acts only on the rows currently visible; the filter does not change which updates are checked. Every filter except All also hides a package while its update is in progress."
+          "description": "%configuration.defaultFilter.description%"
         },
         "nestro.deferInstallAfterUpdate": {
           "type": "boolean",
           "default": false,
-          "description": "Write selected update versions to package.json without running the package manager. Run Nestro: Run Install separately to update installed packages and lockfiles; when disabled, each update runs the package manager immediately."
+          "description": "%configuration.deferInstallAfterUpdate.description%"
         },
         "nestro.confirmBulkUpdate": {
           "type": "boolean",
           "default": true,
-          "description": "Show confirmation dialog before updating all visible packages."
+          "description": "%configuration.confirmBulkUpdate.description%"
         },
         "nestro.runAuditOnStartup": {
           "type": "boolean",
           "default": false,
-          "description": "After the initial package scan completes, run one detected-package-manager security audit for each resolved project on every extension activation. This is independent of update checks and is disabled by default."
+          "description": "%configuration.runAuditOnStartup.description%"
         },
         "nestro.monorepoGlob": {
           "type": "string",
           "default": "**/package.json",
-          "description": "Glob used to discover package.json files in the workspace."
+          "description": "%configuration.monorepoGlob.description%"
         },
         "nestro.checkUpdatesDebounce": {
           "type": "number",
           "default": 60,
           "minimum": 0,
-          "description": "Minimum seconds between update checks when the package files and update policy are unchanged. A click inside this window is ignored; after it, a valid cached result is reused without a network fetch. Set to 0 to disable this debounce. checkUpdatesForceAlways overrides this setting."
+          "description": "%configuration.checkUpdatesDebounce.description%"
         },
         "nestro.checkUpdatesForceAlways": {
           "type": "boolean",
           "default": false,
-          "description": "When no update check is already running, start every Check for Updates click immediately, bypassing checkUpdatesDebounce and the update cache. This can make a network request on every click; changes to update policy or package files already invalidate the cache and bypass the debounce."
+          "description": "%configuration.checkUpdatesForceAlways.description%"
         }
       }
     },
     "commands": [
       {
         "command": "nestro.refresh",
-        "title": "Refresh",
+        "title": "%commands.nestro.refresh.title%",
         "category": "Nestro",
         "icon": "$(refresh)"
       },
       {
         "command": "nestro.checkUpdates",
-        "title": "Check for Updates",
+        "title": "%commands.nestro.checkUpdates.title%",
         "category": "Nestro",
         "icon": "$(cloud-download)"
       },
       {
         "command": "nestro.runAudit",
-        "title": "Run Security Audit",
+        "title": "%commands.nestro.runAudit.title%",
         "category": "Nestro",
         "icon": "$(shield)",
         "enablement": "nestro.canRunAudit"
       },
       {
         "command": "nestro.openAuditReport",
-        "title": "Open Security Audit Report",
+        "title": "%commands.nestro.openAuditReport.title%",
         "category": "Nestro",
         "icon": "$(report)"
       },
       {
         "command": "nestro.installUpdate",
-        "title": "Update Package",
+        "title": "%commands.nestro.installUpdate.title%",
         "icon": "$(arrow-up)"
       },
       {
         "command": "nestro.pickVersion",
-        "title": "Pick Version...",
+        "title": "%commands.nestro.pickVersion.title%",
         "icon": "$(list-unordered)"
       },
       {
         "command": "nestro.switchDepType",
-        "title": "Switch to dev/dep",
+        "title": "%commands.nestro.switchDepType.title%",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "nestro.pinVersion",
-        "title": "Toggle version pin",
+        "title": "%commands.nestro.pinVersion.title%",
         "icon": "$(lock)"
       },
       {
         "command": "nestro.removePackage",
-        "title": "Remove Package",
+        "title": "%commands.nestro.removePackage.title%",
         "icon": "$(trash)"
       },
       {
         "command": "nestro.updateAllVisible",
-        "title": "Update All",
+        "title": "%commands.nestro.updateAllVisible.title%",
         "category": "Nestro",
         "icon": "$(cloud-upload)",
         "enablement": "nestro.canUpdateVisiblePackages"
       },
       {
         "command": "nestro.runInstall",
-        "title": "Run Install",
+        "title": "%commands.nestro.runInstall.title%",
         "category": "Nestro",
         "icon": "$(terminal)",
         "enablement": "nestro.canRunInstall"
       },
       {
         "command": "nestro.openOnNpm",
-        "title": "Open on npmjs.com",
+        "title": "%commands.nestro.openOnNpm.title%",
         "icon": "$(link-external)"
       },
       {
         "command": "nestro.copyPackageName",
-        "title": "Copy Package Name",
+        "title": "%commands.nestro.copyPackageName.title%",
         "icon": "$(copy)"
       },
       {
         "command": "nestro.setFilter",
-        "title": "Set Filter"
+        "title": "%commands.nestro.setFilter.title%"
       },
       {
         "command": "nestro.showFilterPicker",
-        "title": "Select Filter"
+        "title": "%commands.nestro.showFilterPicker.title%"
       },
       {
         "command": "nestro.searchPackages",
-        "title": "Search Packages",
+        "title": "%commands.nestro.searchPackages.title%",
         "category": "Nestro",
         "icon": "$(search)",
         "enablement": "nestro.canSearchPackages"
       },
       {
         "command": "nestro.clearSearchQuery",
-        "title": "Clear Search Query",
+        "title": "%commands.nestro.clearSearchQuery.title%",
         "icon": "$(clear-all)"
       },
       {
         "command": "nestro.openSettings",
-        "title": "Settings",
+        "title": "%commands.nestro.openSettings.title%",
         "category": "Nestro",
         "icon": "$(settings-gear)"
       },
       {
         "command": "nestro.pinAllVersions",
-        "title": "Pin All Versions",
+        "title": "%commands.nestro.pinAllVersions.title%",
         "category": "Nestro",
         "icon": "$(lock)",
         "enablement": "nestro.canPinAllVersions"

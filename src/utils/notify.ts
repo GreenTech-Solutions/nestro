@@ -7,7 +7,7 @@ const ABSOLUTE_PATH_PATTERN = /(^|[\s("'`])((?:\/(?!\/)|[A-Za-z]:[\\/])[^\s"'`<>
 export function showError(message: string, err?: unknown): void {
   logger.error(message, err);
   const notification = relativizeWorkspacePaths(sanitizeLogText(message));
-  const prefix = 'Nestro: ';
+  const prefix = vscode.l10n.t('Nestro: ');
   const availableLength = MAX_NOTIFICATION_LENGTH - prefix.length;
   const boundedNotification = notification.length <= availableLength
     ? notification

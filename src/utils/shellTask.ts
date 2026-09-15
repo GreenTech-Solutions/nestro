@@ -105,8 +105,8 @@ export function formatShellTaskCommandForLog(shellCommand: ShellTaskCommand): st
 
 export function formatShellTaskFailureMessage(taskName: string, exitCode: number | undefined): string {
   if (exitCode === undefined) {
-    return `task "${taskName}" ended without an exit code.`;
+    return vscode.l10n.t('task "{0}" ended without an exit code.', taskName);
   }
 
-  return `task "${taskName}" failed with exit code ${exitCode}.`;
+  return vscode.l10n.t('task "{0}" failed with exit code {1}.', taskName, exitCode);
 }

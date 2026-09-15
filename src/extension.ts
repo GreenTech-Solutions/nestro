@@ -24,7 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
   const filterManager = new FilterManager(defaultFilter);
   const provider = new PackagesProvider(filterManager);
-  const auditReportOutput = vscode.window.createOutputChannel('Nestro Security Audit');
+  const auditReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Security Audit'));
   const treeView = vscode.window.createTreeView('nestro.packagesView', {
     treeDataProvider: provider,
     showCollapseAll: true,

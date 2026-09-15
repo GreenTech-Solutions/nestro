@@ -181,6 +181,10 @@ export const CLEAN_PACKAGE_MANIFEST = JSON.stringify({
   icon: 'resources/icon.png',
 });
 
+export const CLEAN_PACKAGE_NLS = JSON.stringify({
+  'extension.description': 'Fixture extension',
+});
+
 export const CLEAN_VSIX_MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
@@ -194,6 +198,7 @@ export function cleanVsixFixtureEntries(): ZipFixtureEntry[] {
     { path: 'extension.vsixmanifest', content: CLEAN_VSIX_MANIFEST },
     { path: '[Content_Types].xml', content: '<?xml version="1.0"?><Types />' },
     { path: 'extension/package.json', content: CLEAN_PACKAGE_MANIFEST },
+    { path: 'extension/package.nls.json', content: CLEAN_PACKAGE_NLS },
     { path: 'extension/readme.md', content: '# Nestro\n' },
     { path: 'extension/changelog.md', content: '# Changelog\n' },
     { path: 'extension/LICENSE.txt', content: 'MIT\n' },
@@ -220,6 +225,7 @@ export const CLEAN_TRACKED_SOURCE_PATHS: readonly string[] = [
   'README.md',
   'images/pick-version.png',
   'package.json',
+  'package.nls.json',
   'resources/icon.png',
   'resources/icon.svg',
 ];

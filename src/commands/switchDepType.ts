@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider } from '../providers';
 import {
@@ -53,7 +54,10 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
         showError(err.message);
         return;
       }
-      showError(`failed to switch dependency type — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t(
+        'failed to switch dependency type — {0}',
+        err instanceof Error ? err.message : String(err),
+      ), err);
     }
   });
 }

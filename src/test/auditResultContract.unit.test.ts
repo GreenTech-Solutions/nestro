@@ -46,6 +46,7 @@ vi.mock('../utils', async () => {
   const auditClient = await vi.importActual<typeof import('../utils/auditClient')>('../utils/auditClient');
   const auditReport = await vi.importActual<typeof import('../utils/auditReport')>('../utils/auditReport');
   const { logger } = await vi.importActual<typeof import('../utils/logger')>('../utils/logger');
+  const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   // Real scheduler primitives: runAudit() now schedules project audits through
   // these, so the report-contract tests need the genuine bounded coordinator.
   const operationCoordinator = await vi.importActual<
@@ -57,6 +58,7 @@ vi.mock('../utils', async () => {
     ...auditReport,
     ...operationCoordinator,
     ...rootOperation,
+    ...localization,
     fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map()),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
     getUpdateType: vi.fn(() => 'none'),
@@ -139,7 +141,7 @@ describe('audit status row', () => {
     const status = await auditStatusRow();
 
     expect(status?.label).toBe('Audit complete');
-    expect(status?.description).toBe('1 vulnerable package(s)');
+    expect(status?.description).toBe('1 vulnerable package');
   });
 
   it.each([

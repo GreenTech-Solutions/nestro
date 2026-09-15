@@ -4,6 +4,7 @@ import {
   buildZipFixture,
   CLEAN_EXTENSION_IDENTITY,
   CLEAN_PACKAGE_MANIFEST,
+  CLEAN_PACKAGE_NLS,
   CLEAN_TRACKED_SOURCE_PATHS,
   cleanVsixFixtureEntries,
   findZipFixtureEntryOffsets,
@@ -468,12 +469,14 @@ describe('verifyVsixPackage()', () => {
       'extension/out/chunk-AbCdEf12.cjs',
       'extension/out/extension.cjs',
       'extension/package.json',
+      'extension/package.nls.json',
       'extension/readme.md',
       'extension/resources/icon.png',
       'extension/resources/icon.svg',
     ]);
     expect(manifest).toContain(`${sha256Hex(toBytes(CLEAN_PACKAGE_MANIFEST))}  extension/package.json`);
-    expect(result.manifestLines).toHaveLength(11);
+    expect(manifest).toContain(`${sha256Hex(toBytes(CLEAN_PACKAGE_NLS))}  extension/package.nls.json`);
+    expect(result.manifestLines).toHaveLength(12);
   });
 
   it('deletes a rejected package and withholds its artifacts', async () => {
@@ -851,7 +854,7 @@ describe('runVerifyVsixCli()', () => {
     await expect(runVerifyVsixCli([], deps)).resolves.toBe(0);
     expect(out).toContain('out/extension.cjs');
     expect(out).toContain('README.md');
-    expect(err.join('\n')).toContain('VSIX verified: 9/26 files');
+    expect(err.join('\n')).toContain('VSIX verified: 10/26 files');
     expect(err.some(line => line.includes('sha256:'))).toBe(true);
   });
 
@@ -890,7 +893,7 @@ describe('runVerifyVsixCli()', () => {
 
     await expect(runVerifyVsixCli([], deps)).resolves.toBe(0);
     expect(out).toContain('out/extension.cjs');
-    expect(out).toHaveLength(9);
+    expect(out).toHaveLength(10);
   });
 
   it('warns on stderr about a locally modified packaged file but still accepts the package', async () => {

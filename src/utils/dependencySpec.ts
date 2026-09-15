@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 export type DependencySpecRange = 'exact' | 'caret' | 'tilde';
 export type DependencySpecProtocol = 'plain' | 'workspace';
 
@@ -40,7 +42,13 @@ export function parseDependencySpec(spec: string): ParsedDependencySpec {
     const remainder = spec.slice(WORKSPACE_PROTOCOL.length);
     const plain = parsePlainRange(remainder);
     if (plain === undefined) {
-      return { supported: false, reason: `workspace range is not a concrete version (${describeUnsupportedSpec(remainder)})` };
+      return {
+        supported: false,
+        reason: vscode.l10n.t(
+          'workspace range is not a concrete version ({0})',
+          describeUnsupportedSpec(remainder),
+        ),
+      };
     }
     return { supported: true, protocol: 'workspace', range: plain.range, version: plain.version };
   }
@@ -75,39 +83,39 @@ function parsePlainRange(spec: string): { range: DependencySpecRange; version: s
 function describeUnsupportedSpec(spec: string): string {
   const trimmed = spec.trim();
   if (spec !== trimmed) {
-    return 'whitespace in version spec';
+    return vscode.l10n.t('whitespace in version spec');
   }
   if (trimmed === '') {
-    return 'empty version spec';
+    return vscode.l10n.t('empty version spec');
   }
   if (/^npm:/i.test(trimmed)) {
-    return 'npm alias dependency';
+    return vscode.l10n.t('npm alias dependency');
   }
   if (isGitSpec(trimmed)) {
-    return 'git dependency';
+    return vscode.l10n.t('git dependency');
   }
   if (/^file:/i.test(trimmed)) {
-    return 'local file dependency';
+    return vscode.l10n.t('local file dependency');
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    return 'remote tarball dependency';
+    return vscode.l10n.t('remote tarball dependency');
   }
   if (trimmed.includes('||') || /\s/.test(trimmed)) {
-    return 'compound version range';
+    return vscode.l10n.t('compound version range');
   }
   if (isWildcardRange(trimmed)) {
-    return 'wildcard version range';
+    return vscode.l10n.t('wildcard version range');
   }
   if (/^(>=|<=|>|<|=)/.test(trimmed)) {
-    return 'comparator version range';
+    return vscode.l10n.t('comparator version range');
   }
   if (/^[~^]/.test(trimmed)) {
-    return 'partial version range';
+    return vscode.l10n.t('partial version range');
   }
   if (/^[A-Za-z][\w.-]*$/.test(trimmed)) {
-    return 'dist-tag reference';
+    return vscode.l10n.t('dist-tag reference');
   }
-  return 'unrecognized version spec';
+  return vscode.l10n.t('unrecognized version spec');
 }
 
 function isGitSpec(spec: string): boolean {

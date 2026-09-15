@@ -5,6 +5,10 @@ import type { AuditProject } from '../clients';
 import {
   createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
+  formatAuditSeverityLabel,
+  formatPackageUpdatesAvailable,
+  formatUpdateTypeLabel,
+  formatVulnerablePackageCount,
   getUpdateType,
   logger,
   NcuUpdateTarget,
@@ -29,6 +33,7 @@ import { FilterManager, FilterType } from './FilterManager';
 import {
   buildTree,
   getFilterCounts,
+  getLocalizedPackageLabelFormatting,
   PackageTreeEntry,
   projectPackageTree,
   resolvePackageFileLabels,
@@ -845,7 +850,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
       this.packageReadFailed = true;
       this.capabilitiesInitialized = true;
-      showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t('Failed to load packages — {0}', err instanceof Error ? err.message : String(err)), err);
     }
     finally {
       if (!this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
@@ -878,7 +883,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'Checking package updates…',
+          title: vscode.l10n.t('Checking package updates…'),
           cancellable: true,
         },
         async (_progress, token): Promise<void> => {
@@ -950,8 +955,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (result.allFailed) {
               const failureMessage = result.failure instanceof Error
                 ? result.failure.message
-                : result.failure === undefined ? 'all package roots failed' : String(result.failure);
-              showError(`failed to check updates — ${failureMessage}`, result.failure);
+                : result.failure === undefined ? vscode.l10n.t('all package roots failed') : String(result.failure);
+              showError(vscode.l10n.t('Failed to check updates — {0}', failureMessage), result.failure);
             }
             const liveEntries = this.allEntries.length > 0
               ? this.allEntries
@@ -1004,7 +1009,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     catch (err) {
       if (this.isUpdateCurrent(operation)) {
         this.checkState = 'idle';
-        showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
+        showError(vscode.l10n.t('Failed to check updates — {0}', err instanceof Error ? err.message : String(err)), err);
       }
     }
     finally {
@@ -1088,7 +1093,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Running package audit…',
+        title: vscode.l10n.t('Running package audit…'),
         cancellable: true,
       },
       async (_progress, token): Promise<void> => {
@@ -1170,7 +1175,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }];
         this.auditState = 'idle';
         shouldEmit = true;
-        showError('package audit failed — the security audit report is incomplete.');
+        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
         return;
       }
 
@@ -1208,7 +1213,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }];
         this.auditState = 'idle';
         shouldEmit = true;
-        showError('package audit failed — the security audit report is incomplete.');
+        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
       }
     }
     finally {
@@ -1352,7 +1357,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (folders.length === 0) {
       return undefined;
     }
-    return resolvePackageFileLabels([...this.packageFilePaths, packageFilePath], folders)
+    return resolvePackageFileLabels(
+      [...this.packageFilePaths, packageFilePath],
+      folders,
+      getLocalizedPackageLabelFormatting(),
+    )
       .find(entry => entry.packageFilePath === packageFilePath)?.owner.label;
   }
 
@@ -1362,7 +1371,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const folders = this.workspaceFolderDescriptors;
       this.ownerLabelCache = folders.length === 0
         ? new Map()
-        : new Map(resolvePackageFileLabels(this.packageFilePaths, folders).map(
+        : new Map(resolvePackageFileLabels(
+            this.packageFilePaths,
+            folders,
+            getLocalizedPackageLabelFormatting(),
+          ).map(
             entry => [entry.packageFilePath, entry.owner.label],
           ));
     }
@@ -1426,7 +1439,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const outdatedCount = projectPackageTree(this.allEntries, 'all').visibleOutdatedEntries.length;
     this.treeView.badge = outdatedCount > 0
-      ? { tooltip: `${outdatedCount} package updates available`, value: outdatedCount }
+      ? { tooltip: formatPackageUpdatesAvailable(outdatedCount), value: outdatedCount }
       : undefined;
     this.treeView.message = undefined;
   }
@@ -1586,19 +1599,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
     const details = [
-      new PackageDetailItem(item.dev ? 'Dev dependency' : 'Dependency', item.dev ? 'tools' : 'package'),
-      new PackageDetailItem(`Current: ${sanitizePackageText(item.currentVersion)}`, 'tag'),
+      new PackageDetailItem(item.dev ? vscode.l10n.t('Dev dependency') : vscode.l10n.t('Dependency'), item.dev ? 'tools' : 'package'),
+      new PackageDetailItem(vscode.l10n.t('Current: {0}', sanitizePackageText(item.currentVersion)), 'tag'),
     ];
     if (item.latest !== undefined) {
-      details.push(new PackageDetailItem(`Update: ${sanitizePackageText(item.currentVersion)} → ${sanitizePackageText(item.latest)} (${item.updateType})`, 'arrow-up'));
+      details.push(new PackageDetailItem(vscode.l10n.t(
+        'Update: {0} → {1} ({2})',
+        sanitizePackageText(item.currentVersion),
+        sanitizePackageText(item.latest),
+        formatUpdateTypeLabel(item.updateType),
+      ), 'arrow-up'));
     }
     if (item.vulnerabilitySeverity !== undefined) {
-      details.push(new PackageDetailItem(`Vulnerability: ${item.vulnerabilitySeverity}`, 'warning'));
+      details.push(new PackageDetailItem(vscode.l10n.t(
+        'Vulnerability: {0}',
+        formatAuditSeverityLabel(item.vulnerabilitySeverity),
+      ), 'warning'));
     }
     if (this.workspaceRoot !== undefined) {
       const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
       if (relativeFile !== undefined) {
-        details.push(new PackageDetailItem(`File: ${sanitizePackageText(relativeFile)}`, 'file'));
+        details.push(new PackageDetailItem(vscode.l10n.t('File: {0}', sanitizePackageText(relativeFile)), 'file'));
       }
     }
     return details;
@@ -1609,8 +1630,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     if (this.failedPackageReadPaths.length > 0) {
       items.push(new StatusItem(
-        'Package read incomplete',
-        `Fix invalid or unreadable package.json: ${this.failedPackageReadPaths.join(', ')}`,
+        vscode.l10n.t('Package read incomplete'),
+        vscode.l10n.t('Fix invalid or unreadable package.json: {0}', this.failedPackageReadPaths.join(', ')),
         'warning',
         'charts.yellow',
       ));
@@ -1623,39 +1644,39 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       && !this.packageReadFailed
     ) {
       items.push(new StatusItem(
-        'No dependencies to manage',
-        'This package.json has no dependencies yet.',
+        vscode.l10n.t('No dependencies to manage'),
+        vscode.l10n.t('This package.json has no dependencies yet.'),
         'info',
       ));
     }
 
     if (this.checkState === 'running') {
-      items.push(new StatusItem('Checking updates…', '', 'loading~spin'));
+      items.push(new StatusItem(vscode.l10n.t('Checking updates…'), '', 'loading~spin'));
     }
     else if (this.checkState === 'done' && this.lastCheckTime !== undefined) {
       items.push(new StatusItem(
-        'Last update check',
+        vscode.l10n.t('Last update check'),
         this.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         'clock',
       ));
     }
     else if (this.checkState === 'incomplete') {
       items.push(new StatusItem(
-        'Update check incomplete',
-        `Failed: ${this.failedUpdatePaths.join(', ')}`,
+        vscode.l10n.t('Update check incomplete'),
+        vscode.l10n.t('Failed: {0}', this.failedUpdatePaths.join(', ')),
         'warning',
         'charts.yellow',
       ));
     }
 
     if (this.auditState === 'running') {
-      items.push(new StatusItem('Running audit…', '', 'loading~spin'));
+      items.push(new StatusItem(vscode.l10n.t('Running audit…'), '', 'loading~spin'));
     }
     else if (this.auditState === 'done') {
       const count = this.lastAuditCount ?? 0;
       items.push(new StatusItem(
-        'Audit complete',
-        count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`,
+        vscode.l10n.t('Audit complete'),
+        count === 0 ? vscode.l10n.t('No vulnerabilities') : formatVulnerablePackageCount(count),
         count === 0 ? 'shield-check' : 'warning',
         count === 0 ? 'charts.green' : 'charts.red',
       ));
@@ -1663,12 +1684,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     else if (this.auditState === 'incomplete') {
       const count = this.lastAuditCount ?? 0;
       const resultDescription = this.lastAuditSuccessfulRootCount === 0
-        ? 'No successful audit results'
-        : `${count} vulnerable package(s) from successful audit roots`;
+        ? vscode.l10n.t('No successful audit results')
+        : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
       items.push(new StatusItem(
-        'Audit incomplete',
-        `${resultDescription}; `
-        + `failed: ${this.failedAuditPaths.join(', ')}`,
+        vscode.l10n.t('Audit incomplete'),
+        vscode.l10n.t('{0}; failed: {1}', resultDescription, this.failedAuditPaths.join(', ')),
         'warning',
         'charts.yellow',
       ));

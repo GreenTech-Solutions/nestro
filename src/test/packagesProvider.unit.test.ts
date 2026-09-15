@@ -139,6 +139,7 @@ vi.mock('../clients', () => ({
 
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
   // Real scheduler primitives: this file's cap/parallelism/partial-failure/cancellation
   // tests need genuine bounded concurrency, not a trivial always-run-immediately double.
@@ -163,6 +164,7 @@ vi.mock('../utils', async () => {
     ...releaseAge,
     ...operationCoordinator,
     ...rootOperation,
+    ...localization,
     fetchAllLatestVersions: vi.fn(),
     fetchPackageMetadata: vi.fn(),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
@@ -650,7 +652,7 @@ describe('PackagesProvider', () => {
 
     provider.markPackageUpdating(react, { kind: 'remove' });
     expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(true);
-    expect(treeView.badge).toEqual({ tooltip: '1 package updates available', value: 1 });
+    expect(treeView.badge).toEqual({ tooltip: '1 package update available', value: 1 });
 
     filterManager.setSearch('react');
     expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(false);
@@ -1213,7 +1215,7 @@ describe('PackagesProvider', () => {
     const status = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Update check incomplete');
     expect(status).toBeInstanceOf(StatusItem);
     expect(status?.description).toBe(`Failed: ${successfulPath}, ${failedPath}`);
-    expect(showError).toHaveBeenCalledWith(`failed to check updates — ${failure.message}`, failure);
+    expect(showError).toHaveBeenCalledWith(`Failed to check updates — ${failure.message}`, failure);
     provider.dispose();
   });
 
@@ -1388,7 +1390,7 @@ describe('PackagesProvider', () => {
 
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
     expect(showError).toHaveBeenCalledWith(
-      'failed to check updates — npm-check-updates timed out',
+      'Failed to check updates — npm-check-updates timed out',
       timeoutError,
     );
     expect(showError).toHaveBeenCalledTimes(1);
@@ -2058,7 +2060,7 @@ describe('PackagesProvider', () => {
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
     expect(auditStatus?.description).toBe(
-      '1 vulnerable package(s) from successful audit roots; failed: /workspace/packages/ui/package.json',
+      '1 vulnerable package from successful audit roots; failed: /workspace/packages/ui/package.json',
     );
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
     expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['success', 'failure']);
@@ -2120,7 +2122,7 @@ describe('PackagesProvider', () => {
     expect(provider.getChildren().some(item => item instanceof StatusItem && (
       item.label === 'Audit complete' || item.label === 'Audit incomplete'
     ))).toBe(false);
-    expect(showError).toHaveBeenCalledWith('package audit failed — the security audit report is incomplete.');
+    expect(showError).toHaveBeenCalledWith('Package audit failed — the security audit report is incomplete.');
   });
 
   it('shows the running audit state and contains package detail paths defensively', async () => {

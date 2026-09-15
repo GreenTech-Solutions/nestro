@@ -14,6 +14,10 @@ import type { ReleaseAgeState } from '../utils';
 import { runResolvedPackageVersion } from './installUpdate';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
+interface VersionQuickPickItem extends vscode.QuickPickItem {
+  readonly version: string;
+}
+
 export async function pickVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
     logger.warn('nestro.pickVersion invoked without a valid package item; ignoring.');
@@ -27,9 +31,9 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   let current = capability.item;
 
   logger.info(`Fetching versions for ${current.packageName}.`);
-  const quickPick = vscode.window.createQuickPick<vscode.QuickPickItem>();
-  quickPick.title = `Select version for ${current.packageName}`;
-  quickPick.placeholder = 'Loading versions...';
+  const quickPick = vscode.window.createQuickPick<VersionQuickPickItem>();
+  quickPick.title = vscode.l10n.t('Select version for {0}', sanitizePackageText(current.packageName));
+  quickPick.placeholder = vscode.l10n.t('Loading versions...');
   quickPick.busy = true;
   const disposables: vscode.Disposable[] = [];
   const abortController = new AbortController();
@@ -94,7 +98,10 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     const releaseAgeByVersion = new Map<string, ReleaseAgeState>();
     const releaseAgeUnavailable = metadataOutcome.result.publishTimes.kind === 'not-provided';
     if (releaseAgeUnavailable) {
-      quickPick.title = `Select version for ${current.packageName} — release age unknown; update is not blocked`;
+      quickPick.title = vscode.l10n.t(
+        'Select version for {0} — release age unknown; update is not blocked',
+        sanitizePackageText(current.packageName),
+      );
     }
 
     quickPick.items = selectedVersions.map((version) => {
@@ -105,21 +112,22 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
       );
       releaseAgeByVersion.set(version, releaseAge);
       const ageDescription = releaseAge.kind === 'held-back'
-        ? `Held back until ${releaseAge.eligibleAt}`
+        ? vscode.l10n.t('Held back until {0}', sanitizePackageText(releaseAge.eligibleAt))
         : releaseAge.kind === 'unknown' && !releaseAgeUnavailable
-          ? 'Release age unknown; update is not blocked.'
+          ? vscode.l10n.t('Release age unknown; update is not blocked.')
           : undefined;
       return {
         label: version === normalizedCurrent ? `★ ${version}` : version,
+        version,
         description: [tagByVersion.get(version), ageDescription]
           .filter((value): value is string => value !== undefined)
           .map(sanitizePackageText)
           .join(' · ') || undefined,
-        detail: version === normalizedCurrent ? 'Current version' : undefined,
+        detail: version === normalizedCurrent ? vscode.l10n.t('Current version') : undefined,
       };
     });
     quickPick.busy = false;
-    quickPick.placeholder = 'Type to filter versions...';
+    quickPick.placeholder = vscode.l10n.t('Type to filter versions…');
     const allowedVersions = new Set(selectedVersions);
     const acceptListener = quickPick.onDidAccept(() => {
       void handleVersionSelection(quickPick, pickerCapability, allowedVersions, releaseAgeByVersion, provider);
@@ -137,7 +145,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
 }
 
 async function handleVersionSelection(
-  quickPick: vscode.QuickPick<vscode.QuickPickItem>,
+  quickPick: vscode.QuickPick<VersionQuickPickItem>,
   capability: ResolvedPackageItem,
   allowedVersions: ReadonlySet<string>,
   releaseAgeByVersion: ReadonlyMap<string, ReleaseAgeState>,
@@ -150,7 +158,7 @@ async function handleVersionSelection(
       return;
     }
 
-    const selectedVersion = choice.label.replace(/^★ /, '');
+    const selectedVersion = choice.version;
     if (!allowedVersions.has(selectedVersion)) {
       showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
       return;
@@ -179,8 +187,8 @@ function showVersionPickerError(packageName: string, err: unknown): void {
   const safePackageName = sanitizePackageText(packageName);
   const detail = getMetadataErrorDetail(err);
   const message = detail === undefined
-    ? `Failed to fetch versions for ${safePackageName}.`
-    : `Failed to fetch versions for ${safePackageName}: ${detail}`;
+    ? vscode.l10n.t('Failed to fetch versions for {0}.', safePackageName)
+    : vscode.l10n.t('Failed to fetch versions for {0}: {1}', safePackageName, detail);
   void vscode.window.showErrorMessage(message);
   logger.error(message, err);
 }

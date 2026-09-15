@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import { AuditSeverity, parseDependencySpec, ReleaseAgeState, UpdateType } from '../utils';
+import {
+  AuditSeverity,
+  formatAuditSeverityLabel,
+  formatUpdateTypeLabel,
+  parseDependencySpec,
+  ReleaseAgeState,
+  UpdateType,
+} from '../utils';
 
 export type PackageOperation
   = | { readonly kind: 'update'; readonly target: string }
@@ -49,32 +56,44 @@ export class PackageItem extends vscode.TreeItem {
     const parsedSpec = parseDependencySpec(currentVersion);
     const baseDescription = this.operation === undefined
       ? hasUpdate
-        ? `${safeCurrentVersion} → ${safeLatest ?? 'unavailable'}`
+        ? vscode.l10n.t('{0} → {1}', safeCurrentVersion, safeLatest ?? vscode.l10n.t('unavailable'))
         : safeCurrentVersion
       : this.operation.kind === 'update'
-        ? `${safeCurrentVersion} → ${sanitizePackageText(this.operation.target)}`
+        ? vscode.l10n.t('{0} → {1}', safeCurrentVersion, sanitizePackageText(this.operation.target))
         : safeCurrentVersion;
     this.description = hasUpdate
-      ? `${baseDescription} (${getUpdateTypeLabel(updateType)})`
+      ? vscode.l10n.t('{0} ({1})', baseDescription, getUpdateTypeLabel(updateType))
       : baseDescription;
     this.tooltip = this.operation === undefined
-      ? `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest ?? 'unavailable'})` : ''}`
+      ? hasUpdate
+        ? vscode.l10n.t(
+            '{0}@{1} (latest: {2})',
+            safePackageName,
+            safeCurrentVersion,
+            safeLatest ?? vscode.l10n.t('unavailable'),
+          )
+        : vscode.l10n.t('{0}@{1}', safePackageName, safeCurrentVersion)
       : getOperationTooltip(safePackageName, this.operation);
     if (this.operation === undefined && !parsedSpec.supported) {
-      this.tooltip = `${this.tooltip}\nPin unavailable: ${sanitizePackageText(parsedSpec.reason)}`;
+      this.tooltip = vscode.l10n.t(
+        '{0}\nPin unavailable: {1}',
+        this.tooltip,
+        sanitizePackageText(parsedSpec.reason),
+      );
     }
     const contextBase = this.operation === undefined ? hasUpdate ? 'outdated' : 'package' : `installing-${this.operation.kind}`;
     const pinCapability = this.operation === undefined ? parsedSpec.supported ? '-pinnable' : '-pin-unsupported' : '';
     this.contextValue = `${contextBase}${pinCapability}`;
     if (vulnerabilitySeverity !== undefined) {
-      this.description = `${this.description} vulnerability: ${vulnerabilitySeverity}`;
-      this.tooltip = `${this.tooltip}\nVulnerability: ${vulnerabilitySeverity}`;
+      const severityLabel = formatAuditSeverityLabel(vulnerabilitySeverity);
+      this.description = vscode.l10n.t('{0} vulnerability: {1}', this.description, severityLabel);
+      this.tooltip = vscode.l10n.t('{0}\nVulnerability: {1}', this.tooltip, severityLabel);
       this.contextValue = `${this.contextValue}-vulnerable-${vulnerabilitySeverity}`;
     }
     const releaseAgeText = getReleaseAgeText(releaseAge);
     if (releaseAgeText !== undefined) {
-      this.description = `${this.description} ${releaseAgeText}`;
-      this.tooltip = `${this.tooltip}\n${releaseAgeText}`;
+      this.description = vscode.l10n.t('{0} {1}', this.description, releaseAgeText);
+      this.tooltip = vscode.l10n.t('{0}\n{1}', this.tooltip, releaseAgeText);
     }
     const icons: Record<UpdateType, vscode.ThemeIcon> = {
       breaking: new vscode.ThemeIcon('triangle-up', new vscode.ThemeColor('charts.red')),
@@ -132,7 +151,7 @@ function resolveWorkspaceOwner(packageFilePath: string): string | undefined {
 }
 
 function getUpdateTypeLabel(updateType: UpdateType): string {
-  return updateType === 'none' ? 'up to date' : `${updateType} update`;
+  return vscode.l10n.t('{0} update', formatUpdateTypeLabel(updateType));
 }
 
 function getAccessibilityLabel(
@@ -147,22 +166,22 @@ function getAccessibilityLabel(
   releaseAgeText: string | undefined,
 ): string {
   const details = [
-    `Package name: ${packageName}`,
-    `Current version: ${currentVersion}`,
-    `Latest version: ${latest ?? 'unavailable'}`,
-    `Update type: ${updateType}`,
+    vscode.l10n.t('Package name: {0}', packageName),
+    vscode.l10n.t('Current version: {0}', currentVersion),
+    vscode.l10n.t('Latest version: {0}', latest ?? vscode.l10n.t('unavailable')),
+    vscode.l10n.t('Update type: {0}', formatUpdateTypeLabel(updateType)),
     vulnerabilitySeverity === undefined
-      ? 'Vulnerability: none detected'
-      : `Vulnerability: ${vulnerabilitySeverity}`,
+      ? vscode.l10n.t('Vulnerability: none detected')
+      : vscode.l10n.t('Vulnerability: {0}', formatAuditSeverityLabel(vulnerabilitySeverity)),
     operation === undefined
-      ? 'Active operation: none'
-      : `Active operation: ${getOperationAccessibilityText(operation)}`,
-    `Workspace owner: ${workspaceOwner ?? 'unavailable'}`,
+      ? vscode.l10n.t('Active operation: none')
+      : vscode.l10n.t('Active operation: {0}', getOperationAccessibilityText(operation)),
+    vscode.l10n.t('Workspace owner: {0}', workspaceOwner ?? vscode.l10n.t('unavailable')),
     operation === undefined
       ? parsedSpec.supported
-        ? 'Pin capability: available'
-        : `Pin capability: unavailable — ${sanitizePackageText(parsedSpec.reason)}`
-      : 'Pin capability: unavailable while busy',
+        ? vscode.l10n.t('Pin capability: available')
+        : vscode.l10n.t('Pin capability: unavailable — {0}', sanitizePackageText(parsedSpec.reason))
+      : vscode.l10n.t('Pin capability: unavailable while busy'),
     ...(releaseAgeText === undefined ? [] : [releaseAgeText]),
   ];
   return details.join('. ');
@@ -171,30 +190,30 @@ function getAccessibilityLabel(
 function getOperationAccessibilityText(operation: PackageOperation): string {
   switch (operation.kind) {
     case 'update':
-      return `update in progress to ${sanitizePackageText(operation.target)}`;
+      return vscode.l10n.t('update in progress to {0}', sanitizePackageText(operation.target));
     case 'remove':
-      return 'remove in progress';
+      return vscode.l10n.t('remove in progress');
     case 'install':
-      return 'install in progress';
+      return vscode.l10n.t('install in progress');
     case 'pin':
-      return 'pin in progress';
+      return vscode.l10n.t('pin in progress');
     case 'switch':
-      return 'dependency type switch in progress';
+      return vscode.l10n.t('dependency type switch in progress');
   }
 }
 
 function getOperationTooltip(packageName: string, operation: PackageOperation): string {
   switch (operation.kind) {
     case 'update':
-      return `Updating ${packageName} to ${sanitizePackageText(operation.target)}`;
+      return vscode.l10n.t('Updating {0} to {1}', packageName, sanitizePackageText(operation.target));
     case 'remove':
-      return `Removing ${packageName}`;
+      return vscode.l10n.t('Removing {0}', packageName);
     case 'install':
-      return `Installing ${packageName}`;
+      return vscode.l10n.t('Installing {0}', packageName);
     case 'pin':
-      return `Pinning ${packageName} version`;
+      return vscode.l10n.t('Pinning {0} version', packageName);
     case 'switch':
-      return `Switching ${packageName} dependency type`;
+      return vscode.l10n.t('Switching {0} dependency type', packageName);
   }
 }
 
@@ -211,13 +230,20 @@ function getOperationIcon(operation: PackageOperation): vscode.ThemeIcon {
 
 function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
   if (state.kind === 'held-back') {
-    return sanitizePackageText(`Held back ${state.version} until ${state.eligibleAt}`);
+    return vscode.l10n.t(
+      'Held back {0} until {1}',
+      sanitizePackageText(state.version),
+      sanitizePackageText(state.eligibleAt),
+    );
   }
   if (state.kind === 'unknown') {
     return sanitizePackageText(
       state.version === undefined
-        ? 'Release age unknown; update is not blocked.'
-        : `Release age unknown for ${state.version}; update is not blocked.`,
+        ? vscode.l10n.t('Release age unknown; update is not blocked.')
+        : vscode.l10n.t(
+            'Release age unknown for {0}; update is not blocked.',
+            sanitizePackageText(state.version),
+          ),
     );
   }
   return undefined;

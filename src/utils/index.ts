@@ -24,3 +24,4 @@ export * from './yarnMetadataClient';
 export * from './shellTask';
 export * from './yarnAuditClient';
 export * from './yarnFamily';
+export * from './localization';

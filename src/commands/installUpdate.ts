@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import {
+  getLocalizedPackageLabelFormatting,
   isPackageItem,
   PackagesProvider,
   resolvePackageFileLabels,
@@ -9,6 +10,7 @@ import {
 } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
+  formatPackageCount,
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
   getPackageDirectory,
@@ -103,7 +105,9 @@ export async function runResolvedPackageVersion(
         );
         if (refreshed === undefined) {
           await provider.loadPackages();
-          throw new Error('Package update could not be verified. Refresh the package list and try again.');
+          throw new Error(vscode.l10n.t(
+            'Package update could not be verified. Refresh the package list and try again.',
+          ));
         }
         provider.markPackageUpdatedForCapability(refreshed, version);
         return;
@@ -126,7 +130,7 @@ export async function runResolvedPackageVersion(
           version,
           section: beforeTask.identity.section,
         }]),
-        `Update ${taskItem.packageName}`,
+        vscode.l10n.t('Update {0}', sanitizePackageText(taskItem.packageName)),
         provider,
         beforeTask.packageDirectory,
       );
@@ -135,7 +139,7 @@ export async function runResolvedPackageVersion(
       if (activeCapability !== undefined) {
         provider.markPackageUpdatingForCapability(activeCapability, undefined);
       }
-      showError(`failed to install update — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t('failed to install update — {0}', err instanceof Error ? err.message : String(err)), err);
     }
   });
 }
@@ -144,7 +148,7 @@ export async function runInstallCommand(provider?: PackagesProvider): Promise<vo
   try {
     const selection = await resolveInstallPackageSelection();
     if (selection === undefined) {
-      throw new Error('No workspace package.json found.');
+      throw new Error(vscode.l10n.t('No workspace package.json found.'));
     }
     if (selection.kind === 'cancelled') {
       return;
@@ -158,7 +162,7 @@ export async function runInstallCommand(provider?: PackagesProvider): Promise<vo
       const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
       const command = client.buildInstallCommand();
       logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
-      const taskName = 'Install Dependencies';
+      const taskName = vscode.l10n.t('Install Dependencies');
       const activeIdentities = provider?.getPackageIdentitiesForFile(packageFilePath) ?? [];
       activeIdentities.forEach(identity => provider?.markPackageUpdating(identity, { kind: 'install' }));
       try {
@@ -173,7 +177,7 @@ export async function runInstallCommand(provider?: PackagesProvider): Promise<vo
     });
   }
   catch (err) {
-    showError(`failed to run install — ${err instanceof Error ? err.message : String(err)}`, err);
+    showError(vscode.l10n.t('failed to run install — {0}', err instanceof Error ? err.message : String(err)), err);
   }
 }
 
@@ -199,12 +203,13 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
   }
 
   if (isBulkUpdateConfirmationEnabled()) {
+    const updateAllAction = vscode.l10n.t('Update All');
     const answer = await vscode.window.showWarningMessage(
-      `Update ${capabilities.length} package${capabilities.length === 1 ? '' : 's'}? This cannot be undone.`,
+      vscode.l10n.t('Update {0}? This cannot be undone.', formatPackageCount(capabilities.length)),
       { modal: true },
-      'Update All',
+      updateAllAction,
     );
-    if (answer !== 'Update All') {
+    if (answer !== updateAllAction) {
       return;
     }
   }
@@ -262,7 +267,9 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         const refreshed = await refreshUpdatedCapabilities(active, provider);
         if (refreshed === undefined) {
           await provider.loadPackages();
-          throw new Error('Package update could not be verified. Refresh the package list and try again.');
+          throw new Error(vscode.l10n.t(
+            'Package update could not be verified. Refresh the package list and try again.',
+          ));
         }
         refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
         return;
@@ -289,7 +296,13 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
             section: update.capability.identity.section,
           })),
         );
-        const completed = await runPackageUpdateTask(beforeTaskUpdates, command, 'Update All Packages', provider, cwd);
+        const completed = await runPackageUpdateTask(
+          beforeTaskUpdates,
+          command,
+          vscode.l10n.t('Update All Packages'),
+          provider,
+          cwd,
+        );
         if (!completed) {
           return;
         }
@@ -297,7 +310,7 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
     }
     catch (err) {
       activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-      showError(`failed to update packages — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t('failed to update packages — {0}', err instanceof Error ? err.message : String(err)), err);
     }
   });
 }
@@ -331,14 +344,29 @@ async function confirmRiskyUpdates(
   const labels = riskyUpdates.map(({ capability, version, releaseAge: selectedReleaseAge }) => {
     const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
     const eligibleAt = releaseAge?.kind === 'held-back' ? releaseAge.eligibleAt : '';
-    return `${sanitizePackageText(capability.item.packageName)}@${sanitizePackageText(version)} (held back until ${sanitizePackageText(eligibleAt)})`;
+    return vscode.l10n.t(
+      '{0}@{1} (held back until {2})',
+      sanitizePackageText(capability.item.packageName),
+      sanitizePackageText(version),
+      sanitizePackageText(eligibleAt),
+    );
   });
+  const updateRiskyAction = vscode.l10n.t('Update Risky Packages');
+  const riskyPrompt = riskyUpdates.length === 1
+    ? vscode.l10n.t(
+        'The selected update is inside the minimum release-age window:\n{0}\nUpdate anyway?',
+        labels.join('\n'),
+      )
+    : vscode.l10n.t(
+        'The selected updates are inside the minimum release-age window:\n{0}\nUpdate anyway?',
+        labels.join('\n'),
+      );
   const answer = await vscode.window.showWarningMessage(
-    `The selected update${riskyUpdates.length === 1 ? '' : 's'} ${riskyUpdates.length === 1 ? 'is' : 'are'} inside the minimum release-age window:\n${labels.join('\n')}\nUpdate anyway?`,
+    riskyPrompt,
     { modal: true },
-    'Update Risky Packages',
+    updateRiskyAction,
   );
-  if (answer !== 'Update Risky Packages') {
+  if (answer !== updateRiskyAction) {
     return false;
   }
   riskyUpdates.forEach(({ capability, version }) => {
@@ -389,7 +417,9 @@ async function runPackageUpdateTask(
     if (refreshed === undefined) {
       active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
       await provider.loadPackages();
-      throw new Error('Package update could not be verified. Refresh the package list and try again.');
+      throw new Error(vscode.l10n.t(
+        'Package update could not be verified. Refresh the package list and try again.',
+      ));
     }
     provider.invalidateUpdateCache();
     refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
@@ -501,7 +531,7 @@ async function resolveInstallPackageSelection(): Promise<InstallPackageSelection
     return undefined;
   }
   const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-  const labels = resolvePackageFileLabels(packageFilePaths, folders);
+  const labels = resolvePackageFileLabels(packageFilePaths, folders, getLocalizedPackageLabelFormatting());
   if (labels.length === 1) {
     return { kind: 'selected', packageFilePath: labels[0].packageFilePath };
   }
@@ -511,7 +541,7 @@ async function resolveInstallPackageSelection(): Promise<InstallPackageSelection
       label: owner.label,
       packageFilePath,
     })),
-    { placeHolder: 'Select the package.json to install dependencies for' },
+    { placeHolder: vscode.l10n.t('Select the package.json to install dependencies for') },
   );
   if (selected === undefined) {
     return { kind: 'cancelled' };

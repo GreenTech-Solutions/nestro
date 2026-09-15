@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { PackagesProvider } from '../providers';
 import {
+  formatPinnedPackageVersions,
   getWorkspacePackageFilePaths,
   logger,
   mutationCoordinator,
@@ -66,13 +67,21 @@ export async function pinAllVersionsCommand(provider: PackagesProvider): Promise
     });
   }
   catch (err) {
-    showError(`Failed to pin all versions — ${err instanceof Error ? err.message : String(err)}`, err);
+    showError(vscode.l10n.t('Failed to pin all versions — {0}', err instanceof Error ? err.message : String(err)), err);
   }
 }
 
 function formatPinAllMessage(count: number, skippedFiles: readonly string[]): string {
   const base = count === 0
-    ? skippedFiles.length === 0 ? 'All versions are already pinned.' : 'All other versions are already pinned.'
-    : `Pinned ${count} package version(s).`;
-  return skippedFiles.length === 0 ? base : `${base} Skipped unreadable manifest(s): ${skippedFiles.join(', ')}.`;
+    ? skippedFiles.length === 0
+      ? vscode.l10n.t('All versions are already pinned.')
+      : vscode.l10n.t('All other versions are already pinned.')
+    : formatPinnedPackageVersions(count);
+  if (skippedFiles.length === 0) {
+    return base;
+  }
+  const skipped = skippedFiles.length === 1
+    ? vscode.l10n.t('Skipped unreadable manifest: {0}.', skippedFiles[0])
+    : vscode.l10n.t('Skipped unreadable manifests: {0}.', skippedFiles.join(', '));
+  return vscode.l10n.t('{0} {1}', base, skipped);
 }

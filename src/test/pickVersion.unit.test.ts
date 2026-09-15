@@ -45,9 +45,11 @@ vi.mock('../commands/packageIdentity', () => identityMocks);
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const { selectVersionsForPicker: selectVersionsForPickerActual } = await vi.importActual<typeof import('../utils/registryClient')>('../utils/registryClient');
+  const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
   return {
     ...releaseAge,
+    ...localization,
     fetchPackageMetadata: vi.fn(),
     getUpdateType: vi.fn(() => 'patch'),
     logger: {

@@ -31,7 +31,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 3 package version(s).');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 3 package versions.');
   });
 
   it('marks rows in every discovered manifest while pinning', async () => {
@@ -73,7 +73,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'Pinned 2 package version(s). Skipped unreadable manifest(s): apps/broken/package.json.',
+      'Pinned 2 package versions. Skipped unreadable manifest: apps/broken/package.json.',
     );
   });
 
@@ -88,7 +88,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).not.toHaveBeenCalled();
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'All other versions are already pinned. Skipped unreadable manifest(s): apps/broken/package.json.',
+      'All other versions are already pinned. Skipped unreadable manifest: apps/broken/package.json.',
     );
   });
 
@@ -145,7 +145,7 @@ describe('pinAllVersionsCommand()', () => {
     // resolveMutationCoordinatorKey() derived from the two discovered manifests.
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package version(s).');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package versions.');
   });
 });
 
