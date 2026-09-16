@@ -2,6 +2,7 @@ export * from './packageIdentity';
 export * from './packageLoadingService';
 export * from './updateOrchestrationService';
 export * from './auditOrchestrationService';
+export * from './viewProjectionService';
 export * from './PackagesProvider';
 export * from './PackageItem';
 export * from './PackageDetailItem';

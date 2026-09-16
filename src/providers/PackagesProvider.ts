@@ -6,11 +6,7 @@ import {
   createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   formatAuditSeverityLabel,
-  formatFailedPackageFileCount,
-  formatFailedPackageRootCount,
-  formatPackageUpdatesAvailable,
   formatUpdateTypeLabel,
-  formatVulnerablePackageCount,
   getUpdateType,
   logger,
   NcuUpdateTarget,
@@ -37,7 +33,6 @@ import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
 import {
   buildTree,
-  formatViewDescription,
   getFilterCounts,
   getLocalizedPackageLabelFormatting,
   PackageTreeEntry,
@@ -66,9 +61,14 @@ import {
   AuditOrchestrationService,
   cloneAuditProjectFailure,
   cloneAuditProjectSummary,
+  computeViewProjection,
+  createAllFalseViewContexts,
   describeAuditFailure,
+  diffViewContexts,
   PackageLoadingService,
+  projectStatusRows,
   UpdateOrchestrationService,
+  VIEW_CONTEXT_KEYS,
 } from './index';
 import type {
   AuditableRow,
@@ -79,6 +79,10 @@ import type {
   PackageLoadingServiceContract,
   UpdateFingerprintPolicy,
   UpdateOrchestrationServiceContract,
+  ViewContextKey,
+  ViewContextMap,
+  ViewProjection,
+  ViewProjectionSnapshot,
 } from './index';
 
 export type PackageStateIdentity = PackageIdentityTuple;
@@ -109,18 +113,6 @@ const EMPTY_WORKSPACE_CAPABILITIES: WorkspaceCapabilities = Object.freeze({
   canFilterPackages: false,
   canPinAllVersions: false,
 });
-
-const WORKSPACE_CAPABILITY_CONTEXTS = {
-  hasPackageFiles: 'nestro.hasPackageFiles',
-  hasReadablePackageFiles: 'nestro.hasReadablePackageFiles',
-  hasDependencyEntries: 'nestro.hasDependencyEntries',
-  hasAuditableProjects: 'nestro.hasAuditableProjects',
-  canRunInstall: 'nestro.canRunInstall',
-  canRunAudit: 'nestro.canRunAudit',
-  canSearchPackages: 'nestro.canSearchPackages',
-  canFilterPackages: 'nestro.canFilterPackages',
-  canPinAllVersions: 'nestro.canPinAllVersions',
-} as const;
 
 /** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
 export const METADATA_CONCURRENCY_CAP = 4;
@@ -153,7 +145,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private workspaceCapabilities: WorkspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
   // True once a load has settled (success or failure) at least once. Global actions stay
   // enabled while this is false so a command is never hidden just because the extension
-  // has not resolved real capabilities yet — see publishedWorkspaceCapabilities().
+  // has not resolved real capabilities yet — see resolvePublishedWorkspaceCapabilities().
   private capabilitiesInitialized = false;
   private packageReadFailed = false;
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
@@ -208,6 +200,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private packageReadFailures: StatusReportFailure[] = [];
   private updateFailures: StatusReportFailure[] = [];
   private disposed = false;
+  /** The context map last published to VS Code, so only changed keys are re-published. */
+  private lastPublishedContexts: ViewContextMap | undefined;
 
   constructor(
     private readonly filterManager: FilterManager,
@@ -225,7 +219,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   attachTreeView(treeView: vscode.TreeView<vscode.TreeItem>): void {
     this.treeView = treeView;
-    this.updateTreeViewState();
+    this.applyTreeViewState(computeViewProjection(this.buildViewProjectionSnapshot()));
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -1132,12 +1126,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.disposed = true;
     this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
     this.packageReadFailed = false;
-    this.setWorkspaceCapabilityContexts(EMPTY_WORKSPACE_CAPABILITIES);
-    void vscode.commands.executeCommand('setContext', 'nestro.canUpdateVisiblePackages', false);
-    void vscode.commands.executeCommand('setContext', 'nestro.noWorkspace', false);
-    void vscode.commands.executeCommand('setContext', 'nestro.hasSearchQuery', false);
+    this.resetViewContexts();
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
+  }
+
+  /** Unconditionally publishes every context key as `false`, bypassing the change diff. */
+  private resetViewContexts(): void {
+    const allFalse = createAllFalseViewContexts();
+    for (const [key, value] of Object.entries(allFalse) as [ViewContextKey, boolean][]) {
+      void vscode.commands.executeCommand('setContext', VIEW_CONTEXT_KEYS[key], value);
+    }
+    this.lastPublishedContexts = allFalse;
   }
 
   /**
@@ -1324,56 +1324,50 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       && !operation.abortController.signal.aborted;
   }
 
+  /** Computes the view projection once, applies it, and publishes only the contexts that changed. */
   private emitTreeChanged(): void {
-    this.updateTreeViewState();
-    const projection = this.loading
-      ? undefined
-      : projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search);
-    void vscode.commands.executeCommand(
-      'setContext',
-      'nestro.canUpdateVisiblePackages',
-      projection?.canUpdateVisiblePackages ?? false,
-    );
-    this.setWorkspaceCapabilityContexts(this.publishedWorkspaceCapabilities());
-    void vscode.commands.executeCommand(
-      'setContext',
-      'nestro.noWorkspace',
-      !this.loading && !this.workspaceCapabilities.hasPackageFiles && !this.packageReadFailed,
-    );
-    void vscode.commands.executeCommand(
-      'setContext',
-      'nestro.hasSearchQuery',
-      this.filterManager.search !== '',
-    );
+    const projection = computeViewProjection(this.buildViewProjectionSnapshot());
+    this.applyTreeViewState(projection);
+    this.publishViewContexts(projection.contexts);
     this._onDidChangeTreeData.fire();
   }
 
-  /**
-   * Global actions (`can*`) publish as executable before the first load ever settles, since
-   * "not yet known" is not the same as "known impossible". `dispose()` bypasses this by
-   * calling setWorkspaceCapabilityContexts() directly, so teardown still publishes `false`.
-   */
-  private publishedWorkspaceCapabilities(): WorkspaceCapabilities {
-    if (this.capabilitiesInitialized) {
-      return this.workspaceCapabilities;
-    }
+  private buildViewProjectionSnapshot(): ViewProjectionSnapshot {
     return {
-      ...this.workspaceCapabilities,
-      canRunInstall: true,
-      canRunAudit: true,
-      canSearchPackages: true,
-      canFilterPackages: true,
-      canPinAllVersions: true,
+      entries: this.allEntries,
+      filterType: this.filterManager.current,
+      search: this.filterManager.search,
+      loading: this.loading,
+      workspaceCapabilities: this.workspaceCapabilities,
+      capabilitiesInitialized: this.capabilitiesInitialized,
+      packageReadFailed: this.packageReadFailed,
+      packageReadFailures: this.packageReadFailures,
+      checkState: this.checkState,
+      lastCheckTime: this.lastCheckTime,
+      failedUpdatePaths: this.failedUpdatePaths,
+      auditState: this.auditState,
+      lastAuditCount: this.lastAuditCount,
+      lastAuditSuccessfulRootCount: this.lastAuditSuccessfulRootCount,
+      failedAuditPaths: this.failedAuditPaths,
     };
   }
 
-  private setWorkspaceCapabilityContexts(capabilities: WorkspaceCapabilities): void {
-    for (const [capability, context] of Object.entries(WORKSPACE_CAPABILITY_CONTEXTS) as [
-      keyof WorkspaceCapabilities,
-      string,
-    ][]) {
-      void vscode.commands.executeCommand('setContext', context, capabilities[capability]);
+  private applyTreeViewState(projection: ViewProjection): void {
+    if (this.treeView === undefined) {
+      return;
     }
+    this.treeView.badge = projection.badge;
+    this.treeView.message = undefined;
+    this.treeView.description = projection.description;
+  }
+
+  /** Publishes only the context keys whose value changed since the last publication. */
+  private publishViewContexts(next: ViewContextMap): void {
+    const changed = diffViewContexts(this.lastPublishedContexts, next);
+    for (const key of Object.keys(changed) as ViewContextKey[]) {
+      void vscode.commands.executeCommand('setContext', VIEW_CONTEXT_KEYS[key], changed[key]);
+    }
+    this.lastPublishedContexts = next;
   }
 
   private createPackageItem(
@@ -1506,23 +1500,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       dev,
       packageFilePath,
     }));
-  }
-
-  private updateTreeViewState(): void {
-    if (this.treeView === undefined) {
-      return;
-    }
-
-    const outdatedCount = projectPackageTree(this.allEntries, 'all').visibleOutdatedEntries.length;
-    this.treeView.badge = outdatedCount > 0
-      ? { tooltip: formatPackageUpdatesAvailable(outdatedCount), value: outdatedCount }
-      : undefined;
-    this.treeView.message = undefined;
-    this.treeView.description = formatViewDescription(
-      this.filterManager.current,
-      this.filterManager.search,
-      getFilterCounts(this.allEntries, this.filterManager.search),
-    );
   }
 
   private get workspaceRoot(): string | undefined {
@@ -1712,103 +1689,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   private buildStatusItems(): StatusItem[] {
-    const items: StatusItem[] = [];
-
-    const failedPackageReadCount = uniqueStrings(
-      this.packageReadFailures.flatMap(failure => failure.packageFilePaths),
-    ).length;
-    const packageLoadOperationFailed = this.packageReadFailures.some(
-      failure => failure.packageFilePaths.length === 0,
-    );
-    if (failedPackageReadCount > 0) {
-      items.push(new StatusItem(
-        vscode.l10n.t('Package read incomplete'),
-        formatFailedPackageFileCount(failedPackageReadCount),
-        'warning',
-        'charts.yellow',
-        true,
-      ));
-    }
-    if (packageLoadOperationFailed) {
-      items.push(new StatusItem(
-        vscode.l10n.t('Workspace package loading failed'),
-        '',
-        'warning',
-        'charts.yellow',
-        true,
-      ));
-    }
-    // A readable package.json with zero dependencies is a real project, not an empty
-    // workspace — without this row the panel would show nothing at all in that state.
-    else if (
-      failedPackageReadCount === 0
-      && this.workspaceCapabilities.hasPackageFiles
-      && !this.workspaceCapabilities.hasDependencyEntries
-      && !this.packageReadFailed
-    ) {
-      items.push(new StatusItem(
-        vscode.l10n.t('No dependencies to manage'),
-        vscode.l10n.t('This package.json has no dependencies yet.'),
-        'info',
-      ));
-    }
-
-    if (this.checkState === 'running') {
-      items.push(new StatusItem(vscode.l10n.t('Checking updates…'), '', 'loading~spin'));
-    }
-    else if (this.checkState === 'done' && this.lastCheckTime !== undefined) {
-      items.push(new StatusItem(
-        vscode.l10n.t('Last update check'),
-        this.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-        'clock',
-      ));
-    }
-    else if (this.checkState === 'incomplete') {
-      items.push(new StatusItem(
-        vscode.l10n.t('Update check incomplete'),
-        formatFailedPackageRootCount(uniqueStrings(this.failedUpdatePaths).length),
-        'warning',
-        'charts.yellow',
-        true,
-      ));
-    }
-
-    if (this.auditState === 'running') {
-      items.push(new StatusItem(vscode.l10n.t('Running audit…'), '', 'loading~spin'));
-    }
-    else if (this.auditState === 'done') {
-      const count = this.lastAuditCount ?? 0;
-      items.push(new StatusItem(
-        vscode.l10n.t('Audit complete'),
-        count === 0 ? vscode.l10n.t('No vulnerabilities') : formatVulnerablePackageCount(count),
-        count === 0 ? 'shield-check' : 'warning',
-        count === 0 ? 'charts.green' : 'charts.red',
-      ));
-    }
-    else if (this.auditState === 'incomplete') {
-      const count = this.lastAuditCount ?? 0;
-      const resultDescription = this.lastAuditSuccessfulRootCount === 0
-        ? vscode.l10n.t('No successful audit results')
-        : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
-      items.push(new StatusItem(
-        vscode.l10n.t('Audit incomplete'),
-        vscode.l10n.t('{0}; {1}', resultDescription, formatFailedPackageRootCount(uniqueStrings(this.failedAuditPaths).length)),
-        'warning',
-        'charts.yellow',
-        true,
-      ));
-    }
-    else if (this.auditState === 'failed') {
-      items.push(new StatusItem(
-        vscode.l10n.t('Audit failed'),
-        vscode.l10n.t('No audit results available'),
-        'warning',
-        'charts.yellow',
-        true,
-      ));
-    }
-
-    return items;
+    return projectStatusRows(this.buildViewProjectionSnapshot()).map(row => new StatusItem(
+      row.label,
+      row.description,
+      row.icon,
+      row.color,
+      row.actionable,
+    ));
   }
 
   private toRelativePackageFilePath(packageFilePath: string): string | undefined {
