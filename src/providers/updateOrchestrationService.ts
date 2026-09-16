@@ -6,12 +6,12 @@ import {
   packageIdentityKey,
   readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
-} from './index';
+} from './packageIdentity';
 import type {
   CanonicalPackageLocation,
   CanonicalPackageLocationResult,
   PackageIdentityTuple,
-} from './index';
+} from './packageIdentity';
 
 export interface CachedUpdateData {
   readonly acceptedVersion: string | undefined;

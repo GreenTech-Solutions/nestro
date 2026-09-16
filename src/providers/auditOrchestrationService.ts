@@ -11,7 +11,7 @@ import type {
   AuditSeverity,
   OperationCoordinator,
 } from '../utils';
-import { packageIdentityFromValues, packageIdentityKey } from './index';
+import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
 
 /** Project-level audit data remains available when row attribution is suppressed. */
 export interface AuditProjectSummary {

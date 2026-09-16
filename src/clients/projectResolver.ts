@@ -2,8 +2,9 @@ import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { logger } from '../utils/logger';
+import type { PackageManager } from '../utils/packageManagerKind';
 
-export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+export type { PackageManager };
 
 interface PackageJsonManifest {
   packageManager?: string;

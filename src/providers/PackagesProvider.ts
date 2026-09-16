@@ -61,29 +61,27 @@ import {
   AuditOrchestrationService,
   cloneAuditProjectFailure,
   cloneAuditProjectSummary,
-  computeViewProjection,
-  createAllFalseViewContexts,
   describeAuditFailure,
-  diffViewContexts,
-  PackageLoadingService,
-  projectStatusRows,
-  UpdateOrchestrationService,
-  VIEW_CONTEXT_KEYS,
-} from './index';
+} from './auditOrchestrationService';
 import type {
   AuditableRow,
   AuditOrchestrationServiceContract,
   AuditProjectFailure,
   AuditProjectSummary,
   AuditReportSnapshot,
-  PackageLoadingServiceContract,
-  UpdateFingerprintPolicy,
-  UpdateOrchestrationServiceContract,
-  ViewContextKey,
-  ViewContextMap,
-  ViewProjection,
-  ViewProjectionSnapshot,
-} from './index';
+} from './auditOrchestrationService';
+import { PackageLoadingService } from './packageLoadingService';
+import type { PackageLoadingServiceContract } from './packageLoadingService';
+import { UpdateOrchestrationService } from './updateOrchestrationService';
+import type { UpdateFingerprintPolicy, UpdateOrchestrationServiceContract } from './updateOrchestrationService';
+import {
+  computeViewProjection,
+  createAllFalseViewContexts,
+  diffViewContexts,
+  projectStatusRows,
+  VIEW_CONTEXT_KEYS,
+} from './viewProjectionService';
+import type { ViewContextKey, ViewContextMap, ViewProjection, ViewProjectionSnapshot } from './viewProjectionService';
 
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { PackageManager } from '../clients';
+import type { PackageManager } from './packageManagerKind';
 import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
