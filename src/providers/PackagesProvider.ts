@@ -37,6 +37,7 @@ import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
 import {
   buildTree,
+  formatViewDescription,
   getFilterCounts,
   getLocalizedPackageLabelFormatting,
   PackageTreeEntry,
@@ -1134,6 +1135,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.setWorkspaceCapabilityContexts(EMPTY_WORKSPACE_CAPABILITIES);
     void vscode.commands.executeCommand('setContext', 'nestro.canUpdateVisiblePackages', false);
     void vscode.commands.executeCommand('setContext', 'nestro.noWorkspace', false);
+    void vscode.commands.executeCommand('setContext', 'nestro.hasSearchQuery', false);
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
   }
@@ -1338,6 +1340,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       'nestro.noWorkspace',
       !this.loading && !this.workspaceCapabilities.hasPackageFiles && !this.packageReadFailed,
     );
+    void vscode.commands.executeCommand(
+      'setContext',
+      'nestro.hasSearchQuery',
+      this.filterManager.search !== '',
+    );
     this._onDidChangeTreeData.fire();
   }
 
@@ -1511,6 +1518,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       ? { tooltip: formatPackageUpdatesAvailable(outdatedCount), value: outdatedCount }
       : undefined;
     this.treeView.message = undefined;
+    this.treeView.description = formatViewDescription(
+      this.filterManager.current,
+      this.filterManager.search,
+      getFilterCounts(this.allEntries, this.filterManager.search),
+    );
   }
 
   private get workspaceRoot(): string | undefined {

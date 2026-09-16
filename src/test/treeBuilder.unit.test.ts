@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTree,
-  FilterBarItem,
   findOwningWorkspaceFolder,
+  formatViewDescription,
   getFilterCounts,
   getFilteredEntries,
   GroupItem,
@@ -13,7 +13,6 @@ import {
   resolvePackageFileLabels,
   resolvePackageOwnerLabel,
   resolveWorkspaceFolderDisplayNames,
-  SearchQueryItem,
   toRelativeLabel,
   toWorkspaceFolderDescriptors,
   WorkspaceFolderDescriptor,
@@ -28,15 +27,14 @@ describe('buildTree', () => {
     expect(buildTree([], 'all', '')).toEqual([]);
   });
 
-  it('builds a filter row and dependency groups', () => {
+  it('builds dependency groups with no action-like rows mixed in', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'all', '');
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
-    const groups = tree.slice(2).filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups.map(group => group.label)).toEqual(['Dependencies', 'Dev Dependencies']);
     expect(groups[0].description).toBe('1 package · 1 outdated');
     expect(groups[1].description).toBe('1 package');
@@ -52,10 +50,9 @@ describe('buildTree', () => {
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'breaking', '');
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
-    expect(tree[2]).toBeInstanceOf(MessageItem);
-    expect(tree[2].label).toBe('No packages match the current filter.');
+    expect(tree[0]).toBeInstanceOf(MessageItem);
+    expect(tree[0].label).toBe('No packages match the current filter.');
+    expect(tree).toHaveLength(1);
   });
 
   it('filters packages by update type', () => {
@@ -90,8 +87,8 @@ describe('buildTree', () => {
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),
     ], 'all', '', [makeFolder('/workspace', 'workspace', 0)]);
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
+    expect(tree).toHaveLength(1);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
     expect(tree.some(item => item instanceof WorkspaceFolderItem)).toBe(false);
   });
 
@@ -101,7 +98,7 @@ describe('buildTree', () => {
       makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
     ], 'all', '', [makeFolder('/workspace', 'workspace', 0)]);
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
+    expect(tree.every(item => item instanceof WorkspaceFolderItem)).toBe(true);
     const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
     expect(folders.map(folder => folder.label)).toEqual(['workspace — apps/frontend', 'workspace — packages/ui']);
     expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
@@ -209,15 +206,13 @@ describe('buildTree', () => {
     expect(groups[0].children.map(child => child.label)).toEqual(['react', 'react-dom']);
   });
 
-  it('shows the current search query in a dedicated item', () => {
+  it('keeps only real groups in the tree when a search query is active', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
     ], 'all', 'react');
 
-    expect(tree[0]).toEqual(expect.objectContaining({
-      label: 'Search query',
-      description: 'react',
-    }));
+    expect(tree).toHaveLength(1);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
   });
 
   it('keeps busy rows in All while excluding them from update rows and group outdated counts', () => {
@@ -235,9 +230,14 @@ describe('buildTree', () => {
     ];
 
     const allTree = buildTree(entries, 'all', 'react');
-    const allFilter = allTree[1] as FilterBarItem;
     const allGroups = allTree.filter((item): item is GroupItem => item instanceof GroupItem);
-    expect(allFilter.description).toBe('All (2) | Has Updates (1) | Patch (0) | Minor (1) | Breaking (0)');
+    expect(getFilterCounts(entries, 'react')).toEqual({
+      all: 2,
+      hasUpdates: 1,
+      patch: 0,
+      minor: 1,
+      breaking: 0,
+    });
     expect(allGroups[0].description).toBe('2 packages · 1 outdated');
     expect(allGroups[0].children.map(child => child.label)).toEqual(['react-busy', 'react-ready']);
 
@@ -257,6 +257,36 @@ describe('buildTree', () => {
 
     const workspaceItems = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
     expect(workspaceItems.map(item => item.label)).toEqual(['workspace — β [unicode #3]']);
+  });
+});
+
+describe('formatViewDescription', () => {
+  const counts = { all: 5, hasUpdates: 2, patch: 1, minor: 1, breaking: 0 };
+
+  it('returns undefined when the filter is all and the search is empty', () => {
+    expect(formatViewDescription('all', '', counts)).toBeUndefined();
+  });
+
+  it('shows the filter label with its count when only a filter is active', () => {
+    expect(formatViewDescription('patch', '', counts)).toBe('Patch (1)');
+  });
+
+  it('shows the quoted search query when only a search is active', () => {
+    expect(formatViewDescription('all', 'react', counts)).toBe('"react"');
+  });
+
+  it('combines the filter and the search when both are active', () => {
+    expect(formatViewDescription('minor', 'react', counts)).toBe('Minor (1) · "react"');
+  });
+
+  it('truncates a long search query so the description stays terse', () => {
+    const longSearch = 'a'.repeat(40);
+    expect(formatViewDescription('all', longSearch, counts)).toBe(`"${'a'.repeat(24)}…"`);
+  });
+
+  it('truncates by code point so a surrogate pair is never split', () => {
+    const emojiSearch = `a${'😀'.repeat(30)}`;
+    expect(formatViewDescription('all', emojiSearch, counts)).toBe(`"a${'😀'.repeat(23)}…"`);
   });
 });
 

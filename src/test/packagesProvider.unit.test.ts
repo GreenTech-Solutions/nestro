@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import {
-  FilterBarItem,
   FilterManager,
   GroupItem,
   METADATA_CONCURRENCY_CAP,
@@ -15,7 +14,6 @@ import {
   PackageItem,
   PackagesProvider,
   resolvePackageFileLabels,
-  SearchQueryItem,
   StatusItem,
   WorkspaceFolderItem,
 } from '../providers';
@@ -577,6 +575,7 @@ describe('PackagesProvider', () => {
     expect(getLastContextValue('nestro.canPinAllVersions')).toBe(false);
     expect(getLastContextValue('nestro.noWorkspace')).toBe(false);
     expect(getLastContextValue('nestro.canUpdateVisiblePackages')).toBe(false);
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(false);
   });
 
   it('starts with the configured initial filter', async () => {
@@ -588,8 +587,7 @@ describe('PackagesProvider', () => {
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[2].label).toBe('Filter: Has Updates');
+    expect(tree[1]).toBeInstanceOf(GroupItem);
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
@@ -604,8 +602,7 @@ describe('PackagesProvider', () => {
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[2].label).toBe('Filter: All');
+    expect(tree[1]).toBeInstanceOf(GroupItem);
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
@@ -687,6 +684,84 @@ describe('PackagesProvider', () => {
     expect(treeView.badge).toEqual({ tooltip: '2 package updates available', value: 2 });
 
     provider.dispose();
+  });
+
+  it('reflects the active filter and search in treeView.description', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+    const treeView = { badge: undefined, message: undefined, description: undefined } as unknown as vscode.TreeView<vscode.TreeItem>;
+    provider.attachTreeView(treeView);
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    expect(treeView.description).toBeUndefined();
+
+    filterManager.set('hasUpdates');
+    expect(treeView.description).toBe('Has Updates (1)');
+
+    filterManager.setSearch('react');
+    expect(treeView.description).toBe('Has Updates (1) · "react"');
+
+    filterManager.set('all');
+    expect(treeView.description).toBe('"react"');
+
+    filterManager.clearSearch();
+    expect(treeView.description).toBeUndefined();
+
+    provider.dispose();
+  });
+
+  it('publishes nestro.hasSearchQuery only while a search query is active, and resets it on dispose', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(false);
+
+    filterManager.setSearch('react');
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(true);
+
+    filterManager.clearSearch();
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(false);
+
+    filterManager.setSearch('vue');
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(true);
+
+    provider.dispose();
+    expect(getLastContextValue('nestro.hasSearchQuery')).toBe(false);
+  });
+
+  it('shows the filter picker with counts computed over the search-matched entries', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    filterManager.setSearch('react');
+
+    await provider.showFilterPicker();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledTimes(1);
+    const [items] = vi.mocked(vscode.window.showQuickPick).mock.calls[0] as [
+      { label: string; description: string }[],
+      unknown,
+    ];
+    // Only react matches the search: if the counts came from the full unfiltered
+    // set (2 entries) instead of the search-matched one, "All" would read "2".
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'All', description: '1' }),
+      expect.objectContaining({ label: 'Breaking', description: '1' }),
+    ]));
+  });
+
+  it('does not open the filter picker when there are no packages at all', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([]);
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    await provider.showFilterPicker();
+
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
   });
 
   it('reuses fresh update check results', async () => {
@@ -1708,7 +1783,7 @@ describe('PackagesProvider', () => {
     provider.dispose();
   });
 
-  it('shows status rows above the filter bar', () => {
+  it('shows status rows above the package groups', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([]);
     setProviderState(provider, {
@@ -1730,8 +1805,8 @@ describe('PackagesProvider', () => {
     expect(tree[0].label).toBe('Last update check');
     expect(tree[1]).toBeInstanceOf(StatusItem);
     expect(tree[1].label).toBe('Audit complete');
-    expect(tree[2]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[3]).toBeInstanceOf(FilterBarItem);
+    expect(tree[2]).toBeInstanceOf(GroupItem);
+    expect(tree[2].label).toBe('Dependencies');
   });
 
   it('preserves the version prefix when a package is marked updated', () => {
@@ -3454,6 +3529,7 @@ describe('PackagesProvider', () => {
         'nestro.canFilterPackages',
         'nestro.canPinAllVersions',
         'nestro.noWorkspace',
+        'nestro.hasSearchQuery',
       ] as const;
       let treeChangeCount = 0;
       const treeChangeSubscription = provider.onDidChangeTreeData(() => {

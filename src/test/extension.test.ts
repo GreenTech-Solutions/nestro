@@ -775,6 +775,39 @@ suite('Shell Task Lifecycle: package update busy state', function () {
   });
 });
 
+suite('Package tree renders only real data rows', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+  let filterManager: FilterManager;
+  let provider: PackagesProvider;
+
+  suiteSetup(async () => {
+    opened = await openTrackedFixture(fixture);
+    filterManager = new FilterManager();
+    provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+  });
+
+  suiteTeardown(async () => {
+    provider.dispose();
+    filterManager.dispose();
+    await closeIfOpen(opened);
+    opened = undefined;
+  });
+
+  test('the first child of a populated tree is a package group, not a fake action row', () => {
+    const children = provider.getChildren();
+    assert.ok(children.length > 0, 'the tree should not be empty for a populated fixture');
+    assert.strictEqual(
+      children[0] instanceof GroupItem,
+      true,
+      'the first row must be a real data group — Search and Filter are toolbar/QuickPick actions, not tree rows',
+    );
+  });
+});
+
 suite('Manifest Contracts', () => {
   test('contributes.commands has exactly the 20 documented entries', () => {
     assert.strictEqual(getManifest().contributes.commands.length, 20);

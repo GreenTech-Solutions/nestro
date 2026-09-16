@@ -41,6 +41,7 @@ describe('toolbar action manifest', () => {
       ['nestro.updateAllVisible', 'navigation@3', `${view} && nestro.canUpdateVisiblePackages`],
       ['nestro.searchPackages', '1_find@1', `${view} && nestro.canSearchPackages`],
       ['nestro.showFilterPicker', '1_find@2', `${view} && nestro.canFilterPackages`],
+      ['nestro.clearSearchQuery', '1_find@3', `${view} && nestro.hasSearchQuery`],
       ['nestro.runInstall', '2_operations@1', `${view} && nestro.canRunInstall`],
       ['nestro.runAudit', '2_operations@2', `${view} && nestro.canRunAudit`],
       ['nestro.pinAllVersions', '2_operations@3', `${view} && nestro.canPinAllVersions`],

@@ -52,6 +52,13 @@ describe('package row action manifest', () => {
     expect(new Set(packageRowMenus.map(entry => entry.command)).size).toBe(packageRowMenus.length);
   });
 
+  it('matches every row context entry by regex rather than an exact context value', () => {
+    for (const entry of manifest.contributes.menus['view/item/context']) {
+      expect(entry.when).not.toMatch(/viewItem\s*==/);
+      expect(entry.when).toMatch(/viewItem\s*=~/);
+    }
+  });
+
   it.each([
     [
       'outdated vulnerable pinnable',

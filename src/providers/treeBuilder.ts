@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
-import { FilterBarItem } from './FilterBarItem';
-import { FilterCounts, FilterType } from './FilterManager';
+import { FilterCounts, FilterType, getFilterLabel } from './FilterManager';
 import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
-import { SearchQueryItem } from './SearchQueryItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import type { UpdateType } from '../utils';
 
@@ -72,6 +70,8 @@ interface PackageLabelRow {
 }
 
 const UNOWNED_FOLDER_INDEX = Number.MAX_SAFE_INTEGER;
+/** Keeps `formatViewDescription()` readable in a narrow sidebar. */
+const MAX_DESCRIPTION_SEARCH_LENGTH = 24;
 const UNSAFE_LABEL_CODE_POINT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 const DEFAULT_PACKAGE_LABEL_FORMATTING: PackageLabelFormatting = {
   rootLabel: '(root)',
@@ -102,11 +102,7 @@ export function buildTree(
     return buildFlatTree(projection);
   }
 
-  return [
-    new SearchQueryItem(search),
-    new FilterBarItem(projection.filterCounts, filterType),
-    ...buildWorkspaceGroups(projection, workspaceFolders, allPackageFilePaths),
-  ];
+  return buildWorkspaceGroups(projection, workspaceFolders, allPackageFilePaths);
 }
 
 /** Builds plain owner descriptors from live `vscode.WorkspaceFolder` values. */
@@ -289,6 +285,32 @@ export function getFilteredEntries(
   return [...projectPackageTree(entries, filterType, search).visibleEntries];
 }
 
+/** Compact `treeView.description` for the active filter/search state; `undefined` when both are at their defaults. */
+export function formatViewDescription(
+  filterType: FilterType,
+  search: string,
+  counts: FilterCounts,
+): string | undefined {
+  const filterSegment = filterType === 'all'
+    ? undefined
+    : vscode.l10n.t('{0} ({1})', getFilterLabel(filterType), counts[filterType]);
+  const searchSegment = search === ''
+    ? undefined
+    : vscode.l10n.t('"{0}"', truncateSearchForDescription(search));
+
+  if (filterSegment !== undefined && searchSegment !== undefined) {
+    return vscode.l10n.t('{0} · {1}', filterSegment, searchSegment);
+  }
+  return filterSegment ?? searchSegment;
+}
+
+function truncateSearchForDescription(search: string): string {
+  const codePoints = [...search];
+  return codePoints.length > MAX_DESCRIPTION_SEARCH_LENGTH
+    ? `${codePoints.slice(0, MAX_DESCRIPTION_SEARCH_LENGTH).join('')}…`
+    : search;
+}
+
 function buildGroups(
   groupsProjection: readonly PackageGroupProjection[],
   search: string,
@@ -311,11 +333,7 @@ function buildGroups(
 function buildFlatTree(
   projection: PackageTreeProjection,
 ): vscode.TreeItem[] {
-  return [
-    new SearchQueryItem(projection.search),
-    new FilterBarItem(projection.filterCounts, projection.filterType),
-    ...buildGroups(projection.groups, projection.search),
-  ];
+  return buildGroups(projection.groups, projection.search);
 }
 
 function buildWorkspaceGroups(

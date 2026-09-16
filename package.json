@@ -372,6 +372,11 @@
           "group": "1_find@2"
         },
         {
+          "command": "nestro.clearSearchQuery",
+          "when": "view == nestro.packagesView && nestro.hasSearchQuery",
+          "group": "1_find@3"
+        },
+        {
           "command": "nestro.runInstall",
           "when": "view == nestro.packagesView && nestro.canRunInstall",
           "group": "2_operations@1"
@@ -412,11 +417,6 @@
           "command": "nestro.copyPackageName",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
           "group": "navigation@2"
-        },
-        {
-          "command": "nestro.clearSearchQuery",
-          "when": "view == nestro.packagesView && viewItem == search-active",
-          "group": "inline"
         },
         {
           "command": "nestro.switchDepType",
