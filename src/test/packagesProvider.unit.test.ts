@@ -2031,10 +2031,12 @@ describe('PackagesProvider', () => {
     const updatePatterns = getMenuPatterns(entry => entry.command === 'nestro.installUpdate');
     const pinPatterns = getMenuPatterns(entry => entry.command === 'nestro.pinVersion');
     const managePatterns = getMenuPatterns(entry => entry.group?.startsWith('2_manage') === true);
+    const dangerousPatterns = getMenuPatterns(entry => entry.group?.startsWith('3_danger') === true);
 
     expect(updatePatterns).toHaveLength(1);
-    expect(pinPatterns).toHaveLength(2);
-    expect(managePatterns).toHaveLength(3);
+    expect(pinPatterns).toHaveLength(1);
+    expect(managePatterns).toHaveLength(2);
+    expect(dangerousPatterns).toHaveLength(1);
     const updatePattern = updatePatterns[0];
     if (updatePattern === undefined) {
       throw new Error('The Update menu clause is missing.');
@@ -2070,21 +2072,25 @@ describe('PackagesProvider', () => {
     expect(matchesAny([updatePattern], outdatedRow?.contextValue)).toBe(true);
     expect(matchesAny(pinPatterns, outdatedRow?.contextValue)).toBe(true);
     expect(matchesAny(managePatterns, outdatedRow?.contextValue)).toBe(true);
+    expect(matchesAny(dangerousPatterns, outdatedRow?.contextValue)).toBe(true);
 
     expect(currentRow?.vulnerabilitySeverity).toBe('high');
     expect(matchesAny([updatePattern], currentRow?.contextValue)).toBe(false);
     expect(matchesAny(pinPatterns, currentRow?.contextValue)).toBe(true);
     expect(matchesAny(managePatterns, currentRow?.contextValue)).toBe(true);
+    expect(matchesAny(dangerousPatterns, currentRow?.contextValue)).toBe(true);
 
     expect(installingRow?.vulnerabilitySeverity).toBe('high');
     expect(matchesAny([updatePattern], installingRow?.contextValue)).toBe(false);
     expect(matchesAny(pinPatterns, installingRow?.contextValue)).toBe(false);
     expect(matchesAny(managePatterns, installingRow?.contextValue)).toBe(false);
+    expect(matchesAny(dangerousPatterns, installingRow?.contextValue)).toBe(false);
 
     expect(unsupportedRow?.vulnerabilitySeverity).toBe('high');
     expect(matchesAny([updatePattern], unsupportedRow?.contextValue)).toBe(true);
     expect(matchesAny(pinPatterns, unsupportedRow?.contextValue)).toBe(false);
     expect(matchesAny(managePatterns, unsupportedRow?.contextValue)).toBe(true);
+    expect(matchesAny(dangerousPatterns, unsupportedRow?.contextValue)).toBe(true);
   });
 
   it('keeps successful audit results and shows failed package paths', async () => {

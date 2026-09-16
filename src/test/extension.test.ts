@@ -93,6 +93,12 @@ function getManifest(): ExtensionManifest {
   return requireExtension().packageJSON as ExtensionManifest;
 }
 
+function compileViewItemPattern(when: string): RegExp {
+  const match = /viewItem\s*=~\s*\/(.*)\/([a-z]*)$/.exec(when);
+  assert.ok(match, `Manifest entry does not contain a viewItem regex: ${when}`);
+  return new RegExp(match[1] ?? '', match[2] ?? '');
+}
+
 function isInside(parent: string, candidate: string): boolean {
   const relativePath = relative(parent, candidate);
   return relativePath !== '' && !relativePath.startsWith('..') && !isAbsolute(relativePath);
@@ -815,7 +821,7 @@ suite('Manifest Contracts', () => {
     assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
 
     const pinEntries = menuEntries.filter(entry => entry.command === 'nestro.pinVersion');
-    assert.strictEqual(pinEntries.length, 2);
+    assert.strictEqual(pinEntries.length, 1);
     for (const pinEntry of pinEntries) {
       const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
       assert.strictEqual(typeof pinRegexSource, 'string');
@@ -828,6 +834,81 @@ suite('Manifest Contracts', () => {
     for (const pinEntry of pinEntries) {
       const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
       assert.strictEqual(new RegExp(pinRegexSource ?? '').test(unsupported.contextValue as string), false);
+    }
+  });
+
+  test('package row actions stay reachable with no more than two inline actions', () => {
+    const rowMenus = getManifest().contributes.menus['view/item/context']
+      .filter(entry => entry.when.includes('viewItem =~'));
+    assert.deepStrictEqual(rowMenus.map(entry => [entry.command, entry.group]), [
+      ['nestro.installUpdate', 'inline'],
+      ['nestro.pickVersion', 'inline@2'],
+      ['nestro.openOnNpm', 'navigation@1'],
+      ['nestro.copyPackageName', 'navigation@2'],
+      ['nestro.switchDepType', '2_manage@1'],
+      ['nestro.pinVersion', '2_manage@2'],
+      ['nestro.removePackage', '3_danger@1'],
+    ]);
+    assert.strictEqual(new Set(rowMenus.map(entry => entry.command)).size, rowMenus.length);
+
+    const rowCases = [
+      {
+        label: 'outdated vulnerable pinnable',
+        item: new PackageItem('pkg', '^1.0.0', '1.1.0', 'minor', undefined, 'high'),
+        commandIds: [
+          'nestro.installUpdate',
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.pinVersion',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
+      },
+      {
+        label: 'outdated vulnerable pin-unsupported',
+        item: new PackageItem('local-pkg', 'npm:real-pkg@^1.0.0', '2.0.0', 'breaking', undefined, 'critical'),
+        commandIds: [
+          'nestro.installUpdate',
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
+      },
+      {
+        label: 'current pinnable',
+        item: new PackageItem('stable', '^1.0.0', undefined, 'none'),
+        commandIds: [
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.pinVersion',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.pickVersion'],
+      },
+      {
+        label: 'installing vulnerable',
+        item: new PackageItem('pending', '^1.0.0', '2.0.0', 'minor', { kind: 'update', target: '2.0.0' }, 'high'),
+        commandIds: ['nestro.openOnNpm', 'nestro.copyPackageName'],
+        inlineCommandIds: [],
+      },
+    ] as const;
+
+    for (const { label, item, commandIds, inlineCommandIds } of rowCases) {
+      const matchingMenus = rowMenus.filter(entry => compileViewItemPattern(entry.when).test(item.contextValue ?? ''));
+      assert.deepStrictEqual(matchingMenus.map(entry => entry.command), commandIds, label);
+      assert.deepStrictEqual(
+        matchingMenus.filter(entry => entry.group?.startsWith('inline') === true).map(entry => entry.command),
+        inlineCommandIds,
+        `${label} inline actions`,
+      );
+      assert.ok(inlineCommandIds.length <= 2, `${label} should have at most two inline actions`);
     }
   });
 

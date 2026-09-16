@@ -24,7 +24,7 @@ describe('pin command manifest capability', () => {
     const pinEntries = manifest.contributes.menus['view/item/context']
       .filter(entry => entry.command === 'nestro.pinVersion');
 
-    expect(pinEntries).toHaveLength(2);
+    expect(pinEntries).toHaveLength(1);
     for (const entry of pinEntries) {
       expect(entry.when).toContain('viewItem =~ /(^|-)pinnable($|-)/');
       expect(entry.when).not.toContain('viewItem =~ /^(package|outdated)/');

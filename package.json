@@ -401,22 +401,7 @@
         {
           "command": "nestro.openOnNpm",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated|installing)/",
-          "group": "inline@3"
-        },
-        {
-          "command": "nestro.switchDepType",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-          "group": "inline@4"
-        },
-        {
-          "command": "nestro.pinVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /(^|-)pinnable($|-)/",
-          "group": "inline@5"
-        },
-        {
-          "command": "nestro.removePackage",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-          "group": "inline@6"
+          "group": "navigation@1"
         },
         {
           "command": "nestro.copyPackageName",
@@ -441,7 +426,7 @@
         {
           "command": "nestro.removePackage",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
-          "group": "2_manage@3"
+          "group": "3_danger@1"
         }
       ]
     }
