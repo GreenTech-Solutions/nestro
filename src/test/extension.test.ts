@@ -994,6 +994,18 @@ suite('Manifest Contracts', () => {
       assert.strictEqual(entry.when, `view == nestro.packagesView && ${context}`);
     }
   });
+
+  // The narrow view toolbar renders only the navigation group inline; everything else
+  // collapses into the "..." overflow, so the installed manifest must cap navigation at three.
+  test('the view toolbar keeps exactly three primary navigation actions, in order', () => {
+    const toolbarEntries = getManifest().contributes.menus['view/title'];
+    const navigationEntries = toolbarEntries.filter(entry => entry.group === 'navigation' || entry.group?.startsWith('navigation@') === true);
+    assert.deepStrictEqual(navigationEntries.map(entry => entry.command), [
+      'nestro.refresh',
+      'nestro.checkUpdates',
+      'nestro.updateAllVisible',
+    ]);
+  });
 });
 
 suite('Contributed Command Surface: invocation without arguments', function () {
