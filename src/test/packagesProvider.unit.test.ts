@@ -477,6 +477,18 @@ describe('PackagesProvider', () => {
     expect(getLastContextValue('nestro.canRunInstall')).toBe(false);
     expect(getLastContextValue('nestro.canRunAudit')).toBe(false);
     expect(getLastContextValue('nestro.noWorkspace')).toBe(false);
+    const status = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Workspace package loading failed'
+    ));
+    expect(status?.command?.command).toBe('nestro.openStatusReport');
+    expect(provider.getChildren().some(item => (
+      item instanceof StatusItem && item.label === 'Package read incomplete'
+    ))).toBe(false);
+    expect(provider.getStatusReport().packageReadFailures).toEqual([expect.objectContaining({
+      packageFilePaths: [],
+      reason: 'package-load-failed',
+      detail: 'workspace read failed',
+    })]);
     expect(showError).toHaveBeenCalledOnce();
   });
 
@@ -1162,7 +1174,15 @@ describe('PackagesProvider', () => {
     ]);
     const status = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Update check incomplete');
     expect(status).toBeInstanceOf(StatusItem);
-    expect(status?.description).toBe(`Failed: ${failedPath}`);
+    expect(status?.description).toBe('1 package root failed');
+    expect(status?.command).toEqual(expect.objectContaining({ command: 'nestro.openStatusReport' }));
+    expect(status?.tooltip).toContain('Open detailed diagnostics');
+    expect(status?.accessibilityInformation?.label).toContain('Open detailed diagnostics');
+    expect(provider.getStatusReport().updateFailures).toEqual([expect.objectContaining({
+      packageFilePaths: [failedPath],
+      reason: 'update-check-failed',
+      detail: expect.stringContaining(failure.message),
+    })]);
     expect(showError).not.toHaveBeenCalled();
     provider.dispose();
   });
@@ -1214,7 +1234,8 @@ describe('PackagesProvider', () => {
     expect(rows[1]?.item.installing).toBe(true);
     const status = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Update check incomplete');
     expect(status).toBeInstanceOf(StatusItem);
-    expect(status?.description).toBe(`Failed: ${successfulPath}, ${failedPath}`);
+    expect(status?.description).toBe('2 package roots failed');
+    expect(provider.getStatusReport().updateFailures).toHaveLength(2);
     expect(showError).toHaveBeenCalledWith(`Failed to check updates — ${failure.message}`, failure);
     provider.dispose();
   });
@@ -1600,8 +1621,14 @@ describe('PackagesProvider', () => {
     const tree = provider.getChildren();
     const readStatus = tree.find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
     expect(readStatus).toBeInstanceOf(StatusItem);
-    expect(readStatus?.description).toContain('/workspace/bad/package.json');
+    expect(readStatus?.description).toBe('1 package file failed to load');
+    expect(readStatus?.command).toEqual(expect.objectContaining({ command: 'nestro.openStatusReport' }));
     expect(getPackageItems(provider).map(item => item.packageFilePath)).toEqual(['/workspace/good/package.json']);
+    expect(provider.getStatusReport().packageReadFailures).toEqual([{
+      packageFilePaths: ['/workspace/bad/package.json'],
+      reason: 'package-read-failed',
+      detail: 'Unexpected end of JSON input',
+    }]);
     expect(showError).not.toHaveBeenCalled();
   });
 
@@ -1626,14 +1653,59 @@ describe('PackagesProvider', () => {
 
     const readStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Package read incomplete');
     expect(readStatus).toBeInstanceOf(StatusItem);
-    expect(readStatus?.description).toContain('/workspace/bad/package.json');
-    expect(readStatus?.description).toContain('/workspace/unreadable/package.json');
+    expect(readStatus?.description).toBe('2 package files failed to load');
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'setContext',
       'nestro.noWorkspace',
       false,
     );
     expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('clears read, update, and audit diagnostics when a newer lifecycle succeeds', async () => {
+    const failedEntries = [{
+      name: 'react',
+      current: '18.0.0',
+      dev: false,
+      versionPrefix: '',
+      packageFilePath: '/workspace/good/package.json',
+    }];
+    Object.defineProperty(failedEntries, 'skippedFiles', {
+      value: [{ packageFilePath: '/workspace/bad/package.json', error: 'malformed' }],
+    });
+    vi.mocked(readAllWorkspaceDependencies)
+      .mockResolvedValueOnce(failedEntries)
+      .mockResolvedValueOnce([{
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/good/package.json',
+      }]);
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/good/package.json']);
+
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    expect(provider.getStatusReport().packageReadFailures).toHaveLength(1);
+
+    const auditService: AuditOrchestrationServiceContract = {
+      run: vi.fn().mockResolvedValue({
+        kind: 'failed',
+        reason: 'audit-failed',
+        detail: 'audit unavailable',
+      }),
+    };
+    const auditedProvider = new PackagesProvider(new FilterManager('all'), undefined, undefined, auditService);
+    await auditedProvider.loadPackages();
+    await auditedProvider.runAudit();
+    expect(auditedProvider.getStatusReport().auditFailures).toHaveLength(1);
+    await auditedProvider.loadPackages();
+    expect(auditedProvider.getStatusReport().auditFailures).toEqual([]);
+    auditedProvider.dispose();
+
+    await provider.loadPackages();
+    expect(provider.getStatusReport().packageReadFailures).toEqual([]);
+    provider.dispose();
   });
 
   it('shows status rows above the filter bar', () => {
@@ -2059,9 +2131,7 @@ describe('PackagesProvider', () => {
 
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
-    expect(auditStatus?.description).toBe(
-      '1 vulnerable package from successful audit roots; failed: /workspace/packages/ui/package.json',
-    );
+    expect(auditStatus?.description).toBe('1 vulnerable package from successful audit roots; 1 package root failed');
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
     expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['success', 'failure']);
     expect(provider.getAuditProjects()[1].failure?.reason).toBe('audit-failed');
@@ -2119,9 +2189,12 @@ describe('PackagesProvider', () => {
       reason: 'unresolvable-path',
       detail: 'Manifest disappeared.',
     }]);
-    expect(provider.getChildren().some(item => item instanceof StatusItem && (
-      item.label === 'Audit complete' || item.label === 'Audit incomplete'
-    ))).toBe(false);
+    const auditStatus = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Audit failed'
+    ));
+    expect(auditStatus).toBeInstanceOf(StatusItem);
+    expect(auditStatus?.description).toBe('No audit results available');
+    expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
     expect(showError).toHaveBeenCalledWith('Package audit failed — the security audit report is incomplete.');
   });
 
@@ -2416,9 +2489,7 @@ describe('PackagesProvider', () => {
 
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
-    expect(auditStatus?.description).toBe(
-      'No successful audit results; failed: /workspace/apps/web/package.json, /workspace/packages/ui/package.json',
-    );
+    expect(auditStatus?.description).toBe('No successful audit results; 2 package roots failed');
     expect(provider.getChildren().some(item => item.label === 'Audit complete')).toBe(false);
   });
 
@@ -2737,6 +2808,17 @@ describe('PackagesProvider', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
     await provider.loadPackages();
+    const status = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Workspace package loading failed'
+    ));
+    expect(status?.command?.command).toBe('nestro.openStatusReport');
+    expect(provider.getChildren().some(item => (
+      item instanceof StatusItem && item.label === 'Package read incomplete'
+    ))).toBe(false);
+    expect(provider.getStatusReport().packageReadFailures).toEqual([expect.objectContaining({
+      packageFilePaths: [],
+      reason: 'package-discovery-failed',
+    })]);
     await provider.runAudit();
     await provider.runAudit();
 
@@ -3227,6 +3309,26 @@ describe('PackagesProvider', () => {
     expect(provider.getAuditProjects()).toEqual([]);
   });
 
+  it('keeps discovery exceptions actionable in the diagnostics report', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    (provider as unknown as { allEntries: unknown[] }).allEntries = [];
+    vi.mocked(getWorkspacePackageFilePaths).mockRejectedValueOnce(new Error('discovery exploded'));
+
+    await provider.runAudit();
+
+    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+      packageFilePaths: [],
+      reason: 'audit-failed',
+      detail: expect.stringContaining('discovery exploded'),
+    })]);
+    const auditStatus = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Audit failed'
+    ));
+    expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
+    expect(showError).toHaveBeenCalledWith('Package audit failed — the security audit report is incomplete.');
+  });
+
   it('clears stale audit projects after an exception during project resolution', async () => {
     createClientMock.mockReturnValue({
       runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
@@ -3245,6 +3347,10 @@ describe('PackagesProvider', () => {
       packageFilePaths: [],
       reason: 'audit-failed',
     })]);
+    const auditStatus = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Audit failed'
+    ));
+    expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
     expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
     expect(showError).toHaveBeenCalled();
   });
@@ -3266,7 +3372,7 @@ describe('PackagesProvider', () => {
     expect(createClientMock).not.toHaveBeenCalled();
     const auditStatus = provider.getChildren().find(item => item instanceof StatusItem && item.label === 'Audit incomplete');
     expect(auditStatus).toBeInstanceOf(StatusItem);
-    expect(auditStatus?.description).toContain('/workspace/package.json');
+    expect(auditStatus?.description).toBe('No successful audit results; 1 package root failed');
     expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
       packageFilePaths: ['/workspace/package.json'],
       reason: 'workspace-escape',

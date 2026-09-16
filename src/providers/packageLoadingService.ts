@@ -3,6 +3,7 @@ import { logger } from '../utils';
 import type {
   PackageFileEntries,
   PackageFileEntry,
+  PackageReadFailure,
 } from '../utils';
 import type {
   CanonicalPackageLocation,
@@ -15,6 +16,8 @@ export interface PackageLoadingSnapshot {
   readonly packageFilePaths: readonly string[];
   readonly readablePackageFilePaths: readonly string[];
   readonly failedPackageReadPaths: readonly string[];
+  /** Detailed read failures are optional for compatibility with injected test services. */
+  readonly failedPackageReadDetails?: readonly PackageReadFailure[];
   readonly packageLocationBaselines: ReadonlyMap<string, CanonicalPackageLocation>;
   readonly packageReadFailed: boolean;
 }
@@ -50,6 +53,10 @@ export class PackageLoadingService implements PackageLoadingServiceContract {
 
     const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
     let packageReadFailed = false;
+    const failedPackageReadDetails: PackageReadFailure[] = (entries.skippedFiles ?? []).map(file => ({
+      packageFilePath: file.packageFilePath,
+      error: file.error,
+    }));
     try {
       const discoveredPackageFilePaths = await this.discoverPackageFilePaths();
       if (signal?.aborted) {
@@ -61,6 +68,10 @@ export class PackageLoadingService implements PackageLoadingServiceContract {
     }
     catch {
       packageReadFailed = true;
+      failedPackageReadDetails.push({
+        packageFilePath: '',
+        error: 'Failed to discover workspace package files.',
+      });
       logger.warn('Failed to discover workspace package files; using loaded package entries.');
     }
     if (signal?.aborted) {
@@ -109,6 +120,7 @@ export class PackageLoadingService implements PackageLoadingServiceContract {
       packageFilePaths: Object.freeze([...packageFilePaths]),
       readablePackageFilePaths: Object.freeze([...readablePackageFilePaths]),
       failedPackageReadPaths: Object.freeze([...failedPackageReadPaths]),
+      failedPackageReadDetails: Object.freeze(failedPackageReadDetails.map(failure => Object.freeze({ ...failure }))),
       packageLocationBaselines: baselines,
       packageReadFailed,
     });

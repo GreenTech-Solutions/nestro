@@ -35,6 +35,12 @@ export interface SkippedPackageFile {
   error: string;
 }
 
+/** Read failure retained for a diagnostics snapshot without exposing mutable parser state. */
+export interface PackageReadFailure {
+  packageFilePath: string;
+  error: string;
+}
+
 export type PackageFileEntries = PackageFileEntry[] & {
   readonly skippedFiles?: readonly SkippedPackageFile[];
 };

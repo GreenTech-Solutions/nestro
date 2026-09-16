@@ -6,6 +6,8 @@ import {
   createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   formatAuditSeverityLabel,
+  formatFailedPackageFileCount,
+  formatFailedPackageRootCount,
   formatPackageUpdatesAvailable,
   formatUpdateTypeLabel,
   formatVulnerablePackageCount,
@@ -20,6 +22,9 @@ import {
 import type {
   AuditSeverity,
   ReleaseAgeState,
+  StatusReportFailure,
+  StatusReportFileLabel,
+  StatusReportSnapshot,
   UpdateType,
 } from '../utils';
 import type { PackageFileEntries } from '../utils';
@@ -179,7 +184,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditFailures: AuditProjectFailure[] = [];
   private checkState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastCheckTime: Date | undefined;
-  private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
+  private auditState: 'idle' | 'running' | 'done' | 'incomplete' | 'failed' = 'idle';
   /**
    * Owns the current audit generation and its cancellation for one run. A completed or
    * superseded run cannot clear a replacement operation through this identity boundary.
@@ -199,6 +204,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private failedAuditPaths: string[] = [];
   private failedUpdatePaths: string[] = [];
   private failedPackageReadPaths: string[] = [];
+  private packageReadFailures: StatusReportFailure[] = [];
+  private updateFailures: StatusReportFailure[] = [];
   private disposed = false;
 
   constructor(
@@ -416,6 +423,39 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return {
       projects: this.getAuditProjects(),
       failures: this.getAuditFailures(),
+    };
+  }
+
+  /** Returns a defensive snapshot for the unified status diagnostics report. */
+  getStatusReport(): StatusReportSnapshot {
+    const packageReadFailures = this.packageReadFailures.map(cloneStatusReportFailure);
+    const updateFailures = this.updateFailures.map(cloneStatusReportFailure);
+    const auditFailures = this.auditFailures.map(failure => cloneStatusReportFailure({
+      packageFilePaths: failure.packageFilePaths.length > 0
+        ? failure.packageFilePaths
+        : failure.project?.originManifests ?? [],
+      reason: failure.reason,
+      detail: failure.detail,
+    }));
+    const packageFilePaths = uniqueStrings([
+      ...packageReadFailures.flatMap(failure => failure.packageFilePaths),
+      ...updateFailures.flatMap(failure => failure.packageFilePaths),
+      ...auditFailures.flatMap(failure => failure.packageFilePaths),
+    ]);
+    const fileLabels: StatusReportFileLabel[] = resolvePackageFileLabels(
+      packageFilePaths,
+      this.workspaceFolderDescriptors,
+      getLocalizedPackageLabelFormatting(),
+    ).map((entry, order) => ({
+      packageFilePath: entry.packageFilePath,
+      label: entry.owner.label,
+      order,
+    }));
+    return {
+      packageReadFailures,
+      updateFailures,
+      auditFailures,
+      fileLabels,
     };
   }
 
@@ -764,6 +804,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.lastAuditCount = undefined;
     this.lastAuditSuccessfulRootCount = undefined;
     this.failedAuditPaths = [];
+    this.failedUpdatePaths = [];
+    this.packageReadFailures = [];
+    this.updateFailures = [];
     this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
@@ -776,6 +819,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         packageFilePaths,
         readablePackageFilePaths,
         failedPackageReadPaths,
+        failedPackageReadDetails,
         packageLocationBaselines,
         packageReadFailed,
       } = snapshot;
@@ -785,6 +829,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.ownerLabelCache = undefined;
       this.readablePackageFilePaths = [...readablePackageFilePaths];
       this.failedPackageReadPaths = [...failedPackageReadPaths];
+      this.packageReadFailures = createPackageReadFailureSnapshot(
+        failedPackageReadPaths,
+        failedPackageReadDetails,
+        packageReadFailed,
+      );
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -850,6 +899,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
       this.packageReadFailed = true;
       this.capabilitiesInitialized = true;
+      this.failedPackageReadPaths = [];
+      this.packageReadFailures = [{
+        packageFilePaths: [],
+        reason: 'package-load-failed',
+        detail: err instanceof Error ? err.message : String(err),
+      }];
       showError(vscode.l10n.t('Failed to load packages — {0}', err instanceof Error ? err.message : String(err)), err);
     }
     finally {
@@ -871,6 +926,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const snapshotGeneration = this.packageSnapshotGeneration;
     this.checkState = 'running';
     this.failedUpdatePaths = [];
+    this.updateFailures = [];
+    let attemptedPackageFilePaths: string[] = [];
     const operation: UpdateOperation = {
       generation: this.updateGeneration + 1,
       snapshotGeneration,
@@ -913,6 +970,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               return;
             }
             const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
+            attemptedPackageFilePaths = packageFiles;
             const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
             const currentVersions = new Map(identities.map((identity, index) => [
               this.packageStateKey(identity),
@@ -951,7 +1009,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               return;
             }
             const upgrades = result.data;
-            this.failedUpdatePaths = [...result.failedPackageFilePaths];
+            this.failedUpdatePaths = uniqueStrings(result.failedPackageFilePaths);
+            this.updateFailures = createUpdateFailureSnapshot(
+              result.failedPackageFilePaths,
+              result.failures,
+            );
             if (result.allFailed) {
               const failureMessage = result.failure instanceof Error
                 ? result.failure.message
@@ -1008,6 +1070,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
     catch (err) {
       if (this.isUpdateCurrent(operation)) {
+        this.failedUpdatePaths = uniqueStrings(attemptedPackageFilePaths);
+        this.updateFailures = [{
+          packageFilePaths: attemptedPackageFilePaths,
+          reason: 'update-check-failed',
+          detail: err instanceof Error ? err.message : String(err),
+        }];
         this.checkState = 'idle';
         showError(vscode.l10n.t('Failed to check updates — {0}', err instanceof Error ? err.message : String(err)), err);
       }
@@ -1117,6 +1185,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     this.auditState = 'running';
+    this.lastAuditCount = undefined;
     this.lastAuditSuccessfulRootCount = undefined;
     this.failedAuditPaths = [];
     // Cleared here, not just on success below, so getAuditProjects() never hands back a
@@ -1173,7 +1242,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           reason: result.reason,
           detail: result.detail,
         }];
-        this.auditState = 'idle';
+        this.auditState = 'failed';
         shouldEmit = true;
         showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
         return;
@@ -1211,7 +1280,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           reason: failure.reason,
           detail: failure.detail,
         }];
-        this.auditState = 'idle';
+        this.auditState = 'failed';
         shouldEmit = true;
         showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
       }
@@ -1528,6 +1597,11 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private async readPackagesForUpdateCheck(): Promise<PackageFileEntries> {
     const entries = await this.packageLoadingService.readPackageEntries();
     this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+    this.packageReadFailures = createPackageReadFailureSnapshot(
+      this.failedPackageReadPaths,
+      entries.skippedFiles,
+      false,
+    );
     return entries;
   }
 
@@ -1628,18 +1702,35 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private buildStatusItems(): StatusItem[] {
     const items: StatusItem[] = [];
 
-    if (this.failedPackageReadPaths.length > 0) {
+    const failedPackageReadCount = uniqueStrings(
+      this.packageReadFailures.flatMap(failure => failure.packageFilePaths),
+    ).length;
+    const packageLoadOperationFailed = this.packageReadFailures.some(
+      failure => failure.packageFilePaths.length === 0,
+    );
+    if (failedPackageReadCount > 0) {
       items.push(new StatusItem(
         vscode.l10n.t('Package read incomplete'),
-        vscode.l10n.t('Fix invalid or unreadable package.json: {0}', this.failedPackageReadPaths.join(', ')),
+        formatFailedPackageFileCount(failedPackageReadCount),
         'warning',
         'charts.yellow',
+        true,
+      ));
+    }
+    if (packageLoadOperationFailed) {
+      items.push(new StatusItem(
+        vscode.l10n.t('Workspace package loading failed'),
+        '',
+        'warning',
+        'charts.yellow',
+        true,
       ));
     }
     // A readable package.json with zero dependencies is a real project, not an empty
     // workspace — without this row the panel would show nothing at all in that state.
     else if (
-      this.workspaceCapabilities.hasPackageFiles
+      failedPackageReadCount === 0
+      && this.workspaceCapabilities.hasPackageFiles
       && !this.workspaceCapabilities.hasDependencyEntries
       && !this.packageReadFailed
     ) {
@@ -1663,9 +1754,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     else if (this.checkState === 'incomplete') {
       items.push(new StatusItem(
         vscode.l10n.t('Update check incomplete'),
-        vscode.l10n.t('Failed: {0}', this.failedUpdatePaths.join(', ')),
+        formatFailedPackageRootCount(uniqueStrings(this.failedUpdatePaths).length),
         'warning',
         'charts.yellow',
+        true,
       ));
     }
 
@@ -1688,9 +1780,19 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
       items.push(new StatusItem(
         vscode.l10n.t('Audit incomplete'),
-        vscode.l10n.t('{0}; failed: {1}', resultDescription, this.failedAuditPaths.join(', ')),
+        vscode.l10n.t('{0}; {1}', resultDescription, formatFailedPackageRootCount(uniqueStrings(this.failedAuditPaths).length)),
         'warning',
         'charts.yellow',
+        true,
+      ));
+    }
+    else if (this.auditState === 'failed') {
+      items.push(new StatusItem(
+        vscode.l10n.t('Audit failed'),
+        vscode.l10n.t('No audit results available'),
+        'warning',
+        'charts.yellow',
+        true,
       ));
     }
 
@@ -1725,6 +1827,74 @@ function sameCanonicalPackageLocation(
     && left.workspaceFolderPath === right.workspaceFolderPath
     && left.manifestDigest === right.manifestDigest
     && samePackageFileStamp(left.fileStamp, right.fileStamp);
+}
+
+function cloneStatusReportFailure(failure: StatusReportFailure): StatusReportFailure {
+  return {
+    packageFilePaths: [...failure.packageFilePaths],
+    reason: failure.reason,
+    detail: failure.detail,
+  };
+}
+
+function createPackageReadFailureSnapshot(
+  paths: readonly string[],
+  details: readonly { readonly packageFilePath: string; readonly error: string }[] | undefined,
+  discoveryFailed: boolean,
+): StatusReportFailure[] {
+  const detailByPath = new Map<string, string[]>();
+  for (const failure of details ?? []) {
+    const current = detailByPath.get(failure.packageFilePath) ?? [];
+    current.push(failure.error);
+    detailByPath.set(failure.packageFilePath, current);
+  }
+  for (const packageFilePath of paths) {
+    if (!detailByPath.has(packageFilePath)) {
+      detailByPath.set(packageFilePath, []);
+    }
+  }
+  if (discoveryFailed && !detailByPath.has('')) {
+    detailByPath.set('', ['Failed to discover workspace package files.']);
+  }
+  return [...detailByPath.entries()].map(([packageFilePath, errors]) => ({
+    packageFilePaths: packageFilePath === '' ? [] : [packageFilePath],
+    reason: packageFilePath === '' ? 'package-discovery-failed' : 'package-read-failed',
+    detail: errors.length === 0 ? undefined : errors.join('; '),
+  }));
+}
+
+function createUpdateFailureSnapshot(
+  paths: readonly string[],
+  failures: readonly { readonly packageFilePath: string; readonly error: unknown }[],
+): StatusReportFailure[] {
+  const byPath = new Map<string, StatusReportFailure>();
+  for (const failure of failures) {
+    byPath.set(failure.packageFilePath, {
+      packageFilePaths: [failure.packageFilePath],
+      reason: 'update-check-failed',
+      detail: formatFailureDetail(failure.error),
+    });
+  }
+  for (const packageFilePath of uniqueStrings(paths)) {
+    if (!byPath.has(packageFilePath)) {
+      byPath.set(packageFilePath, {
+        packageFilePaths: [packageFilePath],
+        reason: 'update-check-failed',
+      });
+    }
+  }
+  return [...byPath.values()];
+}
+
+function formatFailureDetail(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {

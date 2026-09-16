@@ -78,3 +78,15 @@ export function formatPackageLevelFindings(count: number): string {
     ? vscode.l10n.t('{0} package-level finding', count)
     : vscode.l10n.t('{0} package-level findings', count);
 }
+
+export function formatFailedPackageFileCount(count: number): string {
+  return count === 1
+    ? vscode.l10n.t('{0} package file failed to load', count)
+    : vscode.l10n.t('{0} package files failed to load', count);
+}
+
+export function formatFailedPackageRootCount(count: number): string {
+  return count === 1
+    ? vscode.l10n.t('{0} package root failed', count)
+    : vscode.l10n.t('{0} package roots failed', count);
+}

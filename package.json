@@ -194,6 +194,12 @@
         "icon": "$(report)"
       },
       {
+        "command": "nestro.openStatusReport",
+        "title": "%commands.nestro.openStatusReport.title%",
+        "category": "Nestro",
+        "icon": "$(output)"
+      },
+      {
         "command": "nestro.installUpdate",
         "title": "%commands.nestro.installUpdate.title%",
         "icon": "$(arrow-up)"

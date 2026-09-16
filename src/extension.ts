@@ -6,6 +6,7 @@ import {
   installUpdateCommand,
   openAuditReportCommand,
   openOnNpmCommand,
+  openStatusReportCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
   pinVersionCommand,
@@ -25,6 +26,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const filterManager = new FilterManager(defaultFilter);
   const provider = new PackagesProvider(filterManager);
   const auditReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Security Audit'));
+  const statusReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Diagnostics'));
   const treeView = vscode.window.createTreeView('nestro.packagesView', {
     treeDataProvider: provider,
     showCollapseAll: true,
@@ -41,6 +43,10 @@ export function activate(context: vscode.ExtensionContext): void {
     auditReportOutput,
     vscode.commands.registerCommand('nestro.openAuditReport', () => {
       openAuditReportCommand(provider, auditReportOutput);
+    }),
+    statusReportOutput,
+    vscode.commands.registerCommand('nestro.openStatusReport', () => {
+      openStatusReportCommand(provider, statusReportOutput);
     }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: unknown) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pickVersion', (item: unknown) => { void pickVersionCommand(item, provider); }),

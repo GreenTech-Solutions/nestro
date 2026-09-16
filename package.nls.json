@@ -28,6 +28,7 @@
   "commands.nestro.checkUpdates.title": "Check for Updates",
   "commands.nestro.runAudit.title": "Run Security Audit",
   "commands.nestro.openAuditReport.title": "Open Security Audit Report",
+  "commands.nestro.openStatusReport.title": "Open Diagnostics Report",
   "commands.nestro.installUpdate.title": "Update Package",
   "commands.nestro.pickVersion.title": "Pick Version...",
   "commands.nestro.switchDepType.title": "Switch to dev/dep",
