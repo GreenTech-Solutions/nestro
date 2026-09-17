@@ -4,7 +4,7 @@
 [![Open VSX](https://img.shields.io/open-vsx/v/greentech-solutions/nestro)](https://open-vsx.org/extension/greentech-solutions/nestro)
 [![Installs](https://vsmarketplacebadges.dev/installs-short/greentech-solutions.nestro.svg)](https://marketplace.visualstudio.com/items?itemName=greentech-solutions.nestro)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Build](https://img.shields.io/github/actions/workflow/status/GreenTech-Solutions/nestro/release.yml)
+[![Verify](https://img.shields.io/github/actions/workflow/status/GreenTech-Solutions/nestro/ci.yml?branch=master&label=verify)](https://github.com/GreenTech-Solutions/nestro/actions/workflows/ci.yml)
 
 Nestro manages npm, pnpm, Yarn, and Bun dependencies from a sidebar in VS Code: it lists every
 `package.json` in your workspace, checks for updates on demand (or once at startup if you enable
