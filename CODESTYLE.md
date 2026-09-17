@@ -118,8 +118,8 @@ import { PackageItem } from '../providers/PackageItem';
 import type { AuditProjectSummary } from '../providers';
 ```
 
-A module never imports its own subsystem's barrel (`./index`); it imports siblings directly
-(`import { X } from './Y'`).
+A module never imports its own subsystem's barrel, whether spelled `./index` or as the
+directory path; it imports siblings directly (`import { X } from './Y'`).
 
 ### Exceptions
 
@@ -128,7 +128,8 @@ Two kinds of exception exist, both enforced by `src/test/importContract.unit.tes
 1. **`clients` never imports the `utils` barrel.** `clients/*.ts` import `utils` implementation
    files directly (e.g. `../utils/logger`, `../utils/auditClient`) instead of `'../utils'`.
    Routing through the barrel would recreate a cycle: the barrel re-exports
-   `packageManager.ts`, which imports `ClientManager` from `clients`. This is a standing, file-level exception, not a one-off.
+   `packageManager.ts`, which imports `ClientManager` from `clients`. This is a standing,
+   file-level exception, not a one-off.
 2. **Two named back-edges**, each with a one-line reason recorded in the policy test's
    allowlist: `utils/packageManager.ts` imports the `ClientManager` value from `clients` (a
    single delegation-only module, documented and tested as part of `utils`; relocating it would
@@ -155,7 +156,7 @@ src/utils/
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper
 ├── ncuClient.ts        → npm-check-updates wrapper
-├── registryClient.ts   → npm registry version metadata over HTTPS
+├── registryClient.ts   → config-aware HTTPS registry metadata adapter
 ├── auditClient.ts      → vulnerability audit runner and parser
 ├── shellTask.ts        → VS Code shell task execution and exit codes
 └── index.ts            → barrel re-exports

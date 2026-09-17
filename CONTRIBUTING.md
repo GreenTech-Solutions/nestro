@@ -45,6 +45,9 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `audit:signatures` | `pnpm run test:compile && node out/tools/auditSignaturesCli.js` | Compile and verify pnpm package signatures. | No |
 | `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence; pass `-- --out-dir <relative-directory>` to choose the output directory. | No |
 | `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration, CODEOWNERS, and Dependabot policy. | No |
+| `release:provenance` | `pnpm run test:compile && node out/tools/artifactProvenanceCli.js` | Build SBOM and provenance evidence for a release artifact. | No |
+| `release:prepare` | `pnpm run test:compile && node out/tools/releasePrepareCli.js` | Build and validate release preparation evidence. | No |
+| `release:candidate` | `pnpm run test:compile && node out/tools/releaseCandidateCli.js` | Build and validate release-candidate evidence. | No |
 | `typecheck` | `tsc --noEmit` | Type-check the application without emitting files. | Yes |
 | `lint:eslint` | `eslint src --max-warnings=0` | Run the strict ESLint check on `src`. | Yes |
 | `lint` | `pnpm run lint:eslint` | The non-mutating lint gate. | Yes |
@@ -65,16 +68,14 @@ intend to accept automated source edits.
 ## Run and debug the extension
 
 The **Run Extension** configuration in [.vscode/launch.json](.vscode/launch.json) opens an
-Extension Development Host. Its pre-launch task is the default build task from
-[.vscode/tasks.json](.vscode/tasks.json), currently `tsdown: watch`, which runs `pnpm run dev`.
+Extension Development Host. Its explicit `preLaunchTask` is `tsdown: watch`, which runs
+`pnpm run dev`; this task belongs to the build group but is not the default build task. The
+default build task is `build`, defined in [.vscode/tasks.json](.vscode/tasks.json).
 
-The current debug configuration has a limitation: the manifest loads `./out/extension.cjs`,
-and [tsdown.config.mts](tsdown.config.mts) emits the CommonJS bundle as `out/extension.cjs`,
-but `launch.json` only maps `${workspaceFolder}/out/**/*.js` through `outFiles`. Therefore
-the host may be launched while source-map resolution and breakpoints remain unreliable. Until
-the launch configuration is corrected, run `pnpm run dev` for continuous output and, for local
-source debugging, temporarily change `outFiles` in your working copy to
-`${workspaceFolder}/out/**/*.cjs`.
+`launch.json`'s `outFiles` maps `${workspaceFolder}/out/**/*.cjs`, matching the CommonJS bundle
+[tsdown.config.mts](tsdown.config.mts) emits at `out/extension.cjs`, so source-map resolution
+and breakpoints resolve against the actual entry point. Press **F5** to build and launch;
+`pnpm run dev` keeps rebuilding the bundle as source files change.
 
 ## Tests
 
