@@ -102,6 +102,7 @@ describe('evaluateVsixPolicy() — forbidden classes', () => {
     ['internal-doc', 'workflow/audit/plan.md'],
     ['internal-doc', 'CODESTYLE.md'],
     ['internal-doc', 'AGENTS.md'],
+    ['internal-doc', 'ARCHITECTURE.md'],
     ['internal-doc', 'docs/audit/notes.md'],
     ['source', 'src/extension.ts'],
     ['source', 'tsdown.config.mts'],

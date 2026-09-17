@@ -80,7 +80,7 @@ export const VSIX_FORBIDDEN_RULES: readonly ForbiddenRule[] = [
   { forbiddenClass: 'test', pattern: /(^|\/)(?:test|tests|__tests__|__mocks__|fixtures)(\/|$)/ },
   { forbiddenClass: 'test', pattern: /\.(?:unit\.)?(?:test|spec)\.[cm]?[jt]s$/ },
   { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:workflow|docs)(\/|$)/ },
-  { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:AGENTS|CLAUDE|CODESTYLE|LEARNINGS|CONTRIBUTING|SCREENSHOTS)\.md$/i },
+  { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:AGENTS|CLAUDE|CODESTYLE|LEARNINGS|CONTRIBUTING|SCREENSHOTS|ARCHITECTURE)\.md$/i },
   { forbiddenClass: 'internal-doc', pattern: /(^|\/)vsc-extension-quickstart\.md$/i },
   { forbiddenClass: 'source', pattern: /(^|\/)src(\/|$)/ },
   { forbiddenClass: 'source', pattern: /\.[cm]?tsx?$/ },

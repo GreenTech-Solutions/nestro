@@ -27,6 +27,13 @@ provided by Electron 42.2.0. Keep `@types/node` on the Node 24 major and keep th
 target at or below the ES2022 output currently declared in `tsconfig.json`; the build
 machine's Node version does not determine the Extension Host runtime contract.
 
+## Architecture
+
+Before changing the operation coordinator, the audit model, or one of the provider services,
+read [ARCHITECTURE.md](ARCHITECTURE.md). It covers the canonical project graph, the mutation
+and check coordinators, the update and audit lifecycles, and the invariants each one is pinned
+by, so you do not have to re-derive the design from source.
+
 ## Commands
 
 The table below is derived from the current `scripts` object in [package.json](package.json).
