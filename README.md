@@ -70,7 +70,20 @@ Automatically discovers multiple `package.json` files across your workspace, org
 
 ## Limitations
 
-Nestro cannot run in Restricted Mode or virtual workspaces because it reads local package files and runs package-manager processes. It also relies on installed package managers for its operations, so make sure your package manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH.
+Nestro relies on installed package managers for its operations, so make sure your package
+manager CLI (`npm`, `pnpm`, `yarn`, or `bun`) is available in your system PATH. See
+[Security & Privacy](#security--privacy) below for the Restricted Mode, virtual workspace, and
+remote workspace boundary.
+
+## Security & Privacy
+
+Nestro does not run in Restricted Mode or virtual workspaces; in Remote SSH, Dev Containers, or
+WSL it runs on the remote/workspace extension host, so its file access and process launches
+happen there. It runs local `npm`/`pnpm`/`yarn`/`bun` commands for install, update, remove, and
+audit, and contacts a package registry over HTTPS for update and version metadata;
+it writes only `package.json` files. Nestro sends no telemetry and reports nothing to any
+external service — its logs stay in local VS Code Output channels. See [SECURITY.md](SECURITY.md)
+for the full security model, supported versions, and how to report a vulnerability privately.
 
 ## Release Notes / Changelog
 

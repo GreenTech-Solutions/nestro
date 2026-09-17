@@ -34,6 +34,10 @@ read [ARCHITECTURE.md](ARCHITECTURE.md). It covers the canonical project graph, 
 and check coordinators, the update and audit lifecycles, and the invariants each one is pinned
 by, so you do not have to re-derive the design from source.
 
+Before changing sanitization, request bounds, the registry auth/credential scoping, or the
+Restricted Mode/virtual/remote workspace boundary, read [SECURITY.md](SECURITY.md) — the threat
+model those mechanisms enforce — and keep it updated in the same commit.
+
 ## Commands
 
 The table below is derived from the current `scripts` object in [package.json](package.json).
