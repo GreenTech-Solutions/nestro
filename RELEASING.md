@@ -211,7 +211,7 @@ Do this again yourself, independently and later — the automated check only pro
 served back the right bytes the moment they were asked, not that the listing itself is correct or
 that nothing changed afterward:
 
-1. Re-download both URLs above (`curl -L -o marketplace.vsix ...`, `curl -L -o openvsx.vsix ...`)
+1. Re-download both URLs above (`curl -L --compressed -o marketplace.vsix ...`, `curl -L --compressed -o openvsx.vsix ...`)
    and `shasum -a 256` them against the GitHub Release asset.
 2. `src/tools/publishedArtifact.ts` exports `comparePublishedVsix()`, which implements exactly
    the identity/normalized-manifest comparison above in code — **it has no CLI or `package.json`

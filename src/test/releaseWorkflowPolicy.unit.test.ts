@@ -208,6 +208,21 @@ describe('release workflow policies', () => {
     })), 'post-publish');
   });
 
+  it('decompresses both registry downloads before comparing them', () => {
+    const workflow = parse(releaseSource, { uniqueKeys: true }) as Record<string, unknown>;
+    const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+    const curlArgs = String(comparison?.run).match(/curl_args=\(([\s\S]*?)\)/)?.[1] ?? '';
+    // Marketplace always answers content-encoding: gzip; without this flag curl saves the raw gzip stream.
+    expect(curlArgs).toMatch(/--compressed\b/);
+  });
+
+  it('rejects a post-publish comparison that skips decompression', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run).replace('--location --compressed', '--location');
+    })), 'post-publish');
+  });
+
   it('rejects suppressed, commented-out and unbounded provenance checks', () => {
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
       const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');

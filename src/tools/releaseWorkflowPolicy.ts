@@ -106,7 +106,7 @@ const POST_PUBLISH_COMPARE_RUN = [
   'marketplace_url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$name/$VERSION/vspackage"',
   'openvsx_url="https://open-vsx.org/api/$publisher/$name/$VERSION/file/$publisher.$name-$VERSION.vsix"',
   'curl_args=(',
-  '  --fail --silent --show-error --location',
+  '  --fail --silent --show-error --location --compressed',
   '  --proto \'=https\' --proto-redir \'=https\' --max-redirs 3',
   '  --connect-timeout 10 --max-time 120 --max-filesize 2097152',
   '  --retry 5 --retry-all-errors --retry-max-time 180',
