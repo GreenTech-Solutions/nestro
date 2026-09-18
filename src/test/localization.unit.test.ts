@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   formatAdvisoryRows,
   formatAuditSeverityLabel,
   formatDependencySectionLabel,
+  formatHeldBackDate,
   formatPackageCount,
   formatPackageGroupDescription,
   formatPackageLevelFindings,
@@ -79,5 +80,27 @@ describe('localization plural helpers', () => {
 
   it.each(['critical', 'high', 'moderate', 'low', 'info'] as const)('localizes the %s audit severity label', (severity) => {
     expect(formatAuditSeverityLabel(severity)).toBe(severity);
+  });
+});
+
+describe('formatHeldBackDate()', () => {
+  const originalLanguage = vscode.env.language;
+
+  afterEach(() => {
+    Object.defineProperty(vscode.env, 'language', { configurable: true, value: originalLanguage });
+  });
+
+  it('formats a valid instant as a medium date in the given locale and time zone', () => {
+    expect(formatHeldBackDate('2026-09-21T06:46:38.631Z', 'en-US', 'UTC')).toBe('Sep 21, 2026');
+  });
+
+  it('falls back to vscode.env.language when no locale is given', () => {
+    Object.defineProperty(vscode.env, 'language', { configurable: true, value: 'de-DE' });
+
+    expect(formatHeldBackDate('2026-09-21T06:46:38.631Z', undefined, 'UTC')).toBe('21.09.2026');
+  });
+
+  it.each(['', 'not-a-date', 'yesterday'])('returns %j unchanged when the instant cannot be parsed', (raw) => {
+    expect(formatHeldBackDate(raw, 'en-US', 'UTC')).toBe(raw);
   });
 });

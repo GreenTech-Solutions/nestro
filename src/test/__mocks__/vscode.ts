@@ -39,6 +39,7 @@ export const commands = {
 };
 
 export const env = {
+  language: 'en-US',
   openExternal: vi.fn().mockResolvedValue(true),
   clipboard: {
     writeText: vi.fn().mockResolvedValue(undefined),
