@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { removeFixturePath } from './removeFixturePath';
 import type { WorkspaceFixture } from './types';
 
 const TEMP_ROOT_PREFIX = 'nestro-fixture-';
@@ -41,7 +42,7 @@ export async function materializeFixture(fixture: WorkspaceFixture): Promise<Mat
 
 /** Deletes the temporary copy created by {@link materializeFixture}. */
 export async function removeMaterializedFixture(materialized: MaterializedFixture): Promise<void> {
-  await rm(materialized.rootPath, { recursive: true, force: true });
+  await removeFixturePath(materialized.rootPath);
 }
 
 /** Resolves a POSIX-style fixture-relative path against a materialized root. */

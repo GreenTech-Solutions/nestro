@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import {
@@ -7,6 +7,7 @@ import {
   runTests,
   runVSCodeCommand,
 } from '@vscode/test-electron';
+import { removeFixturePath } from './fixtures/removeFixturePath';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
@@ -216,7 +217,7 @@ export function createNodePackagedSmokeDependencies(): PackagedSmokeDependencies
         `--extensions-dir=${extensionsDir}`,
       ],
     }),
-    cleanup: root => rm(root, { recursive: true, force: true }),
+    cleanup: root => removeFixturePath(root),
   };
 }
 
