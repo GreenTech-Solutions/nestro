@@ -449,7 +449,12 @@ not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 project through `runRootOperations()`, and folds each outcome into an `AuditProjectSummary`
 (kept even when row attribution is suppressed, so the report never loses a project's result)
 and, where advisories exist, into `auditResults: Map<identityKey, AuditSeverity>` for row
-badges. Row attribution (`applyStructuredProjectAuditResults()`) only badges a row when an
+badges. npm audit report v2 advisories carry no version field of their own, so
+`enrichNpmV2AdvisoryVersions()` resolves one first by reading
+`<projectRoot>/node_modules/<name>/package.json` through a bounded reader — a regular file
+under a size cap, a value matching a plain semver pattern, and a realpath check placing the
+read inside the project root — leaving the version unresolved on any failure. Row attribution
+(`applyStructuredProjectAuditResults()`) only badges a row when an
 advisory's `attribution` is `'direct'`, resolves to exactly one row by manifest and canonical
 resolved path (`resolvedPathBelongsToManifest()`, itself gated on the project having exactly
 one origin manifest), and the row's spec is compatible with the resolved version inside the
