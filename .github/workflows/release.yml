@@ -185,7 +185,7 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p dist/published
           marketplace_url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$name/$VERSION/vspackage"
-          openvsx_url="https://open-vsx.org/api/$publisher/$name/$VERSION/file/$name-$VERSION.vsix"
+          openvsx_url="https://open-vsx.org/api/$publisher/$name/$VERSION/file/$publisher.$name-$VERSION.vsix"
           curl_args=(
             --fail --silent --show-error --location
             --proto '=https' --proto-redir '=https' --max-redirs 3

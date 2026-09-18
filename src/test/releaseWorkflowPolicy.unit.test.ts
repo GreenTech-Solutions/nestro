@@ -192,6 +192,22 @@ describe('release workflow policies', () => {
     })), 'candidate-integrity');
   });
 
+  it('builds the Open VSX download URL in the form the registry actually serves', () => {
+    const workflow = parse(releaseSource, { uniqueKeys: true }) as Record<string, unknown>;
+    const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+    const template = String(comparison?.run).match(/openvsx_url="([^"]+)"/)?.[1] ?? '';
+    const built = template.replaceAll('$publisher', 'greentech-solutions').replaceAll('$name', 'nestro').replaceAll('$VERSION', '0.4.2');
+    // Matches the `files.download` field the registry's own API returns for this release.
+    expect(built).toBe('https://open-vsx.org/api/greentech-solutions/nestro/0.4.2/file/greentech-solutions.nestro-0.4.2.vsix');
+  });
+
+  it('rejects the Open VSX URL form the registry does not serve', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
+      comparison!.run = String(comparison!.run).replace('file/$publisher.$name-$VERSION.vsix', 'file/$name-$VERSION.vsix');
+    })), 'post-publish');
+  });
+
   it('rejects suppressed, commented-out and unbounded provenance checks', () => {
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
       const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');

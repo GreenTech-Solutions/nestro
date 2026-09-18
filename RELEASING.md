@@ -192,23 +192,13 @@ Dated facts about the credentials in use, current as of 2026-09-18:
 
 ## 6. Post-publish verification
 
-`release.yml`'s own "Compare post-publish registry copies" step is meant to run this automatically,
-seconds after both publishes, in the same job. The download URLs the registries actually serve are:
+`release.yml`'s own "Compare post-publish registry copies" step already runs this automatically,
+seconds after both publishes, in the same job, downloading both copies at the URLs shown below:
 
 ```
 Marketplace: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/greentech-solutions/vsextensions/nestro/<version>/vspackage
 Open VSX:    https://open-vsx.org/api/greentech-solutions/nestro/<version>/file/greentech-solutions.nestro-<version>.vsix
 ```
-
-**Known mismatch (verified 2026-09-18):** the workflow builds the Open VSX URL as
-`https://open-vsx.org/api/<publisher>/<name>/<version>/file/<name>-<version>.vsix`, but Open VSX
-names the file `<publisher>.<name>-<version>.vsix` — for the published `0.4.2` the registry answers
-`302` for the form above and `404` for the workflow's form. Until the workflow (and the policy that
-pins that URL) is corrected, expect the automated step to fail after both publishes; the manual
-comparison in 6.1-6.2 is then the authoritative check. Because `finalize` declares `needs: publish`
-without `always()`, it is skipped when `publish` fails, and re-running `publish` hits the same 404, so
-until the workflow is fixed the GitHub Release has to be created and its assets attached by hand
-from the candidate artifact (retained for 90 days); re-running the job only helps after the fix.
 
 The automated step downloads both (capped at 2 MiB, HTTPS-only, bounded redirects/retries), parses each as a real
 ZIP (entry count/size caps, no unsafe paths, no symlinks), checks the packaged `package.json`
@@ -285,8 +275,7 @@ Per-release checklist template — copy this table into the release record and f
 - Dependency and signature audits, and the CI/release workflow policy, all passed (§3).
 - Packaged smoke and both Extension Host channels passed on every platform in the matrix (§4).
 - A human approved the `release` environment deployment for that specific tag (§5).
-- Both registries were compared against the candidate — automatically, or, while the known
-  mismatch in §6 stands, by the manual comparison in 6.1-6.2 recorded in the §8 table — **and** re-checked
+- Both registries were compared against the candidate automatically, **and** re-checked
   independently afterward, including the listing pages themselves (§6).
 - Every row in the §8 evidence table has a link or value, a name, and a date.
 
