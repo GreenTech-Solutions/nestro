@@ -75,9 +75,11 @@ is 300 px wide in every file.
 - The "Filter: Patch · 1 of N" status row above the package groups, which is what actually
   communicates the filter/search state in the default layout. `filters.png` was captured before
   this row existed and predates it; it will appear in the frame after the next recapture.
-- Row vulnerability badges. npm's audit report v2 (npm 7 and later) carries no resolved package
-  versions, so with this fixture the audit outcome is the status row plus the **Nestro Security
-  Audit** Output channel rather than per-row badges.
+- Row vulnerability badges on `audit.png`. npm's audit report v2 (npm 7 and later) carries no
+  resolved-version field of its own, but Nestro resolves it from an advisory's `nodes` path when
+  that path is a single direct `node_modules/<name>` install; `axios`, `lodash`, and `vitest` in
+  this fixture qualify. This frame was captured before that resolution existed and still shows no
+  badges — it needs recapturing.
 
 ## Reproducing
 
