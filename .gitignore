@@ -9,12 +9,12 @@ dist/
 
 # Testing
 .vscode-test/
+coverage/
 
 # Linting caches
 .eslintcache
 
 # AI
-.caliber/
 .claude/settings.json
 .claude/hooks
 

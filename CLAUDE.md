@@ -9,9 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pnpm run build          # tsdown → out/extension.cjs
 pnpm run dev            # tsdown --watch
-pnpm run lint           # run-s lint:eslint lint:stylelint (eslint + stylelint, both --fix)
+pnpm run lint           # eslint src --max-warnings=0 — non-mutating validation gate
+pnpm run lint:fix       # eslint --fix src — the mutating pass, never run automatically
 pnpm run typecheck      # tsc --noEmit
-pnpm run test           # pretest (tsc -p tsconfig.test.json + lint) + vscode-test (Electron)
+pnpm run test:compile   # tsc -p tsconfig.test.json → out/test/
+pnpm run check:vsce     # vsce ls --no-dependencies
+pnpm run test           # pretest (test:compile + lint) + vscode-test (Electron)
 pnpm run test:unit      # vitest run — *.unit.test.ts without VS Code
 pnpm run test:unit:watch  # vitest (watch mode)
 ```
@@ -50,8 +53,8 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ### Providers (`src/providers/`)
 - `PackagesProvider.ts` — `TreeDataProvider` + `Disposable`; owns `allEntries` state and all async operations
 - `FilterManager.ts` — manages active `FilterType` (`all` | `hasUpdates` | `patch` | `minor` | `breaking`), fires `onDidChange`, provides QuickPick UI
-- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`; no VS Code state; workspace folders sorted `(root)` first then alphabetically; `getFilterCounts()` excludes packages currently installing
-- `PackageItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
+- `treeBuilder.ts` — pure functions `buildTree()`, `getFilteredEntries()`, `getFilterCounts()`, `toRelativeLabel()`; no VS Code state; workspace folders sorted `(root)` first then alphabetically; `getFilterCounts()` excludes packages currently installing
+- `PackageItem.ts`, `PackageDetailItem.ts`, `GroupItem.ts`, `FilterBarItem.ts`, `SearchQueryItem.ts`, `StatusItem.ts`, `LoadingItem.ts`, `MessageItem.ts`, `WorkspaceFolderItem.ts` — tree item classes
 
 ### Clients (`src/clients/`)
 - `Client.ts` — abstract base for package manager clients; `buildUpdateCommand()` / `buildInstallCommand()` / `buildRemoveCommand()` return a `ShellTaskCommand` (`src/utils/shellTask.ts`) rather than a raw string; `formatPackageTargets()` / `formatPackageNames()` shell-quote each argument via `vscode.ShellQuotedString` (`ShellQuoting.Strong`) instead of interpolating into a string
@@ -64,7 +67,8 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `removePackage.ts` — `removePackageCommand`; runs the package manager remove command via `runShellTaskAndWait()`; invalidates the update cache and reloads packages on success, or marks the item not-updating, shows an error via `formatShellTaskFailureMessage()`, and reloads packages on failure
 - `pickVersion.ts` — `pickVersionCommand`; shows QuickPick for selecting a specific package version; disposes the QuickPick and its listeners on hide so a version fetch resolving after the user cancels does not act on a stale picker
 - `pinAllVersions.ts` — `pinAllVersionsCommand`; pins all workspace dependency versions using `withWriteSuppressed`, then reloads packages
-- `helloWorld.ts` — minimal stub command
+- `pinVersion.ts` — `pinVersionCommand`; pins a single row's dependency to its currently resolved concrete version
+- `switchDepType.ts` — `switchDepTypeCommand`; moves a dependency between `dependencies` and `devDependencies`
 
 ### Utils (`src/utils/`)
 - `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); returns `Map<name, latestVersion>`; results cached across calls
@@ -90,25 +94,37 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 ## Conventions
 - Command IDs: `nestro.<camelCase>` — declare in `package.json` `contributes.commands` **and** register in `activate()`
 - TypeScript: strict mode — no `any`, explicit return types on exported functions
+- Code comments: one line by default, three at most; English, present tense; they say what the code is, not how it came to be. No task/audit ids (`AUD-09`, `ARC-01`), no benchmark tables, no rationale essays — that context belongs in the commit message. Rules and examples: **[CODESTYLE.md](CODESTYLE.md)** → Code Comments
 - Disposables: always `context.subscriptions.push(...)` — never leak event listeners or providers
 - Imports: `import * as vscode from 'vscode'` (namespace import, not default)
-- Always import from barrel `index.ts`, never from implementation files directly
-- `CHANGELOG.md` updated for every user-facing change following Keep a Changelog format
+- Always import from barrel `index.ts`, never from implementation files directly. Barrels currently use `export *`; the selective named-export contract is a planned change, not the present state
+- `CHANGELOG.md` is generated by `@semantic-release/changelog` from commit messages — do not hand-edit release sections
 - Full codestyle reference: **[CODESTYLE.md](CODESTYLE.md)**
+- Accumulated project gotchas (tsdown, tsconfig, Vitest): **[LEARNINGS.md](LEARNINGS.md)**
 
 ## Commit Message Format
 
-Angular preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
+`conventionalcommits` preset — drives `semantic-release` and `CHANGELOG.md`. Format: `<type>(<scope>): <subject>`
 
-| Type | Meaning | Bump |
-|------|---------|:----:|
-| `feat` | New user-facing feature | minor |
-| `fix` | Bug fix | patch |
-| `part` | Partial fix / partial feature | patch |
-| `refactor` | Refactoring, no behavior change | patch |
-| `style` | Visual / UI-only change | patch |
-| `chore` | Tooling, deps, config | patch |
-| `ghost` | Internal change, no release | — |
+| Type | Meaning | Bump | Release notes section |
+|------|---------|:----:|---|
+| `feat` | New user-facing feature | minor | Features |
+| `fix` | Bug fix | patch | Bug Fixes |
+| `part` | Partial fix / partial feature | patch | Bug Fixes |
+| `perf` | Performance improvement | patch | Performance |
+| `revert` | Revert of a previous commit | patch | Reverts |
+| `refactor` | Refactoring, no behavior change | patch | Maintenance |
+| `refactoring` | Refactoring, no behavior change | patch | Maintenance |
+| `service` | Service / infrastructure change | patch | Maintenance |
+| `style` | Visual / UI-only change | patch | Maintenance |
+| `chore` | Tooling, deps, config | patch | Maintenance |
+| `spark` | Small self-contained change | patch | Small changes |
+| `docs` | Documentation only | — | — |
+| `test` | Tests only | — | — |
+| `ci` | CI / workflow only | — | — |
+| `ghost` | Internal change, no release | — | — |
+
+Every type in this table is active and may be used in new commits. Types with no bump produce no release and no changelog entry — never mark a `docs`, `test`, `ci` or `ghost` commit as changelog-bearing.
 
 Scope examples: `toolbar`, `audit`, `picker`, `provider`, `deps`.
 

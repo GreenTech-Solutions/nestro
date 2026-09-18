@@ -1,31 +1,32 @@
-.vscode/**
-.vscode-test/**
-src/**
-.gitignore
-.yarnrc
-**/tsconfig.json
-**/eslint.config.mjs
-**/*.map
-**/*.ts
-**/.vscode-test.*
-dist/**
-pnpm-workspace.yaml
-pnpm-lock.yaml
-vitest.config.ts
-tsdown.config.mts
-CALIBER_LEARNINGS.md
-AGENTS.md
-CLAUDE.md
-vsc-extension-quickstart.md
-.releaserc.json
-.github/**
-images/SCREENSHOTS.md
-node_modules/**
-.agents/**
-.claude/**
-.caliber/**
-.caliberignore
-.eslintcache
-tsconfig.test.json
-.env
+# Allowlist model, not a denylist.
+#
+# vsce keeps a file when no ignore pattern matches it OR when a negated (`!`)
+# pattern matches it — negation always wins. Ignoring `**` first therefore makes
+# the VSIX contents a closed set: anything not re-included below is excluded, so
+# a new file or a new directory in the repository root stays out of the package
+# by default instead of shipping silently.
+#
+# `pnpm run check:vsce` (src/tools/vsixPolicy.ts) re-verifies the package that
+# was actually produced against the same allowlist, so this file and the
+# verifier must always be changed together.
+**
 
+# Extension manifest and the marketplace-facing documents.
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Marketplace icon and Activity Bar icon referenced from package.json.
+!resources/icon.png
+!resources/icon.svg
+
+# README screenshots. Only *.png — no .gitkeep, no SCREENSHOTS.md.
+!images/*.png
+
+# Bundled extension code. Only *.cjs directly inside out/ is re-included: that
+# is the tsdown/rolldown bundle — `out/extension.cjs` plus chunk files whose
+# names carry a build-dependent content hash. Everything else the build or the
+# test compile drops into out/ stays excluded, notably out/**/*.map,
+# out/test/**/*.js and any other tsc output.
+!out/*.cjs

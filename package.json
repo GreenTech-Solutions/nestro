@@ -136,17 +136,26 @@
       {
         "command": "nestro.refresh",
         "title": "Refresh",
+        "category": "Nestro",
         "icon": "$(refresh)"
       },
       {
         "command": "nestro.checkUpdates",
         "title": "Check for Updates",
+        "category": "Nestro",
         "icon": "$(cloud-download)"
       },
       {
         "command": "nestro.runAudit",
         "title": "Run Security Audit",
+        "category": "Nestro",
         "icon": "$(shield)"
+      },
+      {
+        "command": "nestro.openAuditReport",
+        "title": "Open Security Audit Report",
+        "category": "Nestro",
+        "icon": "$(report)"
       },
       {
         "command": "nestro.installUpdate",
@@ -176,11 +185,14 @@
       {
         "command": "nestro.updateAllVisible",
         "title": "Update All",
-        "icon": "$(cloud-upload)"
+        "category": "Nestro",
+        "icon": "$(cloud-upload)",
+        "enablement": "nestro.canUpdateVisiblePackages"
       },
       {
         "command": "nestro.runInstall",
         "title": "Run Install",
+        "category": "Nestro",
         "icon": "$(terminal)"
       },
       {
@@ -204,6 +216,7 @@
       {
         "command": "nestro.searchPackages",
         "title": "Search Packages",
+        "category": "Nestro",
         "icon": "$(search)"
       },
       {
@@ -214,11 +227,13 @@
       {
         "command": "nestro.openSettings",
         "title": "Settings",
+        "category": "Nestro",
         "icon": "$(settings-gear)"
       },
       {
         "command": "nestro.pinAllVersions",
         "title": "Pin All Versions",
+        "category": "Nestro",
         "icon": "$(lock)"
       }
     ],
@@ -230,6 +245,38 @@
         },
         {
           "command": "nestro.showFilterPicker",
+          "when": "false"
+        },
+        {
+          "command": "nestro.installUpdate",
+          "when": "false"
+        },
+        {
+          "command": "nestro.pickVersion",
+          "when": "false"
+        },
+        {
+          "command": "nestro.switchDepType",
+          "when": "false"
+        },
+        {
+          "command": "nestro.pinVersion",
+          "when": "false"
+        },
+        {
+          "command": "nestro.removePackage",
+          "when": "false"
+        },
+        {
+          "command": "nestro.openOnNpm",
+          "when": "false"
+        },
+        {
+          "command": "nestro.copyPackageName",
+          "when": "false"
+        },
+        {
+          "command": "nestro.clearSearchQuery",
           "when": "false"
         }
       ],
@@ -338,39 +385,53 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "vscode:prepublish": "pnpm run build",
-    "pretest": "tsc -p tsconfig.test.json && pnpm run lint",
-    "check:vsce": "vsce ls --no-dependencies",
+    "test:compile": "tsc -p tsconfig.test.json",
+    "pretest": "pnpm run test:compile && pnpm run lint",
+    "check:vsce": "pnpm run test:compile && node out/tools/verifyVsixCli.js",
+    "audit:dependencies": "pnpm audit --audit-level high",
+    "audit:signatures": "pnpm run test:compile && node out/tools/auditSignaturesCli.js",
+    "ci:evidence": "pnpm run test:compile && node out/tools/ciEvidenceCli.js",
+    "ci:policy": "pnpm run test:compile && node out/tools/ciPolicyCli.js",
     "typecheck": "tsc --noEmit",
-    "lint:eslint": "eslint --fix --cache src",
+    "lint:eslint": "eslint src --max-warnings=0",
     "lint": "pnpm run lint:eslint",
+    "lint:fix": "eslint --fix src",
     "test": "vscode-test",
+    "pretest:minimum": "pnpm run pretest",
+    "test:minimum": "vscode-test --label minimum",
+    "pretest:stable": "pnpm run pretest",
+    "test:stable": "vscode-test --label stable",
+    "test:packaged": "pnpm run test:compile && node out/test/packagedSmokeCli.js",
     "test:unit": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
     "test:unit:watch": "vitest"
   },
   "devDependencies": {
-    "@semantic-release/changelog": "6.0.3",
-    "@semantic-release/git": "10.0.1",
+    "@semantic-release/changelog": "7.0.0",
+    "@semantic-release/git": "11.0.1",
     "@semantic-release/github": "12.0.9",
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/mocha": "10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "1.125.0",
+    "@vitest/coverage-v8": "4.1.10",
     "@vscode/test-cli": "0.0.15",
-    "@vscode/test-electron": "2.5.2",
+    "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
-    "eslint": "9.39.3",
+    "conventional-changelog-conventionalcommits": "9.3.1",
+    "eslint": "10.8.0",
     "eslint-config-flat-gitignore": "2.3.0",
-    "eslint-plugin-sonarjs": "4.1.0",
-    "npm-run-all2": "9.0.2",
-    "semantic-release": "25.0.5",
-    "semantic-release-vsce": "6.1.5",
-    "tsdown": "0.22.4",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.63.0",
-    "vitest": "4.1.10"
+    "eslint-plugin-sonarjs": "4.2.0",
+    "semantic-release": "25.0.8",
+    "semantic-release-vsce": "6.1.6",
+    "tsdown": "0.22.14",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
   },
   "type": "commonjs",
-  "packageManager": "pnpm@11.0.8",
+  "packageManager": "pnpm@11.20.0",
   "pnpm": {
     "onlyBuiltDependencies": [
       "@vscode/vsce-sign",
@@ -378,7 +439,7 @@
     ]
   },
   "dependencies": {
-    "npm-check-updates": "22.2.9"
+    "npm-check-updates": "23.0.0"
   },
   "vsce": {
     "dependencies": false

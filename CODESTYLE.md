@@ -91,14 +91,16 @@ import { PackageItem } from '../providers/PackageItem';
 import { logger } from '../utils/logger';
 ```
 
-Barrel uses selective re-exports (not `export *`) to keep the public surface explicit:
+Barrels currently re-export with `export *`:
 
 ```typescript
 // src/utils/index.ts
-export { getUpdateType, isVersionOutdated } from './versionUtils';
-export { logger } from './logger';
-export { showError } from './notify';
+export * from './versionUtils';
+export * from './logger';
+export * from './notify';
 ```
+
+Moving to selective named re-exports on subsystem boundaries is a planned change. Until it lands, describe the wildcard form as the present state and do not claim the selective contract is enforced.
 
 ---
 
@@ -114,7 +116,44 @@ src/utils/
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper
 ├── ncuClient.ts        → npm-check-updates wrapper
-└── index.ts            → selective re-exports
+├── registryClient.ts   → npm registry version metadata over HTTPS
+├── auditClient.ts      → vulnerability audit runner and parser
+├── shellTask.ts        → VS Code shell task execution and exit codes
+└── index.ts            → barrel re-exports
+```
+
+---
+
+## Code Comments
+
+A comment says **what this is**, not the story of how it got here. One line is the
+default, three is the ceiling.
+
+- **No task, audit, or issue identifiers.** `AUD-09`, `ARC-01`, `SEC-05`, ticket keys and
+  PR links never appear in `src/**`. That context belongs to the commit message and the
+  tracker; in code it goes stale and means nothing to a reader who cannot open them.
+- **No narrative.** Benchmark tables, rejected alternatives, "before this change ..." and
+  rationale essays belong in the commit message or a `workflow/` report, not in the source.
+- **Say what the signature cannot.** A comment restating the function name is noise —
+  delete it.
+- A non-obvious constant justifies its value in one clause, not a methodology write-up.
+- English, present tense.
+- A JSDoc block growing past three lines usually means the name is wrong or the unit does
+  too much. Fix that instead of documenting around it.
+
+```ts
+// Good
+/** Serializes package-project mutations by canonical project-root key. */
+
+// Bad — task id
+/** Serializes package-project mutations by canonical project-root key (`ARC-01`). */
+
+// Bad — narrative; this belongs in the commit message
+/**
+ * Chosen by benchmark, not by convention: a synthetic 24-project-root fixture was
+ * driven at caps 1..24 on the implementer's machine (Apple M5, 10 logical cores).
+ * Throughput rose sharply through cap 4-6 and plateaued by cap 8 ...
+ */
 ```
 
 ---
@@ -129,6 +168,10 @@ src/utils/
 | `eqeqeq` | warn | Always `===`, never `==` |
 | `curly` | warn | Always use braces for control flow |
 | `@stylistic/semi` | warn | Semicolons required |
+| `no-throw-literal` | warn | Throw `Error` instances, not literals |
+| `@typescript-eslint/naming-convention` | warn | Import names in camelCase or PascalCase |
+
+`eslint-plugin-sonarjs` recommended config is enabled on top of these, with a documented set of rules disabled in `eslint.config.mjs`. Its remaining rules — notably `sonarjs/parameterized-tests` — are errors, not warnings, and will fail a strict lint run.
 
 Stylistic defaults: 2-space indent, single quotes, trailing semicolons.
 
@@ -136,21 +179,31 @@ Stylistic defaults: 2-space indent, single quotes, trailing semicolons.
 
 ## Commit Message Format
 
-Angular preset — drives `semantic-release` version bumps and `CHANGELOG.md`:
+`conventionalcommits` preset — drives `semantic-release` version bumps and `CHANGELOG.md`:
 
 ```
 <type>(<scope>): <subject>
 ```
 
-| Type | Meaning | Version bump |
-|------|---------|:---:|
-| `feat` | New user-facing feature | minor |
-| `fix` | Bug fix | patch |
-| `part` | Partial fix or partial feature | patch |
-| `refactor` | Code restructuring, no behavior change | patch |
-| `style` | Visual / UI-only change | patch |
-| `chore` | Tooling, deps, config, CI | patch |
-| `ghost` | Internal change, no release | — |
+| Type | Meaning | Version bump | Release notes section |
+|------|---------|:---:|---|
+| `feat` | New user-facing feature | minor | Features |
+| `fix` | Bug fix | patch | Bug Fixes |
+| `part` | Partial fix or partial feature | patch | Bug Fixes |
+| `perf` | Performance improvement | patch | Performance |
+| `revert` | Revert of a previous commit | patch | Reverts |
+| `refactor` | Code restructuring, no behavior change | patch | Maintenance |
+| `refactoring` | Code restructuring, no behavior change | patch | Maintenance |
+| `service` | Service / infrastructure change | patch | Maintenance |
+| `style` | Visual / UI-only change | patch | Maintenance |
+| `chore` | Tooling, deps, config | patch | Maintenance |
+| `spark` | Small self-contained change | patch | Small changes |
+| `docs` | Documentation only | — | — |
+| `test` | Tests only | — | — |
+| `ci` | CI / workflow only | — | — |
+| `ghost` | Internal change, no release | — | — |
+
+This table is the single source of truth for commit types; `.releaserc.json` must stay aligned with it. Every listed type is active and may be used in new commits. Types with no bump produce no release and no changelog entry.
 
 Scope is the feature area (`toolbar`, `audit`, `picker`, `provider`, `deps`, etc.).
 
@@ -178,3 +231,5 @@ ghost(test): add unit tests for compareRawVersions
 | `vscode.window.showErrorMessage(...)` directly | Use `showError()` from `src/utils/notify.ts` |
 | Floating promise (unhandled async call) | Prefix with `void` or `await` |
 | Mutating provider state from arbitrary places | Use `markPackage*()` / `invalidateUpdateCache()` methods, then fire `_onDidChangeTreeData` |
+| Task / audit id in a code comment (`AUD-09`, `ARC-01`) | Drop it — that context lives in the commit message and the tracker |
+| Multi-paragraph comment explaining rationale or benchmarks | One-line description; rationale goes in the commit message or a `workflow/` report |

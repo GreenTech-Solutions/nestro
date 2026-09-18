@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AuditResult, AuditSeverity, runNpmAudit } from '../utils/auditClient';
+import type { AuditResult, AuditSeverity } from '../utils/auditClient';
 import { ShellTaskCommand } from '../utils/shellTask';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
@@ -28,9 +28,11 @@ export abstract class Client {
   abstract buildInstallCommand(): ShellTaskCommand;
   abstract buildRemoveCommand(packages: readonly string[]): ShellTaskCommand;
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    const result: AuditResult = await runNpmAudit(this.cwd);
-    return result.vulnerabilities;
+  abstract runAuditReport(signal?: AbortSignal): Promise<AuditResult>;
+
+  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
+    const result = await this.runAuditReport(signal);
+    return new Map(result.vulnerabilities);
   }
 
   protected formatPackageTargets(packages: readonly PackageTarget[]): vscode.ShellQuotedString[] {

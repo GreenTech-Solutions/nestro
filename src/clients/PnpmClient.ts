@@ -1,4 +1,4 @@
-import { AuditSeverity, runPackageAudit } from '../utils/auditClient';
+import { AuditResult, runPackageAudit } from '../utils/auditClient';
 import { Client, PackageTarget } from './Client';
 
 export class PnpmClient extends Client {
@@ -17,7 +17,7 @@ export class PnpmClient extends Client {
     return { command: 'pnpm', args: ['remove', ...this.formatPackageNames(packages)] };
   }
 
-  async runAudit(): Promise<Map<string, AuditSeverity>> {
-    return (await runPackageAudit('pnpm', this.cwd)).vulnerabilities;
+  async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {
+    return await runPackageAudit('pnpm', this.cwd, signal);
   }
 }

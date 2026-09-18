@@ -1,4 +1,7 @@
+export * from './copyPackageName';
 export * from './installUpdate';
+export * from './openOnNpm';
+export * from './openAuditReport';
 export * from './pickVersion';
 export * from './pinAllVersions';
 export * from './pinVersion';

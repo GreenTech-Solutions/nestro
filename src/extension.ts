@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
-import { FilterManager, isFilterType, PackageItem, PackagesProvider } from './providers';
+import { FilterManager, isFilterType, PackagesProvider } from './providers';
 import type { FilterType } from './providers';
 import {
+  copyPackageNameCommand,
   installUpdateCommand,
+  openAuditReportCommand,
+  openOnNpmCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
   pinVersionCommand,
@@ -21,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
   const filterManager = new FilterManager(defaultFilter);
   const provider = new PackagesProvider(filterManager);
+  const auditReportOutput = vscode.window.createOutputChannel('Nestro Security Audit');
   const treeView = vscode.window.createTreeView('nestro.packagesView', {
     treeDataProvider: provider,
     showCollapseAll: true,
@@ -34,20 +38,20 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.refresh', () => { void provider.loadPackages(); }),
     vscode.commands.registerCommand('nestro.checkUpdates', () => { void provider.checkUpdates(); }),
     vscode.commands.registerCommand('nestro.runAudit', () => { void provider.runAudit(); }),
-    vscode.commands.registerCommand('nestro.installUpdate', (item: PackageItem) => { void installUpdateCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.pickVersion', (item: PackageItem) => { void pickVersionCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.switchDepType', (item: PackageItem) => { void switchDepTypeCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.pinVersion', (item: PackageItem) => { void pinVersionCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.removePackage', (item: PackageItem) => { void removePackageCommand(item, provider); }),
+    auditReportOutput,
+    vscode.commands.registerCommand('nestro.openAuditReport', () => {
+      openAuditReportCommand(provider, auditReportOutput);
+    }),
+    vscode.commands.registerCommand('nestro.installUpdate', (item: unknown) => { void installUpdateCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.pickVersion', (item: unknown) => { void pickVersionCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.switchDepType', (item: unknown) => { void switchDepTypeCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.pinVersion', (item: unknown) => { void pinVersionCommand(item, provider); }),
+    vscode.commands.registerCommand('nestro.removePackage', (item: unknown) => { void removePackageCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
     vscode.commands.registerCommand('nestro.pinAllVersions', () => { void pinAllVersionsCommand(provider); }),
-    vscode.commands.registerCommand('nestro.openOnNpm', (item: PackageItem) => {
-      void vscode.env.openExternal(vscode.Uri.parse(`https://www.npmjs.com/package/${item.packageName}`));
-    }),
-    vscode.commands.registerCommand('nestro.copyPackageName', (item: PackageItem) => {
-      void vscode.env.clipboard.writeText(item.packageName);
-    }),
+    vscode.commands.registerCommand('nestro.openOnNpm', (item: unknown) => { openOnNpmCommand(item); }),
+    vscode.commands.registerCommand('nestro.copyPackageName', (item: unknown) => { copyPackageNameCommand(item); }),
     vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
     vscode.commands.registerCommand('nestro.searchPackages', () => { void provider.showSearch(); }),
@@ -89,6 +93,9 @@ export function registerWorkspaceFoldersWatcher(
   );
 }
 
+/** Filesystem-event coalescing window: each event restarts the timer, so writes faster than this interval never trigger a reload. */
+export const PACKAGE_JSON_WATCHER_DEBOUNCE_MS = 500;
+
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,
   provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'>,
@@ -103,7 +110,7 @@ export function registerPackageJsonWatcher(
     debounceTimer = setTimeout(() => {
       provider.invalidateUpdateCache();
       void provider.loadPackages();
-    }, 500);
+    }, PACKAGE_JSON_WATCHER_DEBOUNCE_MS);
   };
 
   const createWatchers = (): vscode.Disposable[] => {

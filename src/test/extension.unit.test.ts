@@ -1,7 +1,40 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { activate, deactivate } from '../extension';
 import { PackagesProvider } from '../providers';
+import {
+  copyPackageNameCommand,
+  installUpdateCommand,
+  openAuditReportCommand,
+  openOnNpmCommand,
+  pickVersionCommand,
+  pinAllVersionsCommand,
+  pinVersionCommand,
+  removePackageCommand,
+  runInstallCommand,
+  switchDepTypeCommand,
+  updateAllVisibleCommand,
+} from '../commands';
+
+// Every command handler in activate() is a thin one-line delegation to an already
+// independently-tested command function; stubbing them keeps handler invocation below
+// safe (no real network/task/file-system side effects) while still proving the wiring.
+vi.mock('../commands', () => ({
+  copyPackageNameCommand: vi.fn(),
+  installUpdateCommand: vi.fn(),
+  openAuditReportCommand: vi.fn(),
+  openOnNpmCommand: vi.fn(),
+  pickVersionCommand: vi.fn(),
+  pinAllVersionsCommand: vi.fn(),
+  pinVersionCommand: vi.fn(),
+  removePackageCommand: vi.fn(),
+  runInstallCommand: vi.fn(),
+  switchDepTypeCommand: vi.fn(),
+  updateAllVisibleCommand: vi.fn(),
+}));
 
 vi.mock('../providers', () => ({
   FilterManager: vi.fn(function (this: Record<string, unknown>, initialFilter: string) {
@@ -20,6 +53,7 @@ vi.mock('../providers', () => ({
     this.loadPackages = vi.fn().mockResolvedValue(undefined);
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.runAudit = vi.fn().mockResolvedValue(undefined);
+    this.getAuditReport = vi.fn(() => ({ projects: [], failures: [] }));
     this.invalidateUpdateCache = vi.fn();
     this.setFilter = vi.fn();
     this.resetUpdateData = vi.fn();
@@ -35,6 +69,24 @@ vi.mock('../providers', () => ({
   }),
   PackageItem: vi.fn(),
 }));
+
+interface ManifestCommand {
+  readonly command: string;
+}
+
+interface ExtensionManifest {
+  readonly contributes: {
+    readonly commands: readonly ManifestCommand[];
+  };
+}
+
+const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ExtensionManifest;
+
+// Sourced directly from contributes.commands in package.json — the real source of truth —
+// rather than a hardcoded copy, so this list cannot silently drift from the manifest
+// (CLAUDE.md convention: command IDs must match exactly between package.json and registerCommand).
+const REGISTERED_COMMAND_IDS = manifest.contributes.commands.map(entry => entry.command);
 
 function makeContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
@@ -54,98 +106,10 @@ describe('activate()', () => {
     mockNestroConfiguration({});
   });
 
-  it('registers nestro.refresh command', () => {
+  it.each(REGISTERED_COMMAND_IDS)('registers %s command', (commandId) => {
     activate(makeContext());
     expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.refresh',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.installUpdate command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.installUpdate',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.switchDepType command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.switchDepType',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.pinVersion command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.pinVersion',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.removePackage command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.removePackage',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.runAudit command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.runAudit',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.runInstall command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.runInstall',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.updateAllVisible command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.updateAllVisible',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.openOnNpm command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.openOnNpm',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.copyPackageName command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.copyPackageName',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.searchPackages command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.searchPackages',
-      expect.any(Function),
-    );
-  });
-
-  it('registers nestro.clearSearchQuery command', () => {
-    activate(makeContext());
-    expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-      'nestro.clearSearchQuery',
+      commandId,
       expect.any(Function),
     );
   });
@@ -197,6 +161,65 @@ describe('activate()', () => {
     activate(makeContext());
 
     expect(PackagesProvider).toHaveBeenCalledWith(expect.objectContaining({ current: 'all' }));
+  });
+
+  it('invokes every registered command handler without throwing, matching a real Command Palette invocation with no argument', () => {
+    activate(makeContext());
+
+    const calls = vi.mocked(vscode.commands.registerCommand).mock.calls;
+    expect(calls).toHaveLength(REGISTERED_COMMAND_IDS.length);
+    for (const [, handler] of calls) {
+      expect(() => handler(undefined as never)).not.toThrow();
+    }
+  });
+
+  it('delegates package-scoped command handlers to their command function with the clicked item', () => {
+    activate(makeContext());
+    const item = { packageName: 'react' } as unknown as vscode.TreeItem;
+    const handlers = new Map(vi.mocked(vscode.commands.registerCommand).mock.calls.map(
+      ([id, handler]) => [id, handler] as const,
+    ));
+
+    handlers.get('nestro.installUpdate')?.(item);
+    handlers.get('nestro.pickVersion')?.(item);
+    handlers.get('nestro.switchDepType')?.(item);
+    handlers.get('nestro.pinVersion')?.(item);
+    handlers.get('nestro.removePackage')?.(item);
+    handlers.get('nestro.runInstall')?.();
+    handlers.get('nestro.updateAllVisible')?.();
+    handlers.get('nestro.pinAllVersions')?.();
+    handlers.get('nestro.openOnNpm')?.(item);
+    handlers.get('nestro.copyPackageName')?.(item);
+    handlers.get('nestro.openAuditReport')?.();
+
+    expect(installUpdateCommand).toHaveBeenCalledWith(item, expect.any(Object));
+    expect(pickVersionCommand).toHaveBeenCalledWith(item, expect.any(Object));
+    expect(switchDepTypeCommand).toHaveBeenCalledWith(item, expect.any(Object));
+    expect(pinVersionCommand).toHaveBeenCalledWith(item, expect.any(Object));
+    expect(removePackageCommand).toHaveBeenCalledWith(item, expect.any(Object));
+    expect(runInstallCommand).toHaveBeenCalledTimes(1);
+    expect(updateAllVisibleCommand).toHaveBeenCalledWith(expect.any(Object));
+    expect(pinAllVersionsCommand).toHaveBeenCalledWith(expect.any(Object));
+    expect(openOnNpmCommand).toHaveBeenCalledWith(item);
+    expect(copyPackageNameCommand).toHaveBeenCalledWith(item);
+    expect(openAuditReportCommand).toHaveBeenCalledWith(expect.any(Object), expect.any(Object));
+  });
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ] as const)('runs startup checks according to configuration (checkUpdatesOnStartup=%s, runAuditOnStartup=%s)', async (checkUpdatesOnStartup, runAuditOnStartup) => {
+    mockNestroConfiguration({ checkUpdatesOnStartup, runAuditOnStartup });
+
+    activate(makeContext());
+    const provider = vi.mocked(PackagesProvider).mock.instances[0] as unknown as PackagesProvider;
+    await (provider.loadPackages as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    await Promise.resolve();
+
+    expect(provider.checkUpdates).toHaveBeenCalledTimes(checkUpdatesOnStartup ? 1 : 0);
+    expect(provider.runAudit).toHaveBeenCalledTimes(runAuditOnStartup ? 1 : 0);
   });
 });
 

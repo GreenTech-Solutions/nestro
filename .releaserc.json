@@ -7,8 +7,12 @@
     [
       "@semantic-release/commit-analyzer",
       {
-        "preset": "angular",
+        "preset": "conventionalcommits",
         "releaseRules": [
+          {
+            "breaking": true,
+            "release": "major"
+          },
           {
             "type": "feat",
             "release": "minor"
@@ -22,6 +26,18 @@
             "release": "patch"
           },
           {
+            "type": "perf",
+            "release": "patch"
+          },
+          {
+            "type": "revert",
+            "release": "patch"
+          },
+          {
+            "type": "refactor",
+            "release": "patch"
+          },
+          {
             "type": "refactoring",
             "release": "patch"
           },
@@ -30,11 +46,7 @@
             "release": "patch"
           },
           {
-            "type": "ghost",
-            "release": false
-          },
-          {
-            "type": "spark",
+            "type": "style",
             "release": "patch"
           },
           {
@@ -42,12 +54,24 @@
             "release": "patch"
           },
           {
-            "type": "refactor",
+            "type": "spark",
             "release": "patch"
           },
           {
-            "type": "style",
-            "release": "patch"
+            "type": "docs",
+            "release": false
+          },
+          {
+            "type": "test",
+            "release": false
+          },
+          {
+            "type": "ci",
+            "release": false
+          },
+          {
+            "type": "ghost",
+            "release": false
           }
         ]
       }
@@ -55,20 +79,68 @@
     [
       "@semantic-release/release-notes-generator",
       {
-        "preset": "angular",
+        "preset": "conventionalcommits",
         "presetConfig": {
           "types": [
             {
               "type": "feat",
-              "section": "Changed"
+              "section": "Features"
             },
             {
               "type": "fix",
-              "section": "Fixed"
+              "section": "Bug Fixes"
             },
             {
-              "section": "Small changes",
-              "type": "spark"
+              "type": "part",
+              "section": "Bug Fixes"
+            },
+            {
+              "type": "perf",
+              "section": "Performance"
+            },
+            {
+              "type": "revert",
+              "section": "Reverts"
+            },
+            {
+              "type": "refactor",
+              "section": "Maintenance"
+            },
+            {
+              "type": "refactoring",
+              "section": "Maintenance"
+            },
+            {
+              "type": "service",
+              "section": "Maintenance"
+            },
+            {
+              "type": "style",
+              "section": "Maintenance"
+            },
+            {
+              "type": "chore",
+              "section": "Maintenance"
+            },
+            {
+              "type": "spark",
+              "section": "Small changes"
+            },
+            {
+              "type": "docs",
+              "hidden": true
+            },
+            {
+              "type": "test",
+              "hidden": true
+            },
+            {
+              "type": "ci",
+              "hidden": true
+            },
+            {
+              "type": "ghost",
+              "hidden": true
             }
           ]
         }
