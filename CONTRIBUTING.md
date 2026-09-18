@@ -76,6 +76,11 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 `lint` is the safe check to use in normal validation. Use `lint:fix` only when you explicitly
 intend to accept automated source edits.
 
+The `audit:*`, `ci:*`, `check:vsce` and `release:*` scripts above back the end-to-end release
+process — verified SHA and artifact identity, audits, packaged smoke, environment approval,
+publish, and post-publish verification. See [RELEASING.md](RELEASING.md) for the full checklist;
+a green CI run is not sufficient on its own to call a release done.
+
 ## Run and debug the extension
 
 The **Run Extension** configuration in [.vscode/launch.json](.vscode/launch.json) opens an
