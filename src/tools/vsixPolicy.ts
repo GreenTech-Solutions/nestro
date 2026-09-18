@@ -79,7 +79,7 @@ export const VSIX_FORBIDDEN_RULES: readonly ForbiddenRule[] = [
   { forbiddenClass: 'cache', pattern: /(^|\/)\.eslintcache$/ },
   { forbiddenClass: 'test', pattern: /(^|\/)(?:test|tests|__tests__|__mocks__|fixtures)(\/|$)/ },
   { forbiddenClass: 'test', pattern: /\.(?:unit\.)?(?:test|spec)\.[cm]?[jt]s$/ },
-  { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:workflow|docs)(\/|$)/ },
+  { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:workflow|docs|scripts)(\/|$)/ },
   { forbiddenClass: 'internal-doc', pattern: /(^|\/)(?:AGENTS|CLAUDE|CODESTYLE|LEARNINGS|CONTRIBUTING|SCREENSHOTS|ARCHITECTURE|RELEASING)\.md$/i },
   { forbiddenClass: 'internal-doc', pattern: /(^|\/)vsc-extension-quickstart\.md$/i },
   { forbiddenClass: 'source', pattern: /(^|\/)src(\/|$)/ },

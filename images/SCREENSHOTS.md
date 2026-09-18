@@ -57,6 +57,11 @@ the public registry returned on the capture date (2026-09-18) and will drift.
 | `pick-version.png` | 1030×440 | The **Pick Version...** QuickPick for `express`: version list with the `latest` tag and a held-back entry; the focused row shows its two inline actions, Update Package and Pick Version | focus the `express` row, run **Pick Version...** for it |
 | `audit.png` | 348×370 | Sidebar after **Run Security Audit**: the "Audit complete · 6 vulnerable packages" status row above the package groups | **Run Security Audit**, wait for the audit to finish |
 
+The sizes above are from the run that produced the current `images/*.png`. `scripts/screenshots/capture.mjs`
+crops each frame's bottom edge to the content it actually captured, so a later run's sizes come from
+that run and depend on live registry data (how many rows are outdated, how long version strings are)
+rather than reproducing these exact numbers.
+
 Crops: Activity Bar plus sidebar for `overview.png` and `audit.png`; sidebar plus QuickPick for the
 two picker frames; the title bar and status bar are excluded. Frames were captured at 2x with
 `screencapture -l <window id>` and downscaled to 1x with `sips --resampleWidth`, so the sidebar
@@ -82,6 +87,19 @@ is 300 px wide in every file.
   badges — it needs recapturing.
 
 ## Reproducing
+
+The capture tooling in `scripts/screenshots/` (`README.md` there has the full requirements and
+options) automates all of this on macOS:
+
+```sh
+pnpm run build
+node scripts/screenshots/capture.mjs --out images
+```
+
+It builds the fixture, drives VS Code through the four states, captures each window, and crops
+and downscales the frames the same way this document describes.
+
+Manual fallback, e.g. on another OS or to capture a one-off variant:
 
 1. Build the extension (`pnpm run build`) and open the fixture folder in an Extension Development
    Host (F5 → Run Extension) with the settings above.

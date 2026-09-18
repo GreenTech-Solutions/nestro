@@ -72,6 +72,7 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `test:unit` | `vitest run` | Run the Vitest unit-test suite. | Yes |
 | `test:unit:coverage` | `vitest run --coverage` | Run unit tests and produce the V8 coverage report. | No |
 | `test:unit:watch` | `vitest` | Run Vitest in watch mode. | No |
+| `screenshots` | `node scripts/screenshots/capture.mjs` | Reproduce the four README screenshots on macOS; writes to a temporary directory by default, or into `images/` if run with `-- --out images`. See `scripts/screenshots/README.md`. | No |
 
 `lint` is the safe check to use in normal validation. Use `lint:fix` only when you explicitly
 intend to accept automated source edits.

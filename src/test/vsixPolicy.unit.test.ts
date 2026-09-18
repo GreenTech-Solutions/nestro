@@ -100,6 +100,7 @@ describe('evaluateVsixPolicy() — forbidden classes', () => {
     ['test', 'out/test/extension.test.js'],
     ['test', 'out/providers/treeBuilder.unit.test.js'],
     ['internal-doc', 'workflow/audit/plan.md'],
+    ['internal-doc', 'scripts/screenshots/capture.mjs'],
     ['internal-doc', 'CODESTYLE.md'],
     ['internal-doc', 'AGENTS.md'],
     ['internal-doc', 'ARCHITECTURE.md'],
