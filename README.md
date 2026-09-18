@@ -175,13 +175,13 @@ owning workspace folder; the nearest directory with a recognized signal wins, an
 ![Nestro sidebar after an update check: packages grouped into Dependencies and Dev Dependencies, each row showing its update type and target version, with the update-count badge on the Activity Bar icon](images/overview.png)
 
 ### Filter by update type
-![Filter picker for narrowing the package list by update type, with a live count per filter](images/filters.png)
+![Filter picker for narrowing the package list by update type, with a live count per filter and the active filter shown as a status row in the tree](images/filters.png)
 
 ### Pick a specific version
 ![Version picker listing the available versions of express, with the row's inline Update and Pick Version actions visible](images/pick-version.png)
 
 ### Security audit
-![Sidebar after Run Security Audit, with the status row reporting the number of vulnerable packages](images/audit.png)
+![Sidebar after Run Security Audit, with the status row reporting the number of vulnerable packages and a warning marker on each directly affected package row](images/audit.png)
 
 ## Settings
 
