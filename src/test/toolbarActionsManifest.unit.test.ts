@@ -93,4 +93,19 @@ describe('toolbar action manifest', () => {
       expect(entry.when).toBe(`view == nestro.packagesView && ${command.enablement}`);
     }
   });
+
+  // VS Code checks a command's enablement precondition on a TreeItem.command click too, so a
+  // row bound to a command with enablement can render clickable while the click itself no-ops.
+  // StatusItem is the only tree item that sets this.command, for exactly these three commands.
+  it('carries no enablement on any command a status row binds through TreeItem.command', () => {
+    const rowBoundCommandIds = ['nestro.openStatusReport', 'nestro.showFilterPicker', 'nestro.searchPackages'];
+    for (const commandId of rowBoundCommandIds) {
+      const command = commandsById.get(commandId);
+      expect(command, `${commandId} should be a contributed command`).toBeDefined();
+      expect(
+        command?.enablement,
+        `${commandId} must carry no enablement — a status row binds it through TreeItem.command`,
+      ).toBeUndefined();
+    }
+  });
 });

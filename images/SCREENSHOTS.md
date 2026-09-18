@@ -68,9 +68,13 @@ is 300 px wide in every file.
   query is active), Run Install, Run Security Audit, Pin All Versions, Settings.
 - The row context menu: Open on npmjs.com, Copy Package Name, Switch to dev/dep, Toggle version
   pin (only for rows whose spec can be pinned), Remove Package.
-- The active filter or search query is published as the view description. VS Code renders a view
-  description only in the view's own header, and while Nestro is the only view in its container
-  that header is merged into the sidebar title, so the description does not appear in the frames.
+- The active filter or search query as the *view description* — the compact text next to the view
+  title. VS Code renders it only in the view's own pane header, and while Nestro is the only view
+  in its container that header is merged into the sidebar title, so the description text does not
+  appear in the frames.
+- The "Filter: Patch · 1 of N" status row above the package groups, which is what actually
+  communicates the filter/search state in the default layout. `filters.png` was captured before
+  this row existed and predates it; it will appear in the frame after the next recapture.
 - Row vulnerability badges. npm's audit report v2 (npm 7 and later) carries no resolved package
   versions, so with this fixture the audit outcome is the status row plus the **Nestro Security
   Audit** Output channel rather than per-row badges.

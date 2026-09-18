@@ -7,7 +7,7 @@ export { parseBunAuditOutcome, runBunAudit, runBunAuditOutcome } from './bunAudi
 export { parseBunConfig } from './bunConfig';
 export { formatDependencySpec, parseDependencySpec } from './dependencySpec';
 export type { PinnableDependencySpec } from './dependencySpec';
-export { formatAdvisoryRows, formatAuditSeverityLabel, formatDependencySectionLabel, formatFailedPackageFileCount, formatFailedPackageRootCount, formatHeldBackDate, formatPackageCount, formatPackageGroupDescription, formatPackageLevelFindings, formatPackageUpdatesAvailable, formatPinnedPackageVersions, formatUpdateTypeLabel, formatVulnerablePackageCount } from './localization';
+export { formatAdvisoryRows, formatAuditSeverityLabel, formatDependencySectionLabel, formatFailedPackageFileCount, formatFailedPackageRootCount, formatFilteredPackageCount, formatHeldBackDate, formatPackageCount, formatPackageGroupDescription, formatPackageLevelFindings, formatPackageUpdatesAvailable, formatPinnedPackageVersions, formatUpdateTypeLabel, formatVulnerablePackageCount } from './localization';
 export { logger } from './logger';
 export { configAwareHttpsMetadataAdapter, fetchPackageMetadata, MetadataAdapterRegistry, resolveMetadataRegistryKey } from './metadataRegistry';
 export type { MetadataAdapter, PackageMetadataOutcome } from './metadataRegistry';

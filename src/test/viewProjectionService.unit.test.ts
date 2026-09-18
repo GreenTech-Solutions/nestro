@@ -368,6 +368,118 @@ describe('computeViewProjection', () => {
         'Audit incomplete',
       ]);
     });
+
+    it('adds no Filter or Search row for the default all-filter, empty-query state even with entries', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch'), createEntry('lodash')];
+      expect(computeViewProjection(baseSnapshot({ entries })).statusRows).toEqual([]);
+    });
+
+    it('shows a Filter row with the visible/total counts and the filter-picker command when a filter is active', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch'), createEntry('lodash')];
+      const projection = computeViewProjection(baseSnapshot({ entries, filterType: 'patch' }));
+      expect(projection.statusRows).toEqual([{
+        label: 'Filter: Patch',
+        description: '1 of 3',
+        icon: 'filter',
+        actionable: false,
+        command: { command: 'nestro.showFilterPicker', title: 'Change filter' },
+      }]);
+    });
+
+    it('shows a zero visible count when nothing matches the active filter', () => {
+      const entries = [createEntry('react', 'minor')];
+      const projection = computeViewProjection(baseSnapshot({ entries, filterType: 'breaking' }));
+      expect(projection.statusRows).toEqual([{
+        label: 'Filter: Breaking',
+        description: '0 of 1',
+        icon: 'filter',
+        actionable: false,
+        command: { command: 'nestro.showFilterPicker', title: 'Change filter' },
+      }]);
+    });
+
+    it('shows a Search row with the match count and the search command when a search query is active', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch'), createEntry('lodash')];
+      const projection = computeViewProjection(baseSnapshot({ entries, search: 'react' }));
+      expect(projection.statusRows).toEqual([{
+        label: 'Search: "react"',
+        description: '1 package',
+        icon: 'search',
+        actionable: false,
+        command: { command: 'nestro.searchPackages', title: 'Edit search' },
+      }]);
+    });
+
+    it('shows zero matches for a search query that matches nothing', () => {
+      const entries = [createEntry('react', 'minor')];
+      const projection = computeViewProjection(baseSnapshot({ entries, search: 'nonexistent' }));
+      expect(projection.statusRows).toEqual([{
+        label: 'Search: "nonexistent"',
+        description: '0 packages',
+        icon: 'search',
+        actionable: false,
+        command: { command: 'nestro.searchPackages', title: 'Edit search' },
+      }]);
+    });
+
+    it('sanitizes control characters and newlines out of the search query in the label', () => {
+      const entries = [createEntry('react', 'minor')];
+      const nulCharacter = String.fromCharCode(0);
+      const query = ['a', nulCharacter, 'b', '\n', 'cd'].join('');
+      const projection = computeViewProjection(baseSnapshot({ entries, search: query }));
+      expect(projection.statusRows[0].label).toBe('Search: "a b cd"');
+    });
+
+    it('caps a long search query in the label at the same 24 code points as the view description', () => {
+      const entries = [createEntry('react', 'minor')];
+      const longQuery = 'a'.repeat(30);
+      const projection = computeViewProjection(baseSnapshot({ entries, search: longQuery }));
+      expect(projection.statusRows[0].label).toBe(`Search: "${'a'.repeat(24)}…"`);
+    });
+
+    it('orders the Filter row before the Search row, counting the filter against the search-matched total', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('react-router', 'patch'), createEntry('vue', 'patch')];
+      const projection = computeViewProjection(baseSnapshot({ entries, filterType: 'patch', search: 'react' }));
+      expect(projection.statusRows).toEqual([
+        {
+          label: 'Filter: Patch',
+          description: '1 of 2',
+          icon: 'filter',
+          actionable: false,
+          command: { command: 'nestro.showFilterPicker', title: 'Change filter' },
+        },
+        {
+          label: 'Search: "react"',
+          description: '2 packages',
+          icon: 'search',
+          actionable: false,
+          command: { command: 'nestro.searchPackages', title: 'Edit search' },
+        },
+      ]);
+    });
+
+    it('orders the Filter and Search rows after the diagnostics, check, and audit rows', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch')];
+      const projection = computeViewProjection(baseSnapshot({
+        entries,
+        filterType: 'patch',
+        search: 'e',
+        packageReadFailures: [{ packageFilePaths: ['/workspace/a/package.json'], reason: 'package-read-failed' }],
+        checkState: 'incomplete',
+        failedUpdatePaths: ['/workspace/a/package.json'],
+        auditState: 'incomplete',
+        lastAuditCount: 1,
+        lastAuditSuccessfulRootCount: 0,
+        failedAuditPaths: ['/workspace/a/package.json'],
+      }));
+      expect(projection.statusRows.map(row => row.label)).toEqual([
+        'Package read incomplete',
+        'Update check incomplete',
+        'Audit incomplete',
+        'Filter: Patch',
+        'Search: "e"',
+      ]);
+    });
   });
 
   describe('projection identity', () => {

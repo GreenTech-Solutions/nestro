@@ -70,7 +70,7 @@ interface PackageLabelRow {
 }
 
 const UNOWNED_FOLDER_INDEX = Number.MAX_SAFE_INTEGER;
-/** Keeps `formatViewDescription()` readable in a narrow sidebar. */
+/** Keeps any label showing the raw search query short, for the sidebar and for screen readers. */
 const MAX_DESCRIPTION_SEARCH_LENGTH = 24;
 const UNSAFE_LABEL_CODE_POINT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 const DEFAULT_PACKAGE_LABEL_FORMATTING: PackageLabelFormatting = {
@@ -296,7 +296,7 @@ export function formatViewDescription(
     : vscode.l10n.t('{0} ({1})', getFilterLabel(filterType), counts[filterType]);
   const searchSegment = search === ''
     ? undefined
-    : vscode.l10n.t('"{0}"', truncateSearchForDescription(search));
+    : vscode.l10n.t('"{0}"', truncateSearchQuery(search));
 
   if (filterSegment !== undefined && searchSegment !== undefined) {
     return vscode.l10n.t('{0} · {1}', filterSegment, searchSegment);
@@ -304,7 +304,8 @@ export function formatViewDescription(
   return filterSegment ?? searchSegment;
 }
 
-function truncateSearchForDescription(search: string): string {
+/** Caps a search query to a short, screen-reader-friendly length for any label that shows it. */
+export function truncateSearchQuery(search: string): string {
   const codePoints = [...search];
   return codePoints.length > MAX_DESCRIPTION_SEARCH_LENGTH
     ? `${codePoints.slice(0, MAX_DESCRIPTION_SEARCH_LENGTH).join('')}…`

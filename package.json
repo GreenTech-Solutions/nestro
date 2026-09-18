@@ -263,8 +263,7 @@
         "command": "nestro.searchPackages",
         "title": "%commands.nestro.searchPackages.title%",
         "category": "Nestro",
-        "icon": "$(search)",
-        "enablement": "nestro.canSearchPackages"
+        "icon": "$(search)"
       },
       {
         "command": "nestro.clearSearchQuery",

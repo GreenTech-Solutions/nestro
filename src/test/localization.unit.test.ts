@@ -4,6 +4,7 @@ import {
   formatAdvisoryRows,
   formatAuditSeverityLabel,
   formatDependencySectionLabel,
+  formatFilteredPackageCount,
   formatHeldBackDate,
   formatPackageCount,
   formatPackageGroupDescription,
@@ -80,6 +81,14 @@ describe('localization plural helpers', () => {
 
   it.each(['critical', 'high', 'moderate', 'low', 'info'] as const)('localizes the %s audit severity label', (severity) => {
     expect(formatAuditSeverityLabel(severity)).toBe(severity);
+  });
+
+  it.each([
+    [0, 0, '0 of 0'],
+    [1, 3, '1 of 3'],
+    [3, 3, '3 of 3'],
+  ] as const)('formats %s visible of %s total as %s', (visibleCount, totalCount, expected) => {
+    expect(formatFilteredPackageCount(visibleCount, totalCount)).toBe(expected);
   });
 });
 

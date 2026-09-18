@@ -98,3 +98,7 @@ export function formatHeldBackDate(instant: string, locale?: string, timeZone?: 
     ? instant
     : new Intl.DateTimeFormat(locale ?? vscode.env.language, { dateStyle: 'medium', timeZone }).format(date);
 }
+
+export function formatFilteredPackageCount(visibleCount: number, totalCount: number): string {
+  return vscode.l10n.t('{0} of {1}', visibleCount, totalCount);
+}
