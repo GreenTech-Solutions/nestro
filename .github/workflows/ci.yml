@@ -181,7 +181,7 @@ jobs:
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_PR_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
       - name: Write deterministic provenance bundle
-        run: pnpm run release:provenance -- --artifact-dir "$CI_ARTIFACT_DIR"
+        run: pnpm run release:provenance --artifact-dir "$CI_ARTIFACT_DIR"
         env:
           PROVENANCE_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           PROVENANCE_CI_RUN_ID: ${{ github.run_id }}
