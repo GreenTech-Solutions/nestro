@@ -145,8 +145,11 @@ export async function verifyDownloadedEvidence(artifactDir: string, expectedSha:
   if (evidence.sourceSha !== expectedSha || evidence.releaseEligible !== false || evidence.vsixFile !== vsixFile) {
     throw new Error('downloaded evidence identity does not match the exact tested SHA or evidence-only contract');
   }
-  if (evidence.eventName !== 'push' || evidence.pullRequestHeadSha !== null) {
-    throw new Error('downloaded evidence must be a release-ineligible push identity');
+  const hasConsistentEventIdentity = evidence.eventName === 'push'
+    ? evidence.pullRequestHeadSha === null
+    : evidence.pullRequestHeadSha !== null && FULL_SHA_PATTERN.test(evidence.pullRequestHeadSha);
+  if (!hasConsistentEventIdentity) {
+    throw new Error('downloaded evidence must carry a push identity without a head SHA, or a pull request or workflow dispatch identity with a full head SHA');
   }
   const vsixBytes = await readFile(join(canonicalDir, vsixFile));
   const archiveEntries = readVsixArchive(vsixBytes);
