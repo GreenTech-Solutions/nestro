@@ -5,7 +5,7 @@ export class PnpmClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
       command: 'pnpm',
-      args: ['add', ...this.formatPackageTargets(packages), ...this.getSectionArgs(packages, '--save-dev')],
+      args: ['add', ...this.getSectionArgs(packages, '--save-dev'), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
@@ -14,7 +14,7 @@ export class PnpmClient extends Client {
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'pnpm', args: ['remove', ...this.formatPackageNames(packages)] };
+    return { command: 'pnpm', args: ['remove', '--', ...this.formatPackageNames(packages)] };
   }
 
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {

@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
-  fetchPackageVersions,
+  classifyVersionReleaseAge,
+  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
+  fetchPackageMetadata,
   logger,
+  readMinimumReleaseAgeDays,
   selectVersionsForPicker,
   showError,
 } from '../utils';
+import type { ReleaseAgeState } from '../utils';
 import { runResolvedPackageVersion } from './installUpdate';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
@@ -28,6 +32,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   quickPick.placeholder = 'Loading versions...';
   quickPick.busy = true;
   const disposables: vscode.Disposable[] = [];
+  const abortController = new AbortController();
   let disposed = false;
   const cleanup = (): void => {
     if (disposed) {
@@ -35,6 +40,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     }
 
     disposed = true;
+    abortController.abort();
     while (disposables.length > 0) {
       disposables.pop()?.dispose();
     }
@@ -44,10 +50,21 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
   quickPick.show();
 
   try {
-    const { tags, versions } = await fetchPackageVersions(current.packageName, capability.packageFilePath);
+    const metadataOutcome = await fetchPackageMetadata(
+      current.packageName,
+      capability.packageFilePath,
+      abortController.signal,
+    );
     if (disposed) {
       return;
     }
+    if (metadataOutcome.kind !== 'success') {
+      quickPick.hide();
+      showVersionPickerError(current.packageName, metadataOutcome);
+      return;
+    }
+
+    const { distTags: tags, versions } = metadataOutcome.result;
 
     const fetchedCapability = await revalidateCommandPackageItem(capability, provider);
     if (fetchedCapability === undefined) {
@@ -60,7 +77,12 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
 
     const includePreReleases = vscode.workspace
       .getConfiguration('nestro')
-      .get<boolean>('includePreReleases', true);
+      .get<boolean>('includePreReleases', false);
+    const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
+      vscode.workspace
+        .getConfiguration('nestro')
+        .get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+    );
     const selectedVersions = selectVersionsForPicker(
       versions,
       tags,
@@ -69,17 +91,38 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     );
     const tagByVersion = new Map(Object.entries(tags).map(([tag, version]) => [version, tag]));
     const normalizedCurrent = normalizeCurrentVersion(current.currentVersion);
+    const releaseAgeByVersion = new Map<string, ReleaseAgeState>();
+    const releaseAgeUnavailable = metadataOutcome.result.publishTimes.kind === 'not-provided';
+    if (releaseAgeUnavailable) {
+      quickPick.title = `Select version for ${current.packageName} — release age unknown; update is not blocked`;
+    }
 
-    quickPick.items = selectedVersions.map(version => ({
-      label: version === normalizedCurrent ? `★ ${version}` : version,
-      description: tagByVersion.get(version),
-      detail: version === normalizedCurrent ? 'Current version' : undefined,
-    }));
+    quickPick.items = selectedVersions.map((version) => {
+      const releaseAge = classifyVersionReleaseAge(
+        version,
+        metadataOutcome.result.publishTimes,
+        minimumReleaseAgeDays,
+      );
+      releaseAgeByVersion.set(version, releaseAge);
+      const ageDescription = releaseAge.kind === 'held-back'
+        ? `Held back until ${releaseAge.eligibleAt}`
+        : releaseAge.kind === 'unknown' && !releaseAgeUnavailable
+          ? 'Release age unknown; update is not blocked.'
+          : undefined;
+      return {
+        label: version === normalizedCurrent ? `★ ${version}` : version,
+        description: [tagByVersion.get(version), ageDescription]
+          .filter((value): value is string => value !== undefined)
+          .map(sanitizePackageText)
+          .join(' · ') || undefined,
+        detail: version === normalizedCurrent ? 'Current version' : undefined,
+      };
+    });
     quickPick.busy = false;
     quickPick.placeholder = 'Type to filter versions...';
     const allowedVersions = new Set(selectedVersions);
     const acceptListener = quickPick.onDidAccept(() => {
-      void handleVersionSelection(quickPick, pickerCapability, allowedVersions, provider);
+      void handleVersionSelection(quickPick, pickerCapability, allowedVersions, releaseAgeByVersion, provider);
     });
     disposables.push(acceptListener);
   }
@@ -97,6 +140,7 @@ async function handleVersionSelection(
   quickPick: vscode.QuickPick<vscode.QuickPickItem>,
   capability: ResolvedPackageItem,
   allowedVersions: ReadonlySet<string>,
+  releaseAgeByVersion: ReadonlyMap<string, ReleaseAgeState>,
   provider: PackagesProvider,
 ): Promise<void> {
   try {
@@ -119,7 +163,7 @@ async function handleVersionSelection(
       return;
     }
 
-    await runResolvedPackageVersion(checked, selectedVersion, provider);
+    await runResolvedPackageVersion(checked, selectedVersion, provider, releaseAgeByVersion.get(selectedVersion));
   }
   catch (err) {
     logger.error('Failed to apply the selected package version.', err);
@@ -133,6 +177,20 @@ function normalizeCurrentVersion(currentVersion: string): string {
 
 function showVersionPickerError(packageName: string, err: unknown): void {
   const safePackageName = sanitizePackageText(packageName);
-  void vscode.window.showErrorMessage(`Failed to fetch versions for ${safePackageName}.`);
-  logger.error(`Failed to fetch versions for ${safePackageName}.`, err);
+  const detail = getMetadataErrorDetail(err);
+  const message = detail === undefined
+    ? `Failed to fetch versions for ${safePackageName}.`
+    : `Failed to fetch versions for ${safePackageName}: ${detail}`;
+  void vscode.window.showErrorMessage(message);
+  logger.error(message, err);
+}
+
+function getMetadataErrorDetail(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const candidate = err as { kind?: unknown; message?: unknown };
+  return candidate.kind === 'unavailable' && typeof candidate.message === 'string'
+    ? sanitizePackageText(candidate.message)
+    : undefined;
 }

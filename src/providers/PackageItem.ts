@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AuditSeverity, UpdateType } from '../utils';
+import { AuditSeverity, parseDependencySpec, ReleaseAgeState, UpdateType } from '../utils';
 
 const PACKAGE_ANSI_ESCAPE = new RegExp(
   `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
@@ -21,21 +21,33 @@ export class PackageItem extends vscode.TreeItem {
     public readonly packageFilePath = '',
     public readonly dev = false,
     public readonly versionPrefix = '',
+    public readonly releaseAge: ReleaseAgeState = { kind: 'accepted' },
   ) {
     const safePackageName = sanitizePackageText(packageName);
     const safeCurrentVersion = sanitizePackageText(currentVersion);
     const safeLatest = latest === undefined ? undefined : sanitizePackageText(latest);
     super(safePackageName, vscode.TreeItemCollapsibleState.Collapsed);
     const hasUpdate = updateType !== 'none';
+    const parsedSpec = parseDependencySpec(currentVersion);
     this.description = hasUpdate ? `${safeCurrentVersion} → ${safeLatest}` : safeCurrentVersion;
     this.tooltip = installing
       ? `Updating ${safePackageName} to ${safeLatest}`
       : `${safePackageName}@${safeCurrentVersion}${hasUpdate ? ` (latest: ${safeLatest})` : ''}`;
-    this.contextValue = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
+    if (!installing && !parsedSpec.supported) {
+      this.tooltip = `${this.tooltip}\nPin unavailable: ${parsedSpec.reason}`;
+    }
+    const contextBase = installing ? 'installing' : hasUpdate ? 'outdated' : 'package';
+    const pinCapability = installing ? '' : parsedSpec.supported ? '-pinnable' : '-pin-unsupported';
+    this.contextValue = `${contextBase}${pinCapability}`;
     if (vulnerabilitySeverity !== undefined) {
       this.description = `${this.description} vulnerability: ${vulnerabilitySeverity}`;
       this.tooltip = `${this.tooltip}\nVulnerability: ${vulnerabilitySeverity}`;
       this.contextValue = `${this.contextValue}-vulnerable-${vulnerabilitySeverity}`;
+    }
+    const releaseAgeText = getReleaseAgeText(releaseAge);
+    if (releaseAgeText !== undefined) {
+      this.description = `${this.description} ${releaseAgeText}`;
+      this.tooltip = `${this.tooltip}\n${releaseAgeText}`;
     }
     const icons: Record<UpdateType, vscode.ThemeIcon> = {
       breaking: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.red')),
@@ -49,6 +61,20 @@ export class PackageItem extends vscode.TreeItem {
         ? icons[updateType]
         : getVulnerabilityIcon(vulnerabilitySeverity);
   }
+}
+
+function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
+  if (state.kind === 'held-back') {
+    return sanitizePackageText(`Held back ${state.version} until ${state.eligibleAt}`);
+  }
+  if (state.kind === 'unknown') {
+    return sanitizePackageText(
+      state.version === undefined
+        ? 'Release age unknown; update is not blocked.'
+        : `Release age unknown for ${state.version}; update is not blocked.`,
+    );
+  }
+  return undefined;
 }
 
 export function sanitizePackageText(value: string): string {

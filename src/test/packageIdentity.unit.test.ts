@@ -5,10 +5,15 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import {
   resolveCommandPackageItem,
+  resolvePinManifestEntry,
   resolveUnambiguousManifestEntry,
   revalidateCommandPackageItem,
 } from '../commands/packageIdentity';
-import { readCanonicalDependencySpec, resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import {
+  readCanonicalDependencySpec,
+  readCanonicalDependencySpecs,
+  resolveCanonicalPackageLocation,
+} from '../providers/packageIdentity';
 import type { CanonicalPackageLocation, PackagesProvider, ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
@@ -127,6 +132,58 @@ describe('package identity command helpers', () => {
 
     await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('allows a pin action to keep the selected dev row when the name is duplicated', async () => {
+    const capability = makeCapability('devDependencies');
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
+      dependencies: { react: '^9.0.0' },
+      devDependencies: { react: '~1.1.0' },
+    })));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBe(capability);
+    expect(revalidate).toHaveBeenCalledTimes(2);
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['selected section changed', { dependencies: { react: '^9.0.0' }, devDependencies: { react: '^1.1.0' } }],
+    ['selected section missing', { dependencies: { react: '^9.0.0' }, devDependencies: {} }],
+  ] as const)('rejects a pin row when the selected manifest entry is %s', async (_label, manifest) => {
+    const capability = makeCapability('devDependencies');
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+    );
+  });
+
+  it('stops a pin before reading when the capability is no longer current', async () => {
+    const capability = makeCapability();
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes a pin manifest read failure', async () => {
+    const capability = makeCapability();
+    const { provider, revalidate } = makeProvider();
+    revalidate.mockResolvedValue({ ok: true, value: capability });
+    vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(new Error('read failed'));
+
+    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+    );
   });
 
   it.each([
@@ -288,6 +345,46 @@ describe('package identity command helpers', () => {
         configurable: true,
         value: previousFolders,
       });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readCanonicalDependencySpecs', () => {
+  it('returns one spec per identity, in the order the identities were given', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-specs-'));
+    try {
+      const packageFilePath = join(root, 'package.json');
+      await writeFile(packageFilePath, JSON.stringify({
+        dependencies: { react: '^1.0.0', vue: '^2.0.0' },
+        devDependencies: { react: '~3.0.0' },
+      }));
+      const location = { packageFilePath } as CanonicalPackageLocation;
+
+      await expect(readCanonicalDependencySpecs(location, [
+        { packageName: 'vue', packageFilePath, section: 'dependencies' },
+        { packageName: 'react', packageFilePath, section: 'devDependencies' },
+        { packageName: 'react', packageFilePath, section: 'dependencies' },
+        { packageName: 'absent', packageFilePath, section: 'dependencies' },
+      ])).resolves.toEqual(['^2.0.0', '~3.0.0', '^1.0.0', undefined]);
+    }
+    finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns no specs when the manifest parses to a non-object', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nestro-identity-null-'));
+    try {
+      const packageFilePath = join(root, 'package.json');
+      await writeFile(packageFilePath, 'null');
+      const location = { packageFilePath } as CanonicalPackageLocation;
+      const identity = { packageName: 'react', packageFilePath, section: 'dependencies' } as const;
+
+      await expect(readCanonicalDependencySpecs(location, [identity])).resolves.toEqual([undefined]);
+      await expect(readCanonicalDependencySpec(location, identity)).resolves.toBeUndefined();
+    }
+    finally {
       await rm(root, { recursive: true, force: true });
     }
   });

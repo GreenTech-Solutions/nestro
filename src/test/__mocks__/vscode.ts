@@ -1,10 +1,36 @@
 import { vi } from 'vitest';
 
+export enum LogLevel {
+  Off = 0,
+  Trace = 1,
+  Debug = 2,
+  Info = 3,
+  Warning = 4,
+  Error = 5,
+}
+
+interface LogEntry {
+  readonly level: 'debug' | 'error' | 'info' | 'warn';
+  readonly message: string;
+}
+
+function recordLog(level: LogEntry['level'], threshold: LogLevel, message: string): void {
+  if (outputChannel.logLevel !== LogLevel.Off && outputChannel.logLevel <= threshold) {
+    outputChannel.entries.push({ level, message });
+  }
+}
+
 export const outputChannel = {
   appendLine: vi.fn(),
   replace: vi.fn(),
   show: vi.fn(),
   dispose: vi.fn(),
+  logLevel: LogLevel.Info,
+  entries: [] as LogEntry[],
+  debug: vi.fn((message: string) => recordLog('debug', LogLevel.Debug, message)),
+  info: vi.fn((message: string) => recordLog('info', LogLevel.Info, message)),
+  warn: vi.fn((message: string) => recordLog('warn', LogLevel.Warning, message)),
+  error: vi.fn((message: string) => recordLog('error', LogLevel.Error, message)),
 };
 
 export const commands = {
@@ -75,6 +101,16 @@ export const workspace = {
   getWorkspaceFolder: vi.fn((uri: { fsPath: string }) => {
     const folder = workspace.workspaceFolders.find(candidate => uri.fsPath.startsWith(candidate.uri.fsPath));
     return folder;
+  }),
+  asRelativePath: vi.fn((pathOrUri: string | { fsPath: string }) => {
+    const candidatePath = typeof pathOrUri === 'string' ? pathOrUri : pathOrUri.fsPath;
+    const folder = workspace.workspaceFolders.find(({ uri }) => (
+      candidatePath === uri.fsPath || candidatePath.startsWith(`${uri.fsPath}/`)
+    ));
+    if (folder === undefined) {
+      return candidatePath;
+    }
+    return candidatePath.slice(folder.uri.fsPath.length).replace(/^\//, '') || '.';
   }),
   findFiles: vi.fn().mockResolvedValue([]),
   fs: {

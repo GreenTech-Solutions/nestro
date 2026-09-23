@@ -4,6 +4,7 @@ export * from './NpmClient';
 export * from './PnpmClient';
 export * from './YarnClient';
 export * from './BunClient';
+export { validatePackageName, validatePackageVersionSpec } from './operandValidation';
 // Selective, not `export *`: the rest of projectResolver.ts's exports
 // (detectPackageManagerFromManifest/FromLockfile/SignalFromAncestors, parsePackageManager)
 // are module-internal helpers `ClientManager.ts` imports directly within this folder —

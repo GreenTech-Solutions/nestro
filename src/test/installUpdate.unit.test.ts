@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
-import { PackageItem } from '../providers/PackageItem';
-import { FilterManager, GroupItem, PackagesProvider } from '../providers';
+import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import type { ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -12,6 +12,7 @@ const identityMocks = vi.hoisted(() => {
     latest?: string;
     installing?: boolean;
     currentVersion?: string;
+    releaseAge?: ReleaseAgeState;
   }) => ({
     item: {
       packageName: item.packageName,
@@ -23,6 +24,7 @@ const identityMocks = vi.hoisted(() => {
       packageFilePath: item.packageFilePath,
       dev: item.dev,
       versionPrefix: item.currentVersion?.match(/^[~^]/)?.[0] ?? '',
+      releaseAge: item.releaseAge,
     },
     identity: {
       packageName: item.packageName,
@@ -45,6 +47,7 @@ const identityMocks = vi.hoisted(() => {
       latest?: string;
       installing?: boolean;
       currentVersion?: string;
+      releaseAge?: ReleaseAgeState;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
@@ -87,7 +90,7 @@ describe('installUpdateCommand()', () => {
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     expect(task.execution).toBeInstanceOf(vscode.ShellExecution);
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add typescript@5.9.3');
+    expect(shellExecution.commandLine).toBe('pnpm add -- typescript@5.9.3');
     expect(task.presentationOptions).toEqual({
       reveal: vscode.TaskRevealKind.Always,
       panel: vscode.TaskPanelKind.New,
@@ -105,8 +108,10 @@ describe('installUpdateCommand()', () => {
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
 
+    // A registry-valid name (apostrophe and asterisk are real, unescaped-by-URL
+    // characters) that would still break out of naive shell interpolation.
     await installUpdateCommand(
-      new PackageItem('evil; touch /tmp/pwned', '^1.0.0', '1.0.1', 'patch', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('o\'brien-toolkit*', '^1.0.0', '1.0.1', 'patch', false, undefined, '/workspace/package.json', false, '^'),
       provider,
     );
 
@@ -115,7 +120,8 @@ describe('installUpdateCommand()', () => {
     expect(shellExecution.command).toBe('pnpm');
     expect(shellExecution.args).toEqual([
       'add',
-      { value: 'evil; touch /tmp/pwned@1.0.1', quoting: vscode.ShellQuoting.Strong },
+      '--',
+      { value: 'o\'brien-toolkit*@1.0.1', quoting: vscode.ShellQuoting.Strong },
     ]);
   });
 
@@ -223,6 +229,26 @@ describe('installUpdateCommand()', () => {
     }, false);
   });
 
+  it('rejects an option-shaped manifest key before the update task ever launches', async () => {
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await installUpdateCommand(
+      new PackageItem('--global', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
+      provider,
+    );
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdating).not.toHaveBeenCalled();
+  });
+
   it('does not run an explicitly resolved version after final identity revalidation fails', async () => {
     const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^');
     const capability = identityMocks.makeCapability(item);
@@ -282,6 +308,61 @@ describe('installUpdateCommand()', () => {
     await runResolvedPackageVersion(capability, '5.9.3', provider);
 
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('cancels an explicitly selected risky deferred update before writing', async () => {
+    mockDeferredInstall(true);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    );
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
+
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('cancels an explicitly selected risky immediate update before launching a task', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    );
+    const provider = addCapabilityMethods({
+      invalidateUpdateCache: vi.fn(),
+      markPackageUpdated: vi.fn(),
+      markPackageUpdating: vi.fn(),
+      withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+    } as unknown as PackagesProvider);
+
+    await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
   });
 
   it('updates package.json without running a task when deferred install is enabled', async () => {
@@ -530,7 +611,7 @@ describe('installUpdateCommand()', () => {
 
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add vitest@4.1.0 --save-dev');
+    expect(shellExecution.commandLine).toBe('pnpm add --save-dev -- vitest@4.1.0');
   });
 
   it.each([
@@ -626,7 +707,7 @@ describe('runInstallCommand()', () => {
     expect(shellExecution.options).toEqual({ cwd: '/workspace/apps/web' });
   });
 
-  it('formats sibling workspace package labels by path segment', async () => {
+  it('disambiguates sibling root manifests with the owning workspace name', async () => {
     Object.defineProperty(vscode.workspace, 'workspaceFolders', {
       configurable: true,
       value: [
@@ -639,7 +720,7 @@ describe('runInstallCommand()', () => {
       { fsPath: '/workspace/app-mobile/package.json', path: '/workspace/app-mobile/package.json' },
     ] as vscode.Uri[]);
     vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
-      label: '(root)',
+      label: 'app-mobile — (root)',
       packageFilePath: '/workspace/app-mobile/package.json',
     } as never);
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
@@ -649,12 +730,101 @@ describe('runInstallCommand()', () => {
     await runInstallCommand();
 
     expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
-      { label: '(root)', packageFilePath: '/workspace/app/package.json' },
-      { label: '(root)', packageFilePath: '/workspace/app-mobile/package.json' },
+      { label: 'app — (root)', packageFilePath: '/workspace/app/package.json' },
+      { label: 'app-mobile — (root)', packageFilePath: '/workspace/app-mobile/package.json' },
     ], { placeHolder: 'Select the package.json to install dependencies for' });
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.options).toEqual({ cwd: '/workspace/app-mobile' });
+  });
+
+  it('disambiguates two workspace folders sharing the same display name by path suffix', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/repos/team-a/service' }, name: 'service', index: 0 },
+        { uri: { fsPath: '/repos/team-b/service' }, name: 'service', index: 1 },
+      ],
+    });
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/repos/team-a/service/package.json', path: '/repos/team-a/service/package.json' },
+      { fsPath: '/repos/team-b/service/package.json', path: '/repos/team-b/service/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'team-b/service — (root)',
+      packageFilePath: '/repos/team-b/service/package.json',
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'team-a/service — (root)', packageFilePath: '/repos/team-a/service/package.json' },
+      { label: 'team-b/service — (root)', packageFilePath: '/repos/team-b/service/package.json' },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+  });
+
+  it('sorts picker items by workspace index, root first within each workspace', async () => {
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+      configurable: true,
+      value: [
+        { uri: { fsPath: '/repos/first' }, name: 'first', index: 0 },
+        { uri: { fsPath: '/repos/second' }, name: 'second', index: 1 },
+      ],
+    });
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
+      { fsPath: '/repos/second/apps/web/package.json', path: '/repos/second/apps/web/package.json' },
+      { fsPath: '/repos/first/apps/web/package.json', path: '/repos/first/apps/web/package.json' },
+      { fsPath: '/repos/second/package.json', path: '/repos/second/package.json' },
+      { fsPath: '/repos/first/package.json', path: '/repos/first/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'first — (root)',
+      packageFilePath: '/repos/first/package.json',
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'first — (root)', packageFilePath: '/repos/first/package.json' },
+      { label: 'first — apps/web', packageFilePath: '/repos/first/apps/web/package.json' },
+      { label: 'second — (root)', packageFilePath: '/repos/second/package.json' },
+      { label: 'second — apps/web', packageFilePath: '/repos/second/apps/web/package.json' },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+  });
+
+  it('keeps picker labels aligned with filtered tree labels from the full manifest set', async () => {
+    const paths = [
+      '/workspace/0-é-empty/package.json',
+      '/workspace/α/package.json',
+      '/workspace/β/package.json',
+    ];
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce(
+      paths.map(fsPath => ({ fsPath, path: fsPath })) as vscode.Uri[],
+    );
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce({
+      label: 'workspace — β [unicode #3]',
+      packageFilePath: paths[2],
+    } as never);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+
+    await runInstallCommand();
+
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'workspace — 0-é-empty [unicode #1]', packageFilePath: paths[0] },
+      { label: 'workspace — α [unicode #2]', packageFilePath: paths[1] },
+      { label: 'workspace — β [unicode #3]', packageFilePath: paths[2] },
+    ], { placeHolder: 'Select the package.json to install dependencies for' });
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    const shellExecution = task.execution as vscode.ShellExecution;
+    expect(shellExecution.options).toEqual({ cwd: '/workspace/β' });
   });
 
   it('shows an error when the install task exits with a non-zero code', async () => {
@@ -725,8 +895,8 @@ describe('runInstallCommand()', () => {
     await runInstallCommand();
 
     expect(vscode.window.showQuickPick).toHaveBeenCalledWith([
+      { label: 'workspace — (root)', packageFilePath: '/workspace/package.json' },
       { label: '/external/project', packageFilePath: '/external/project/package.json' },
-      { label: '(root)', packageFilePath: '/workspace/package.json' },
     ], { placeHolder: 'Select the package.json to install dependencies for' });
   });
 
@@ -769,7 +939,7 @@ describe('updateAllVisibleCommand()', () => {
 
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.commandLine).toBe('pnpm add react@19.0.0 typescript@5.9.3');
+    expect(shellExecution.commandLine).toBe('pnpm add -- react@19.0.0 typescript@5.9.3');
   });
 
   it('updates package.json for all visible outdated packages in deferred mode', async () => {
@@ -907,7 +1077,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed; failed to roll back: /workspace/apps/web/package.json',
+      'Nestro: failed to update packages — second write failed; failed to roll back: apps/web/package.json',
     );
   });
 
@@ -969,6 +1139,140 @@ describe('updateAllVisibleCommand()', () => {
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
   });
 
+  it('asks for a separate confirmation before a risky bulk update', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update Risky Packages' as never);
+    const provider = makeProvider([
+      new PackageItem(
+        'react',
+        '^18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        undefined,
+        '/workspace/package.json',
+        false,
+        '^',
+        { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      ),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a risky bulk update before any task starts', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const provider = makeProvider([
+      new PackageItem(
+        'react',
+        '^18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        undefined,
+        '/workspace/package.json',
+        false,
+        '^',
+        { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      ),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a newly risky deferred bulk update before marking progress', async () => {
+    mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const safeItem = new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+    const safe = identityMocks.makeCapability(safeItem);
+    const risky = identityMocks.makeCapability(new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    ));
+    const provider = makeProvider([safeItem]);
+    vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+    expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a newly risky immediate bulk update before launching a task', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
+    const safeItem = new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+    const safe = identityMocks.makeCapability(safeItem);
+    const risky = identityMocks.makeCapability(new PackageItem(
+      'react',
+      '^18.0.0',
+      '19.0.0',
+      'breaking',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+    ));
+    const provider = makeProvider([safeItem]);
+    vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
   it('splits immediate bulk updates by dependency section', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const provider = makeProvider([
@@ -983,9 +1287,62 @@ describe('updateAllVisibleCommand()', () => {
       (task.execution as vscode.ShellExecution).commandLine
     ));
     expect(commands).toEqual([
-      'pnpm add react@19.0.0',
-      'pnpm add vitest@4.1.0 --save-dev',
+      'pnpm add -- react@19.0.0',
+      'pnpm add --save-dev -- vitest@4.1.0',
     ]);
+  });
+
+  it('rejects an option-shaped manifest key before any batch task launches', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdatingForCapability).not.toHaveBeenCalled();
+  });
+
+  it('rejects a whole group when it mixes a valid and an option-shaped manifest key', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
+    expect(provider.markPackageUpdated).not.toHaveBeenCalled();
+  });
+
+  it('runs an earlier valid group before a later group is rejected for an option-shaped key', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', true, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
+    expect((task.execution as vscode.ShellExecution).commandLine).toBe('pnpm add -- react@19.0.0');
+    expect(provider.markPackageUpdated).toHaveBeenCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, '19.0.0');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+    );
   });
 
   it('stops an immediate group when its group revalidation rejects', async () => {

@@ -73,8 +73,15 @@
         },
         "nestro.includePreReleases": {
           "type": "boolean",
-          "default": true,
-          "description": "Include pre-release versions when checking for package updates."
+          "default": false,
+          "description": "Include pre-release versions (alpha, beta, rc) when checking for package updates."
+        },
+        "nestro.minimumReleaseAgeDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 0,
+          "maximum": 99000000,
+          "description": "Minimum age in days before a package release is accepted for updates. This overrides native package-manager release-age settings for Nestro checks. Set to 0 to disable the Nestro policy."
         },
         "nestro.updateTarget": {
           "type": "string",
@@ -325,7 +332,7 @@
       "view/item/context": [
         {
           "command": "nestro.installUpdate",
-          "when": "view == nestro.packagesView && viewItem == outdated",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)outdated($|-)/",
           "group": "inline"
         },
         {
@@ -345,7 +352,7 @@
         },
         {
           "command": "nestro.pinVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)pinnable($|-)/",
           "group": "inline@5"
         },
         {
@@ -370,7 +377,7 @@
         },
         {
           "command": "nestro.pinVersion",
-          "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
+          "when": "view == nestro.packagesView && viewItem =~ /(^|-)pinnable($|-)/",
           "group": "2_manage@2"
         },
         {

@@ -34,8 +34,8 @@ export async function revalidateCommandPackageItem(
 }
 
 /**
- * The pin/remove writers have legacy section inference. Require one manifest entry
- * in the canonical section before invoking them, then revalidate after the async read.
+ * The remove writer has legacy section inference. Require one manifest entry in the
+ * canonical section before invoking it, then revalidate after the async read.
  */
 export async function resolveUnambiguousManifestEntry(
   item: ResolvedPackageItem,
@@ -58,6 +58,36 @@ export async function resolveUnambiguousManifestEntry(
       : 'dependencies';
     const alternate = getManifestEntry(manifest[alternateSection], checked.item.packageName);
     if (expected !== checked.item.currentVersion || alternate !== undefined) {
+      showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
+      return undefined;
+    }
+  }
+  catch {
+    showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
+    return undefined;
+  }
+
+  return await revalidateCommandPackageItem(checked, provider);
+}
+
+/** Revalidate a pin row without treating a duplicate name in the other section as ambiguous. */
+export async function resolvePinManifestEntry(
+  item: ResolvedPackageItem,
+  provider: PackagesProvider,
+): Promise<ResolvedPackageItem | undefined> {
+  const checked = await revalidateCommandPackageItem(item, provider);
+  if (checked === undefined) {
+    return undefined;
+  }
+
+  try {
+    const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(checked.packageFilePath));
+    const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as {
+      dependencies?: unknown;
+      devDependencies?: unknown;
+    };
+    const expected = getManifestEntry(manifest[checked.identity.section], checked.item.packageName);
+    if (expected !== checked.item.currentVersion) {
       showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
       return undefined;
     }

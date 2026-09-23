@@ -1,6 +1,7 @@
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider } from '../providers';
 import {
+  DependencyTypeConflictError,
   logger,
   mutationCoordinator,
   showError,
@@ -35,11 +36,16 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
           checked.packageFilePath,
           checked.item.packageName,
           checked.identity.section === 'devDependencies',
+          checked.item.currentVersion,
         );
       });
       await provider.loadPackages();
     }
     catch (err) {
+      if (err instanceof DependencyTypeConflictError) {
+        showError(err.message);
+        return;
+      }
       showError(`failed to switch dependency type — ${err instanceof Error ? err.message : String(err)}`, err);
     }
   });

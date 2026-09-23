@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
 import { logger } from './logger';
 
 export interface PackageEntry {
@@ -33,6 +34,41 @@ export interface PackageVersionUpdate {
 export interface PackageFileDependencyUpdates {
   packageFilePath: string;
   updates: readonly PackageVersionUpdate[];
+}
+
+export class VersionPinConflictError extends Error {
+  constructor() {
+    super('Package action is no longer available. Refresh the package list and try again.');
+    this.name = 'VersionPinConflictError';
+  }
+}
+
+export class DependencyTypeConflictError extends Error {
+  readonly expectedSourceSpec: unknown;
+  readonly actualSourceSpec: unknown;
+  readonly targetSpec: unknown;
+  readonly hasTargetSpec: boolean;
+
+  constructor(
+    packageName: unknown,
+    expectedSourceSpec: unknown,
+    actualSourceSpec: unknown,
+    targetSpec?: unknown,
+  ) {
+    const hasTargetSpec = arguments.length >= 4;
+    const safePackageName = sanitizeConflictText(packageName);
+    const safeExpectedSourceSpec = sanitizeConflictText(expectedSourceSpec);
+    const safeActualSourceSpec = sanitizeConflictText(actualSourceSpec);
+    const message = !hasTargetSpec
+      ? `Cannot switch ${safePackageName}: source spec changed from ${safeExpectedSourceSpec} to ${safeActualSourceSpec}.`
+      : `Cannot switch ${safePackageName}: source spec ${safeActualSourceSpec} conflicts with target spec ${sanitizeConflictText(targetSpec)}.`;
+    super(message);
+    this.name = 'DependencyTypeConflictError';
+    this.expectedSourceSpec = expectedSourceSpec;
+    this.actualSourceSpec = actualSourceSpec;
+    this.targetSpec = targetSpec;
+    this.hasTargetSpec = hasTargetSpec;
+  }
 }
 
 interface WorkspacePackageJson {
@@ -78,11 +114,73 @@ export async function updateDependencyVersionsInFile(
 export async function updateDependencyVersionsInFilesAtomically(
   files: readonly PackageFileDependencyUpdates[],
 ): Promise<void> {
-  const prepared = [] as PreparedPackageFile[];
+  const prepared: PreparedPackageFile[] = [];
   for (const file of files) {
     prepared.push(await prepareDependencyVersionsInFile(file.packageFilePath, file.updates));
   }
+  await writeManyPreparedPackageFilesAtomically(prepared);
+}
 
+interface PreparedPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  updated: Uint8Array;
+}
+
+interface RawPackageFile {
+  uri: vscode.Uri;
+  original: Uint8Array;
+  raw: string;
+  json: WorkspacePackageJson;
+}
+
+async function readRawPackageFile(packageFilePath: string): Promise<RawPackageFile> {
+  const uri = vscode.Uri.file(packageFilePath);
+  const original = await vscode.workspace.fs.readFile(uri);
+  const raw = Buffer.from(original).toString('utf8');
+  return { uri, original, raw, json: JSON.parse(raw) as WorkspacePackageJson };
+}
+
+function serializePackageJson(raw: string, json: WorkspacePackageJson): Uint8Array {
+  const indent = detectJsonIndent(raw);
+  const newline = raw.endsWith('\n') ? '\n' : '';
+  return Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`);
+}
+
+async function prepareDependencyVersionsInFile(
+  packageFilePath: string,
+  updates: readonly PackageVersionUpdate[],
+): Promise<PreparedPackageFile> {
+  const { uri, original, raw, json } = await readRawPackageFile(packageFilePath);
+  const missing: string[] = [];
+
+  for (const update of updates) {
+    const dependencies = json[update.section];
+    if (dependencies?.[update.name] !== undefined) {
+      const current = dependencies[update.name];
+      const prefix = extractVersionPrefix(current);
+      dependencies[update.name] = `${prefix}${update.version}`;
+      continue;
+    }
+    missing.push(`${update.name} (${update.section})`);
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
+  }
+
+  return { uri, original, updated: serializePackageJson(raw, json) };
+}
+
+async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
+  await vscode.workspace.fs.writeFile(file.uri, file.updated);
+}
+
+/**
+ * Writes every prepared file in order; if any write fails, rolls the already-written
+ * files back to their original bytes in reverse order before rethrowing.
+ */
+async function writeManyPreparedPackageFilesAtomically(prepared: readonly PreparedPackageFile[]): Promise<void> {
   const written: PreparedPackageFile[] = [];
   try {
     for (const file of prepared) {
@@ -104,50 +202,6 @@ export async function updateDependencyVersionsInFilesAtomically(
   }
 }
 
-interface PreparedPackageFile {
-  uri: vscode.Uri;
-  original: Uint8Array;
-  updated: Uint8Array;
-}
-
-async function prepareDependencyVersionsInFile(
-  packageFilePath: string,
-  updates: readonly PackageVersionUpdate[],
-): Promise<PreparedPackageFile> {
-  const uri = vscode.Uri.file(packageFilePath);
-  const original = await vscode.workspace.fs.readFile(uri);
-  const raw = Buffer.from(original).toString('utf8');
-  const json = JSON.parse(raw) as WorkspacePackageJson;
-  const missing: string[] = [];
-
-  for (const update of updates) {
-    const dependencies = json[update.section];
-    if (dependencies?.[update.name] !== undefined) {
-      const current = dependencies[update.name];
-      const prefix = extractVersionPrefix(current);
-      dependencies[update.name] = `${prefix}${update.version}`;
-      continue;
-    }
-    missing.push(`${update.name} (${update.section})`);
-  }
-
-  if (missing.length > 0) {
-    throw new Error(`Package(s) not found in package.json: ${missing.join(', ')}`);
-  }
-
-  const indent = detectJsonIndent(raw);
-  const newline = raw.endsWith('\n') ? '\n' : '';
-  return {
-    uri,
-    original,
-    updated: Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`),
-  };
-}
-
-async function writePreparedPackageFile(file: PreparedPackageFile): Promise<void> {
-  await vscode.workspace.fs.writeFile(file.uri, file.updated);
-}
-
 async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[]): Promise<string[]> {
   const failures: string[] = [];
   for (const file of [...files].reverse()) {
@@ -155,7 +209,7 @@ async function rollbackPreparedPackageFiles(files: readonly PreparedPackageFile[
       await vscode.workspace.fs.writeFile(file.uri, file.original);
     }
     catch (err) {
-      failures.push(file.uri.fsPath);
+      failures.push(toWorkspaceRelativePackageFilePath(file.uri.fsPath));
       logger.error(`Failed to roll back package.json at ${file.uri.toString()}.`, err);
     }
   }
@@ -166,80 +220,127 @@ export async function switchDependencyType(
   packageFilePath: string,
   packageName: string,
   currentlyDev: boolean,
+  expectedSourceSpec: string,
 ): Promise<void> {
   const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const runtimeJson = isRecord(json) ? json : {};
   const sourceKey = currentlyDev ? 'devDependencies' : 'dependencies';
   const targetKey = currentlyDev ? 'dependencies' : 'devDependencies';
-  const source = json[sourceKey] ?? {};
-  const version = source[packageName];
-  if (version === undefined) {
-    throw new Error(`Package ${packageName} not found in ${sourceKey}.`);
+  const sourceEntry = readOwnDependencySpec(runtimeJson[sourceKey], packageName);
+  if (!sourceEntry.valid || !sourceEntry.present) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, sourceEntry.value);
+  }
+  const version = sourceEntry.value;
+  if (version !== expectedSourceSpec) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version);
   }
 
+  const targetEntry = readOwnDependencySpec(runtimeJson[targetKey], packageName);
+  if (!targetEntry.valid || targetEntry.present) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version, targetEntry.value);
+  }
+
+  const source = sourceEntry.section;
+  if (source === undefined) {
+    throw new DependencyTypeConflictError(packageName, expectedSourceSpec, version);
+  }
   delete source[packageName];
   if (Object.keys(source).length === 0) {
-    delete json[sourceKey];
+    delete runtimeJson[sourceKey];
   }
   else {
-    json[sourceKey] = source;
+    runtimeJson[sourceKey] = source;
   }
 
-  json[targetKey] = sortDependencyMap({
-    ...(json[targetKey] ?? {}),
+  runtimeJson[targetKey] = sortDependencyMap({
+    ...(targetEntry.section ?? {}),
     [packageName]: version,
   });
 
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(runtimeJson, undefined, indent)}${newline}`));
 }
 
 export async function setVersionPin(
   packageFilePath: string,
   packageName: string,
+  section: DependencySection,
+  expectedSpec: string,
   pin: boolean,
 ): Promise<void> {
-  const { json, raw, uri, location } = await readPackageJsonEntry(packageFilePath, packageName);
-  json[location.section] = {
-    ...(json[location.section] ?? {}),
-    [packageName]: setPinnedVersion(location.version, pin),
+  const { json, raw, uri } = await readPackageJson(packageFilePath);
+  const current = json[section]?.[packageName];
+  if (current !== expectedSpec) {
+    throw new VersionPinConflictError();
+  }
+  const parsed = parseDependencySpec(current);
+  if (!parsed.supported) {
+    throw new Error(`Cannot toggle pin for ${packageName}: ${parsed.reason}.`);
+  }
+  json[section] = {
+    ...(json[section] ?? {}),
+    [packageName]: formatDependencySpec(parsed, pin),
   };
   await writePackageJson(uri, raw, json);
 }
 
-export async function pinAllWorkspaceDependencyVersions(): Promise<number> {
-  const files = await findWorkspacePackageJsonFiles();
-  let count = 0;
-  for (const uri of files) {
-    count += await pinAllVersionsInFile(uri.fsPath);
-  }
-  return count;
+export interface PinAllVersionsResult {
+  count: number;
+  skippedFiles: readonly string[];
 }
 
-async function pinAllVersionsInFile(packageFilePath: string): Promise<number> {
-  const { json, raw, uri } = await readPackageJson(packageFilePath);
+/**
+ * Pins every pinnable dependency across every workspace `package.json`. A manifest that
+ * cannot be read or parsed is skipped instead of aborting the run; the rest are all
+ * classified before the first write and committed through the shared write/rollback engine.
+ */
+export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersionsResult> {
+  const files = await findWorkspacePackageJsonFiles();
+  const prepared: PreparedPackageFile[] = [];
+  const skippedFiles: string[] = [];
+  let count = 0;
+  for (const uri of files) {
+    let result: { prepared: PreparedPackageFile | undefined; count: number };
+    try {
+      result = await preparePinAllVersionsInFile(uri.fsPath);
+    }
+    catch (err) {
+      skippedFiles.push(toWorkspaceRelativePackageFilePath(uri.fsPath));
+      logger.error(`Failed to read package.json at ${uri.toString()} for Pin All; skipping it.`, err);
+      continue;
+    }
+    count += result.count;
+    if (result.prepared !== undefined) {
+      prepared.push(result.prepared);
+    }
+  }
+  await writeManyPreparedPackageFilesAtomically(prepared);
+  return { count, skippedFiles };
+}
+
+async function preparePinAllVersionsInFile(
+  packageFilePath: string,
+): Promise<{ prepared: PreparedPackageFile | undefined; count: number }> {
+  const { uri, original, raw, json } = await readRawPackageFile(packageFilePath);
   let count = 0;
   for (const section of ['dependencies', 'devDependencies'] as const) {
     const deps = json[section];
-    if (deps === undefined) { continue; }
+    // A section can be JSON `null` in a hand-edited file; treat it the same as absent
+    // rather than letting Object.entries() throw on it.
+    if (deps === undefined || deps === null) { continue; }
     for (const [name, version] of Object.entries(deps)) {
-      const prefix = extractVersionPrefix(version);
-      const remainder = version.startsWith('workspace:')
-        ? version.slice('workspace:'.length)
-        : version;
-      const remainderPrefix = extractVersionPrefix(remainder);
-      const isConcreteWorkspaceRange = version.startsWith('workspace:')
-        && isConcreteVersion(remainder.slice(remainderPrefix.length));
-      if ((prefix === '^' || prefix === '~') || (isConcreteWorkspaceRange && (remainderPrefix === '^' || remainderPrefix === '~'))) {
-        deps[name] = setPinnedVersion(version, true);
+      const parsed = parseDependencySpec(version);
+      if (parsed.supported && parsed.range !== 'exact') {
+        deps[name] = formatDependencySpec(parsed, true);
         count++;
       }
     }
   }
-  if (count > 0) {
-    await writePackageJson(uri, raw, json);
+  if (count === 0) {
+    return { prepared: undefined, count: 0 };
   }
-  return count;
+  return { prepared: { uri, original, updated: serializePackageJson(raw, json) }, count };
 }
 
 export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
@@ -331,6 +432,19 @@ function detectJsonIndent(raw: string): string {
   return match[0].match(/^[ \t]+/)?.[0] ?? '  ';
 }
 
+/** Package file path relative to its owning workspace folder, for user-facing messages. */
+function toWorkspaceRelativePackageFilePath(fsPath: string): string {
+  const normalized = fsPath.replace(/\\/g, '/');
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  for (const folder of folders) {
+    const root = folder.uri.fsPath.replace(/\\/g, '/').replace(/\/$/, '');
+    if (normalized.startsWith(`${root}/`)) {
+      return normalized.slice(root.length + 1);
+    }
+  }
+  return path.basename(fsPath);
+}
+
 async function readPackageJson(packageFilePath: string): Promise<{
   json: WorkspacePackageJson;
   raw: string;
@@ -341,47 +455,70 @@ async function readPackageJson(packageFilePath: string): Promise<{
   return { json: JSON.parse(raw) as WorkspacePackageJson, raw, uri };
 }
 
-async function readPackageJsonEntry(
-  packageFilePath: string,
-  packageName: string,
-): Promise<{
-  json: WorkspacePackageJson;
-  raw: string;
-  uri: vscode.Uri;
-  location: { section: DependencySection; version: string };
-}> {
-  const { json, raw, uri } = await readPackageJson(packageFilePath);
-  const fromDependencies = json.dependencies?.[packageName];
-  if (fromDependencies !== undefined) {
-    return { json, raw, uri, location: { section: 'dependencies', version: fromDependencies } };
-  }
-  const fromDevDependencies = json.devDependencies?.[packageName];
-  if (fromDevDependencies !== undefined) {
-    return { json, raw, uri, location: { section: 'devDependencies', version: fromDevDependencies } };
-  }
-  throw new Error(`Package ${packageName} not found in package.json.`);
-}
-
 async function writePackageJson(uri: vscode.Uri, raw: string, json: WorkspacePackageJson): Promise<void> {
   const indent = detectJsonIndent(raw);
   const newline = raw.endsWith('\n') ? '\n' : '';
   await vscode.workspace.fs.writeFile(uri, Buffer.from(`${JSON.stringify(json, undefined, indent)}${newline}`));
 }
 
-function setPinnedVersion(version: string, pin: boolean): string {
-  const workspacePrefix = version.startsWith('workspace:') ? 'workspace:' : '';
-  const remainder = workspacePrefix === '' ? version : version.slice(workspacePrefix.length);
-  const versionPrefix = extractVersionPrefix(remainder);
-  const normalized = remainder.slice(versionPrefix.length);
-  return pin ? `${workspacePrefix}${normalized}` : `${workspacePrefix}^${normalized}`;
-}
-
-function isConcreteVersion(version: string): boolean {
-  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
-}
-
-function sortDependencyMap(dependencies: Record<string, string>): Record<string, string> {
+function sortDependencyMap(dependencies: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(dependencies).sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+interface OwnDependencySpec {
+  section: Record<string, unknown> | undefined;
+  valid: boolean;
+  present: boolean;
+  value: unknown;
+}
+
+function readOwnDependencySpec(section: unknown, packageName: string): OwnDependencySpec {
+  if (section === undefined) {
+    return { section: undefined, valid: true, present: false, value: undefined };
+  }
+  if (!isRecord(section)) {
+    return { section: undefined, valid: false, present: false, value: section };
+  }
+
+  const dependencySection = section as Record<string, unknown>;
+  const present = Object.hasOwn(dependencySection, packageName);
+  return {
+    section: dependencySection,
+    valid: true,
+    present,
+    value: present ? dependencySection[packageName] : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const CONFLICT_ANSI_ESCAPE = new RegExp(
+  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
+  'g',
+);
+const CONFLICT_CONTROL = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
+  'g',
+);
+
+function sanitizeConflictText(value: unknown): string {
+  if (typeof value !== 'string') {
+    if (value === undefined) {
+      return '<missing>';
+    }
+    if (value === null) {
+      return '<null>';
+    }
+    return Array.isArray(value) ? '<array>' : `<${typeof value}>`;
+  }
+
+  return value
+    .replace(CONFLICT_ANSI_ESCAPE, '')
+    .replace(CONFLICT_CONTROL, ' ')
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .slice(0, 240);
 }

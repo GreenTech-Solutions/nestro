@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -20,8 +20,11 @@ import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
 import { LoadingItem } from '../providers/LoadingItem';
 import {
   fetchAllLatestVersions,
+  fetchPackageMetadata,
   getWorkspacePackageFilePaths,
+  logger,
   readAllWorkspaceDependencies,
+  resolveMetadataRegistryKey,
   showError,
 } from '../utils';
 import type { AuditAdvisory, AuditResult } from '../utils';
@@ -62,40 +65,51 @@ vi.mock('../clients', () => ({
   )),
 }));
 
-vi.mock('../utils', () => ({
-  fetchAllLatestVersions: vi.fn(),
-  getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
-  getWorkspacePackageFilePaths: vi.fn(),
-  getUpdateType: getUpdateTypeMock,
-  inferPathAttribution: vi.fn((packageName: string, paths: readonly string[]) => (
-    paths.length === 1 && (paths[0] === packageName || paths[0] === `node_modules/${packageName}`)
-      ? 'direct'
-      : 'unknown'
-  )),
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-    dispose: vi.fn(),
-  },
-  // Test double for the coordinator: runs the given operation immediately
-  // without real cross-key exclusion — this file's provider-level tests only need
-  // installUpdateCommand's control flow, not coordinator concurrency semantics
-  // (those are covered directly in operationCoordinator.unit.test.ts).
-  mutationCoordinator: {
-    runExclusive: vi.fn((_key: string, fn: () => Promise<unknown>) => fn()),
-    runManyExclusive: vi.fn((_keys: readonly string[], fn: () => Promise<unknown>) => fn()),
-  },
-  readAllWorkspaceDependencies: vi.fn(),
-  readWorkspaceDependencies: vi.fn(),
-  runNpmAudit: vi.fn(),
-  mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
-  showError: vi.fn(),
-}));
+vi.mock('../utils', async () => {
+  const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
+  return {
+    ...releaseAge,
+    fetchAllLatestVersions: vi.fn(),
+    fetchPackageMetadata: vi.fn(),
+    getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
+    getWorkspacePackageFilePaths: vi.fn(),
+    getUpdateType: getUpdateTypeMock,
+    inferPathAttribution: vi.fn((packageName: string, paths: readonly string[]) => (
+      paths.length === 1 && (paths[0] === packageName || paths[0] === `node_modules/${packageName}`)
+        ? 'direct'
+        : 'unknown'
+    )),
+    logger: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+      dispose: vi.fn(),
+    },
+    // Test double for the coordinator: runs the given operation immediately
+    // without real cross-key exclusion — this file's provider-level tests only need
+    // installUpdateCommand's control flow, not coordinator concurrency semantics
+    // (those are covered directly in operationCoordinator.unit.test.ts).
+    mutationCoordinator: {
+      runExclusive: vi.fn((_key: string, fn: () => Promise<unknown>) => fn()),
+      runManyExclusive: vi.fn((_keys: readonly string[], fn: () => Promise<unknown>) => fn()),
+    },
+    parseDependencySpec,
+    readAllWorkspaceDependencies: vi.fn(),
+    readWorkspaceDependencies: vi.fn(),
+    resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (
+      Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
+    )),
+    runNpmAudit: vi.fn(),
+    mergeAuditAdvisories: vi.fn((advisories: readonly AuditAdvisory[]) => [...advisories]),
+    showError: vi.fn(),
+  };
+});
 
 describe('PackagesProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNestroConfiguration({});
     getUpdateTypeMock.mockImplementation(realGetUpdateType);
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
       {
@@ -116,6 +130,14 @@ describe('PackagesProvider', () => {
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([
       ['react', '19.0.0'],
     ]));
+    vi.mocked(fetchPackageMetadata).mockResolvedValue({
+      kind: 'success',
+      result: {
+        versions: [],
+        distTags: {},
+        publishTimes: { kind: 'not-provided' },
+      },
+    });
     vi.mocked(getWorkspacePackageFilePaths).mockResolvedValue(['/workspace/package.json']);
     createClientMock.mockReset();
     resolveAuditProjectsMock.mockReset();
@@ -227,6 +249,178 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
   });
 
+  it('excludes prereleases from update checks when the setting is absent', async () => {
+    mockNestroConfiguration({});
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      false,
+      7,
+    );
+  });
+
+  it('passes explicit prerelease opt-in to update checks', async () => {
+    mockNestroConfiguration({ includePreReleases: true });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      true,
+      7,
+    );
+  });
+
+  it('does not enable prereleases for the greatest target when the setting is absent', async () => {
+    mockNestroConfiguration({ updateTarget: 'greatest' });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'greatest',
+      false,
+      7,
+    );
+  });
+
+  it('passes zero to the NCU wrapper and skips metadata fan-out', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 0 });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledWith(
+      '/workspace/package.json',
+      'latest',
+      false,
+      0,
+    );
+    expect(fetchPackageMetadata).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates metadata by package and registry while capping concurrent requests', async () => {
+    const packageNames = ['react', 'vue', 'vite', 'eslint', 'typescript', 'vitest', 'react'];
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(packageNames.map((name, index) => ({
+      name,
+      current: '1.0.0',
+      dev: index === packageNames.length - 1,
+      versionPrefix: '',
+      packageFilePath: '/workspace/package.json',
+    })));
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map(
+      packageNames.map(name => [name, '1.1.0']),
+    ));
+    vi.mocked(resolveMetadataRegistryKey).mockResolvedValue('https://registry.example.test/');
+    let activeRequests = 0;
+    let maximumActiveRequests = 0;
+    vi.mocked(fetchPackageMetadata).mockImplementation(async () => {
+      activeRequests += 1;
+      maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      activeRequests -= 1;
+      return {
+        kind: 'success',
+        result: {
+          versions: ['1.1.0'],
+          distTags: { latest: '1.1.0' },
+          publishTimes: { kind: 'not-provided' },
+        },
+      };
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    expect(fetchPackageMetadata).toHaveBeenCalledTimes(6);
+    expect(maximumActiveRequests).toBeLessThanOrEqual(4);
+  });
+
+  it('keeps the accepted NCU version while surfacing a newer held-back release', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-27T00:00:00.000Z'));
+    try {
+      mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+      vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([['react', '1.1.0']]));
+      vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+        kind: 'success',
+        result: {
+          versions: ['1.1.0', '2.0.0'],
+          distTags: { latest: '2.0.0' },
+          publishTimes: {
+            kind: 'provided',
+            byVersion: {
+              '1.1.0': '2026-01-01T00:00:00.000Z',
+              '2.0.0': '2026-05-26T00:00:00.000Z',
+            },
+          },
+        },
+      });
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      await provider.loadPackages();
+      await provider.checkUpdates();
+
+      const react = getPackageItems(provider).find(item => item.packageName === 'react');
+      expect(react).toMatchObject({
+        latest: '1.1.0',
+        releaseAge: {
+          kind: 'held-back',
+          version: '2.0.0',
+          eligibleAt: '2026-06-02T00:00:00.000Z',
+        },
+      });
+      expect(react?.description).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
+      expect(react?.tooltip).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces unknown release age without hiding an accepted update', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
+      name: 'react',
+      current: '1.0.0',
+      dev: false,
+      versionPrefix: '',
+      packageFilePath: '/workspace/package.json',
+    }]);
+    vi.mocked(fetchAllLatestVersions).mockResolvedValue(new Map([['react', '1.1.0']]));
+    vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({
+      kind: 'success',
+      result: {
+        versions: ['1.1.0', '2.0.0'],
+        distTags: { latest: '2.0.0' },
+        publishTimes: { kind: 'not-provided' },
+      },
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+
+    const react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react).toMatchObject({
+      latest: '1.1.0',
+      releaseAge: { kind: 'unknown', version: '1.1.0' },
+    });
+    expect(react?.tooltip).toContain('Release age unknown for 1.1.0; update is not blocked.');
+  });
+
   it('does not reuse update cache when the package-file set changes', async () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
@@ -258,7 +452,8 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenLastCalledWith(
       '/workspace/tools/package.json',
       'latest',
-      true,
+      false,
+      7,
     );
   });
 
@@ -273,6 +468,21 @@ describe('PackagesProvider', () => {
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
   });
 
+  it('reuses the update cache regardless of row order', async () => {
+    // Debounce off: the cheap policy gate would otherwise short-circuit the second check
+    // before the fingerprint that this test is about is ever computed.
+    mockNestroConfiguration({ checkUpdatesDebounce: 0 });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    const entries = (provider as unknown as { allEntries: unknown[] }).allEntries;
+    setProviderState(provider, { allEntries: [...entries].reverse() });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores concurrent update checks while a check is already running', async () => {
     let resolveFetch: (value: Map<string, string>) => void = () => {};
     vi.mocked(fetchAllLatestVersions).mockReturnValueOnce(new Promise((resolve) => {
@@ -281,11 +491,10 @@ describe('PackagesProvider', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
 
     await provider.loadPackages();
+    // Both calls are issued before either can reach the fetch: the running guard,
+    // set synchronously at the top of checkUpdates(), must still block the second.
     const firstCheck = provider.checkUpdates();
-    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
-
     const secondCheck = provider.checkUpdates();
-    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(1);
 
     resolveFetch(new Map([['react', '19.0.0']]));
     await Promise.all([firstCheck, secondCheck]);
@@ -462,6 +671,18 @@ describe('PackagesProvider', () => {
     await provider.loadPackages();
     await provider.checkUpdates();
     mockNestroConfiguration({ includePreReleases: false });
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse update cache when minimum release age changes', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 7 });
+    const provider = new PackagesProvider(new FilterManager('all'));
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    mockNestroConfiguration({ minimumReleaseAgeDays: 14 });
     await provider.checkUpdates();
 
     expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
@@ -1012,6 +1233,112 @@ describe('PackagesProvider', () => {
     expect(createClientMock).toHaveBeenCalledTimes(2);
     expect(runAuditMock).toHaveBeenCalledTimes(2);
     expect(react?.vulnerabilitySeverity).toBe('moderate');
+  });
+
+  it('discards an audit result after the package snapshot reloads', async () => {
+    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    createClientMock.mockReturnValue({
+      runAudit: vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+        resolveAudit = resolve;
+      })),
+    });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const audit = provider.runAudit();
+    await vi.waitFor(() => expect(createClientMock).toHaveBeenCalledTimes(1));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      {
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+      {
+        name: 'lodash',
+        current: '4.17.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      },
+    ]);
+    await provider.loadPackages();
+
+    resolveAudit(new Map([['react', 'high']]));
+    await audit;
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+    expect(provider.getAuditProjects()).toEqual([]);
+    expect(provider.getAuditFailures()).toEqual([]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && (
+      item.label === 'Audit complete' || item.label === 'Audit incomplete'
+    ))).toBe(false);
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/^Audit/));
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current audit failure when a cancelled predecessor succeeds late', async () => {
+    let resolveOldAudit: (value: Map<string, 'high'>) => void = () => {};
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+      resolveOldAudit = resolve;
+    }));
+    const newRunAudit = vi.fn().mockRejectedValue(new Error('current audit failed'));
+    createClientMock
+      .mockReturnValueOnce({ runAudit: oldRunAudit })
+      .mockReturnValueOnce({ runAudit: newRunAudit });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    let treeChangeCount = 0;
+    const treeChangeSubscription = provider.onDidChangeTreeData(() => {
+      treeChangeCount += 1;
+    });
+
+    const oldAudit = provider.runAudit();
+    await vi.waitFor(() => expect(oldRunAudit).toHaveBeenCalledTimes(1));
+    provider.cancelAudit();
+
+    await provider.runAudit();
+    const treeChangesAfterCurrentRun = treeChangeCount;
+    resolveOldAudit(new Map([['react', 'high']]));
+    await oldAudit;
+
+    expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['failure']);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Audit incomplete')).toBe(true);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith('Audit incomplete: 0 vulnerable package(s); failed 1 package root(s).');
+    expect(logger.info).not.toHaveBeenCalledWith(expect.stringMatching(/^Audit: /));
+    expect(showError).not.toHaveBeenCalled();
+    expect(treeChangeCount).toBe(treeChangesAfterCurrentRun);
+    treeChangeSubscription.dispose();
+  });
+
+  it('keeps the current audit success when a cancelled predecessor fails late', async () => {
+    let rejectOldAudit: (reason: Error) => void = () => {};
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((_, reject) => {
+      rejectOldAudit = reject;
+    }));
+    const newRunAudit = vi.fn().mockResolvedValue(new Map<string, never>());
+    createClientMock
+      .mockReturnValueOnce({ runAudit: oldRunAudit })
+      .mockReturnValueOnce({ runAudit: newRunAudit });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const oldAudit = provider.runAudit();
+    await vi.waitFor(() => expect(oldRunAudit).toHaveBeenCalledTimes(1));
+    provider.cancelAudit();
+
+    await provider.runAudit();
+    rejectOldAudit(new Error('stale audit failed'));
+    await oldAudit;
+
+    expect(provider.getAuditProjects().map(summary => summary.status)).toEqual(['success']);
+    expect(provider.getAuditFailures()).toEqual([]);
+    expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Audit complete')).toBe(true);
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
   });
 
   it('does nothing when cancelling with no audit running', async () => {
@@ -1709,6 +2036,164 @@ describe('PackagesProvider', () => {
       reason: 'workspace-escape',
     })]);
   });
+
+  describe('stale-safe reload', () => {
+    it('does not let an older load overwrite a newer one that already finished', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+      resolveOld([{
+        name: 'old-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await oldLoad;
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['new-package']);
+    });
+
+    it('does not let an older load with no discovered packages overwrite a newer one that already finished', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+      resolveOld([]);
+      await oldLoad;
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['new-package']);
+    });
+
+    it('keeps only the later of two reloads started back to back, such as a watcher tick racing a manual refresh', async () => {
+      let resolveWatcherRead: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies).mockReturnValueOnce(new Promise((resolve) => {
+        resolveWatcherRead = resolve;
+      }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const watcherReload = provider.loadPackages();
+      const manualRefresh = provider.loadPackages();
+      resolveWatcherRead([{
+        name: 'stale-watcher-result',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await Promise.all([watcherReload, manualRefresh]);
+
+      expect(getPackageItems(provider).map(item => item.packageName)).toEqual(['react', 'eslint']);
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(false);
+    });
+
+    it('discards a load that finishes after the provider has been disposed', async () => {
+      let resolveRead: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies).mockReturnValueOnce(new Promise((resolve) => {
+        resolveRead = resolve;
+      }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const loadPromise = provider.loadPackages();
+      provider.dispose();
+      resolveRead([{
+        name: 'late-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await loadPromise;
+
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(true);
+    });
+
+    it('keeps the current cancellation token when an older, already-superseded load finishes first', async () => {
+      let resolveOld: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      let resolveNew: (value: Awaited<ReturnType<typeof readAllWorkspaceDependencies>>) => void = () => {};
+      vi.mocked(readAllWorkspaceDependencies)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+      const provider = new PackagesProvider(new FilterManager('all'));
+
+      const oldLoad = provider.loadPackages();
+      const newLoad = provider.loadPackages();
+
+      resolveOld([{
+        name: 'old-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await oldLoad;
+      provider.dispose();
+      resolveNew([{
+        name: 'new-package',
+        current: '1.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: '/workspace/package.json',
+      }]);
+      await newLoad;
+
+      expect(provider.getChildren().some(item => item instanceof LoadingItem)).toBe(true);
+    });
+
+    it('does not open a second audit guard when a reload runs while an audit is in progress', async () => {
+      let resolveFirstAudit: (value: Map<string, string>) => void = () => {};
+      const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, string>>((resolve) => {
+        resolveFirstAudit = resolve;
+      }));
+      createClientMock.mockReturnValue({ runAudit: runAuditMock });
+      const provider = new PackagesProvider(new FilterManager('all'));
+      await provider.loadPackages();
+
+      const firstAudit = provider.runAudit();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(createClientMock).toHaveBeenCalledTimes(1);
+
+      await provider.loadPackages();
+      void provider.runAudit();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(createClientMock).toHaveBeenCalledTimes(1);
+
+      resolveFirstAudit(new Map([['react', 'high']]));
+      await firstAudit;
+    });
+  });
 });
 
 function mockNestroConfiguration(values: Record<string, unknown>): void {
@@ -2291,6 +2776,295 @@ describe('package identity boundary', () => {
       await rm(root, { recursive: true, force: true });
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe('update fingerprint', () => {
+  let root: string;
+  let manifest: string;
+  let previousFolders: typeof vscode.workspace.workspaceFolders;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // A config override installs a persistent mock that clearAllMocks() leaves in place.
+    mockNestroConfiguration({});
+    root = await realpath(await mkdtemp(join(tmpdir(), 'nestro-update-fingerprint-')));
+    manifest = join(root, 'package.json');
+    await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
+    previousFolders = vscode.workspace.workspaceFolders;
+    setWorkspaceFolders(root);
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([{
+      name: 'react',
+      current: '^1.0.0',
+      dev: false,
+      versionPrefix: '^',
+      packageFilePath: manifest,
+    }]);
+    // A once-queued mock left unconsumed by a rejected fetch in one test must not
+    // leak into the next test's own queued implementation.
+    vi.mocked(fetchAllLatestVersions).mockReset();
+  });
+
+  afterEach(async () => {
+    restoreWorkspaceFolders(previousFolders);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('changes the update fingerprint when minimum release age changes', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    const identity = {
+      packageName: 'react',
+      packageFilePath: manifest,
+      section: 'dependencies' as const,
+    };
+    const computeFingerprint = (provider as unknown as {
+      computeUpdateFingerprint: (
+        identities: readonly typeof identity[],
+        target: 'latest',
+        includePreReleases: boolean,
+        minimumReleaseAgeDays: number,
+      ) => Promise<string>;
+    }).computeUpdateFingerprint;
+
+    const defaultFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 7);
+    const changedFingerprint = await computeFingerprint.call(provider, [identity], 'latest', false, 14);
+
+    expect(changedFingerprint).not.toBe(defaultFingerprint);
+  });
+
+  it('rejects a fetch when the manifest changes while it is in flight, with no explicit invalidation', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        await writeFile(manifest, JSON.stringify({ dependencies: { react: '^9.0.0' } }));
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['react', '2.0.0']]));
+    await check;
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBeUndefined();
+
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([{
+      name: 'react',
+      current: '^9.0.0',
+      dev: false,
+      versionPrefix: '^',
+      packageFilePath: manifest,
+    }]);
+    await provider.loadPackages();
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '9.5.0']]));
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('9.5.0');
+  });
+
+  it('rejects a fetch when a reload starts while it is in flight', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        await provider.loadPackages();
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['react', '2.0.0']]));
+    await check;
+
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '3.0.0']]));
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('3.0.0');
+  });
+
+  it('rejects a fetch when the update policy changes while it is in flight', async () => {
+    mockNestroConfiguration({ updateTarget: 'latest' });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        mockNestroConfiguration({ updateTarget: 'minor' });
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['react', '2.0.0']]));
+    await check;
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBeUndefined();
+
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '1.5.0']]));
+    await provider.checkUpdates();
+
+    expect(fetchAllLatestVersions).toHaveBeenCalledTimes(2);
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('1.5.0');
+  });
+
+  it('keeps an installing row and its known latest when a stale fetch is rejected', async () => {
+    mockNestroConfiguration({ checkUpdatesForceAlways: true });
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '2.0.0']]));
+    await provider.checkUpdates();
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('2.0.0');
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        await writeFile(manifest, JSON.stringify({ dependencies: { react: '^9.0.0' } }));
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    provider.markPackageUpdating({ packageName: 'react', packageFilePath: manifest, section: 'dependencies' }, true);
+    releaseFetch(new Map([['react', '3.0.0']]));
+    await check;
+
+    const react = getPackageItems(provider).find(item => item.packageName === 'react');
+    expect(react?.installing).toBe(true);
+    expect(react?.latest).toBe('2.0.0');
+  });
+
+  it('rejects a fetch when two sections swap the specs of the same package name', async () => {
+    await writeFile(manifest, JSON.stringify({
+      dependencies: { react: '^1.0.0' },
+      devDependencies: { react: '^2.0.0' },
+    }));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: manifest },
+      { name: 'react', current: '^2.0.0', dev: true, versionPrefix: '^', packageFilePath: manifest },
+    ]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        await writeFile(manifest, JSON.stringify({
+          dependencies: { react: '^2.0.0' },
+          devDependencies: { react: '^1.0.0' },
+        }));
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['react', '5.0.0']]));
+    await check;
+
+    expect(getPackageItems(provider).every(item => item.latest === undefined)).toBe(true);
+  });
+
+  it('treats a manifest that parses to a non-object as having no specs', async () => {
+    await writeFile(manifest, 'null');
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+    vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '2.0.0']]));
+
+    await provider.checkUpdates();
+
+    expect(showError).not.toHaveBeenCalled();
+    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.latest).toBe('2.0.0');
+  });
+
+  it('rejects a fetch when a manifest stops resolving while it is in flight', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      { name: 'ghost', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: manifest },
+    ]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    const fetchGate = new Promise<void>((resolveGate) => {
+      vi.mocked(fetchAllLatestVersions).mockImplementationOnce(async () => {
+        await rm(manifest, { force: true });
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['ghost', '5.0.0']]));
+    await check;
+
+    expect(getPackageItems(provider).find(item => item.packageName === 'ghost')?.latest).toBeUndefined();
+  });
+
+  it('rejects a fetch when two manifests swap the specs of the same dependency', async () => {
+    const otherManifest = join(root, 'apps', 'web', 'package.json');
+    await mkdir(dirname(otherManifest), { recursive: true });
+    await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
+    await writeFile(otherManifest, JSON.stringify({ dependencies: { react: '^2.0.0' } }));
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([
+      { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: manifest },
+      { name: 'react', current: '^2.0.0', dev: false, versionPrefix: '^', packageFilePath: otherManifest },
+    ]);
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    let releaseFetch: (value: Map<string, string>) => void = () => {};
+    let fetchCount = 0;
+    const fetchGate = new Promise<void>((resolveGate) => {
+      // Two manifests mean two fetches; only the first one swaps and gates, and the
+      // second must still resolve or the check would fail for the wrong reason.
+      vi.mocked(fetchAllLatestVersions).mockImplementation(async () => {
+        fetchCount += 1;
+        if (fetchCount > 1) {
+          return new Map([['react', '5.0.0']]);
+        }
+        await writeFile(manifest, JSON.stringify({ dependencies: { react: '^2.0.0' } }));
+        await writeFile(otherManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
+        return await new Promise<Map<string, string>>((resolve) => {
+          releaseFetch = resolve;
+          resolveGate();
+        });
+      });
+    });
+    const check = provider.checkUpdates();
+    await fetchGate;
+    releaseFetch(new Map([['react', '5.0.0']]));
+    await check;
+
+    // Two manifests nest the rows under a workspace folder, so the flat helper misses them.
+    const folders = provider.getChildren().filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    const rows = folders
+      .flatMap(folder => folder.children)
+      .flatMap(group => group.children)
+      .filter((item): item is PackageItem => item instanceof PackageItem);
+    expect(rows).toHaveLength(2);
+    expect(rows.every(item => item.latest === undefined)).toBe(true);
   });
 });
 

@@ -1,3 +1,4 @@
+export * from './dependencySpec';
 export * from './packageReader';
 export * from './ncuClient';
 export * from './packageManager';
@@ -11,6 +12,12 @@ export * from './auditReport';
 export * from './auditReportFormatter';
 export * from './bunAuditClient';
 export * from './processRunner';
+export * from './metadataRunner';
+export * from './metadataRegistry';
+export * from './releaseAge';
+export * from './nativeMetadataClient';
+export * from './bunConfig';
+export * from './yarnMetadataClient';
 export * from './shellTask';
 export * from './yarnAuditClient';
 export * from './yarnFamily';

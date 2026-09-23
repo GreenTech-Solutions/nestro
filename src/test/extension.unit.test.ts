@@ -138,7 +138,7 @@ describe('activate()', () => {
 
     extension.activate(makeContext());
 
-    expect(freshVscode.window.createOutputChannel).toHaveBeenCalledWith('Nestro');
+    expect(freshVscode.window.createOutputChannel).toHaveBeenCalledWith('Nestro', { log: true });
   });
 
   it('passes configured default filter to the packages provider', () => {

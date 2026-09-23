@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { AuditResult, AuditSeverity } from '../utils/auditClient';
+import { validatePackageName, validatePackageVersionSpec } from './operandValidation';
 import { ShellTaskCommand } from '../utils/shellTask';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
@@ -36,11 +37,18 @@ export abstract class Client {
   }
 
   protected formatPackageTargets(packages: readonly PackageTarget[]): vscode.ShellQuotedString[] {
-    return packages.map(packageTarget => this.quoteShellArg(`${packageTarget.name}@${packageTarget.version}`));
+    return packages.map((packageTarget) => {
+      validatePackageName(packageTarget.name);
+      validatePackageVersionSpec(packageTarget.version);
+      return this.quoteShellArg(`${packageTarget.name}@${packageTarget.version}`);
+    });
   }
 
   protected formatPackageNames(packages: readonly string[]): vscode.ShellQuotedString[] {
-    return packages.map(packageName => this.quoteShellArg(packageName));
+    return packages.map((packageName) => {
+      validatePackageName(packageName);
+      return this.quoteShellArg(packageName);
+    });
   }
 
   protected getSectionArgs(packages: readonly PackageTarget[], devFlag: string): string[] {

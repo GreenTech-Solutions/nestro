@@ -4,7 +4,12 @@ import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
 import { PackageItem, PackagesProvider } from '../providers';
-import { setVersionPin, showError, switchDependencyType } from '../utils';
+import {
+  DependencyTypeConflictError,
+  setVersionPin,
+  showError,
+  switchDependencyType,
+} from '../utils';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -33,6 +38,7 @@ const identityMocks = vi.hoisted(() => {
       dev: boolean;
       versionPrefix?: string;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
+    resolvePinManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     resolveUnambiguousManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
@@ -93,7 +99,7 @@ describe('switchDepTypeCommand()', () => {
 
     await switchDepTypeCommand(item, provider);
 
-    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', false, '^18.0.0');
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -114,7 +120,7 @@ describe('switchDepTypeCommand()', () => {
 
     await switchDepTypeCommand(item, provider);
 
-    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+    expect(switchDependencyType).toHaveBeenCalledWith('/workspace/package.json', 'react', true, '^18.0.0');
   });
 
   it('stops before a write when the provider cannot resolve the current row', async () => {
@@ -167,6 +173,30 @@ describe('switchDepTypeCommand()', () => {
     expect(provider.loadPackages).not.toHaveBeenCalled();
   });
 
+  it('shows both specs and does not reload when the target section already contains the package', async () => {
+    const conflict = new DependencyTypeConflictError('react', '^18.0.0', '^18.0.0', '~17.0.0');
+    vi.mocked(switchDependencyType).mockRejectedValueOnce(conflict);
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'react',
+      '^18.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+    );
+
+    await switchDepTypeCommand(item, provider);
+
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('^18.0.0'));
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('~17.0.0'));
+    expect(showError).toHaveBeenCalledWith(expect.not.stringContaining('/workspace/package.json'));
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['undefined (Command Palette invocation with no context item)', undefined],
     ['a malformed non-PackageItem object', { packageName: 'react', packageFilePath: '/workspace/package.json' }],
@@ -203,7 +233,9 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', true);
+    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledTimes(1);
+    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '^18.0.0', true);
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -224,7 +256,75 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', false);
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '18.0.0', false);
+  });
+
+  it('pins a caret-prefixed devDependency using the devDependencies section explicitly', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'vitest',
+      '^2.0.0',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      true,
+      '^',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider);
+    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'vitest', 'devDependencies', '^2.0.0', true);
+  });
+
+  it('pins a caret-prefixed workspace: range without corrupting the protocol', async () => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'internal-lib',
+      'workspace:^1.2.3',
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'internal-lib', 'dependencies', 'workspace:^1.2.3', true);
+  });
+
+  it.each([
+    ['workspace:*', 'workspace range is not a concrete version (wildcard version range)'],
+    ['file:../local-pkg', 'local file dependency'],
+    ['git+https://github.com/foo/bar.git', 'git dependency'],
+    ['npm:real-pkg@^1.2.3', 'npm alias dependency'],
+    ['>=1.2.3 <2.0.0', 'compound version range'],
+  ] as const)('leaves the file untouched and reports why for unsupported spec %s', async (currentVersion, reason) => {
+    const provider = makeProvider();
+    const item = new PackageItem(
+      'pkg',
+      currentVersion,
+      undefined,
+      'none',
+      false,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '',
+    );
+
+    await pinVersionCommand(item, provider);
+
+    expect(setVersionPin).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(`cannot toggle version pin for pkg — ${reason}`);
   });
 
   it('stops before pinning when identity or manifest validation fails', async () => {
@@ -235,7 +335,7 @@ describe('pinVersionCommand()', () => {
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
 
-    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolvePinManifestEntry.mockResolvedValueOnce(undefined as never);
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
   });
@@ -472,6 +572,26 @@ describe('removePackageCommand()', () => {
     expect(executeTaskMock).not.toHaveBeenCalled();
     expect(provider.markPackageUpdating).not.toHaveBeenCalled();
     expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('rejects an option-shaped manifest key before the remove task ever launches', async () => {
+    const provider = makeProvider();
+
+    await removePackageCommand(
+      new PackageItem('--global', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
+      provider,
+    );
+
+    expect(executeTaskMock).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(
+      expect.stringContaining('cannot start with a hyphen'),
+      expect.anything(),
+    );
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: '--global',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, false);
   });
 });
 
