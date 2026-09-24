@@ -26,9 +26,10 @@ push to master
        │
        └─ workflow_run(success) ──▶ Release prepare (.github/workflows/release-prepare.yml)
                                       opens/refreshes PR release/v<version> (package.json +
-                                      CHANGELOG.md) and re-dispatches Verify on its head
+                                      CHANGELOG.md) and re-dispatches Verify on its head — that
+                                      dispatched run does not count toward the required check
 
-release/v<version> merges into master (ordinary PR review)
+release/v<version> merges into master once its pull_request Verify run is approved and green (§1.7)
   └─ new push to master re-enters the pipeline above; this time Release candidate's uploaded
      candidate has a version nothing has tagged yet
 
@@ -47,9 +48,10 @@ candidate_run_id inputs, so pushing a tag by hand publishes nothing
      provenance and candidate.json
 ```
 
-Only one step above needs a human to act without a workflow prompting them: reviewing and
-merging the `release/v<version>` pull request. Everything else is either fully automated or
-paused on the protected `release` environment's required-reviewer approval (§5).
+Only one step above needs a human to act without a workflow prompting them: the
+`release/v<version>` pull request — approving its held `Verify` run, then reviewing and
+merging it (§1.7). Everything else is either fully automated or paused on the protected
+`release` environment's required-reviewer approval (§5).
 
 ## 1. Prerequisites
 
@@ -61,7 +63,7 @@ paused on the protected `release` environment's required-reviewer approval (§5)
 | 1.4 | Clean tree on the commit you intend to ship. | Releaser | `git status --short` (empty) |
 | 1.5 | Every gate in the `Verify` workflow's `required` job is green for that exact commit: `required` (job id) needs `quality`, `extension-host`, `package` and `packaged-smoke` and fails if any of them is not `success` (`.github/workflows/ci.yml`). The README `Verify` badge mirrors this same job (`ci.yml` on `master`; see §6 for when it can read as broken even though the pipeline is fine). | CI, confirmed by releaser | Verify run URL, `required` job conclusion |
 | 1.6 | No open security advisory blocks the release. | Repository owner | Private vulnerability reporting inbox, checked empty or triaged |
-| 1.7 | When Release prepare has opened `release/v<version>`, review and merge that pull request. This is the only human step the `release` environment gate does not cover; nothing is tagged until the merged commit passes Verify again. | Releaser | URL of the merged `release/v<version>` pull request |
+| 1.7 | When Release prepare has opened `release/v<version>`, approve the pending `Verify` run on the pull request (Release prepare opens it with the workflow's `GITHUB_TOKEN`, so GitHub creates its `pull_request` runs as "Action required" on every release; someone with write access starts them with **Approve workflows to run** in the pull request's merge box), wait for `Verify / Required` to pass on the pull request, then review and merge. This is the only human step the `release` environment gate does not cover; nothing is tagged until the merged commit passes Verify again. | Releaser | URL of the approved `Verify` run and URL of the merged `release/v<version>` pull request |
 
 ## 2. Verified SHA and artifact identity
 
@@ -87,7 +89,7 @@ ref name alone:
 |---|---|---|---|
 | Verify evidence | `ci.yml` job `package`, into `$CI_ARTIFACT_DIR` (`dist/ci`) | `*.vsix`, `*.vsix.manifest.txt`, `*.vsix.sha256` (from `pnpm run check:vsce`), `evidence.json` (from `pnpm run ci:evidence`), `sbom.json` + `provenance.json` (from `pnpm run release:provenance`) | `verify-evidence-<run_id>-<run_attempt>`, retained 7 days |
 | GitHub attestation | `ci.yml` job `package`, step "Attest the exact VSIX subject" (`actions/attest-build-provenance`), only on `push` to `master` | a signed provenance attestation on the VSIX subject digest | attached to the workflow run, verified later with `gh attestation verify` |
-| Release candidate | `release-candidate.yml`, `pnpm run release:candidate -- --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version 2: `sourceSha`, `ciRunId`, `ciRunAttempt`, `version`, `vsixFile`, `digest`, `manifestSha256`, `sbomSha256`, `provenanceSha256`, `notes`, …) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
+| Release candidate | `release-candidate.yml`, `pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version 2: `sourceSha`, `ciRunId`, `ciRunAttempt`, `version`, `vsixFile`, `digest`, `manifestSha256`, `sbomSha256`, `provenanceSha256`, `notes`, …) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
 | GitHub Release | `release.yml` job `finalize` | `<name>.vsix`, `.manifest.txt`, `.sha256`, `sbom.json`, `provenance.json`, `candidate.json` | attached to the `v<version>` GitHub Release |
 
 Recompute and compare digests by hand instead of trusting the number in a JSON file:
@@ -124,19 +126,19 @@ the working tree — do not run them by hand on a release commit.
 | `pnpm run audit:dependencies` | `pnpm audit --audit-level high` | No dependency vulnerability at High severity or above. | pnpm's own audit output (exit code) |
 | `pnpm run audit:signatures` | no arguments (an extra argument is a hard error) | `pnpm audit signatures --json` and validates the report shape itself: every audited package carried a verified registry signature; an empty, malformed, mismatched-count, or plain-advisory report is rejected rather than read as a pass. | CLI stdout/stderr |
 | `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against a reviewed allowlist, `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
-| `pnpm run ci:evidence -- --out-dir <relative-directory>` | exactly `--out-dir <dir>` | Well-formed CI identity for the current run (full 40-char commit SHA, positive-integer run id/attempt, an `eventName`, the VSIX file name and digest) and writes `evidence.json` (`releaseEligible: false` always — this file is never itself release authority). | `<out-dir>/evidence.json` |
-| `pnpm run release:provenance -- --artifact-dir <relative-directory>` | exactly `--artifact-dir <dir>` | Builds the SBOM (`sbom.json`, runtime dependency list) and the provenance evidence file (`provenance.json`: source SHA, CI run id/attempt, event name, artifact digest, attestation subject/digest, signer workflow) for the artifact already in that directory. | `<artifact-dir>/sbom.json`, `<artifact-dir>/provenance.json` |
-| `pnpm run release:prepare -- --out-dir <relative-directory>` | exactly `--out-dir <dir>`; requires `RELEASE_REPOSITORY_URL` | Computes the next semantic-release version and changelog entry from commit history. **Mutating:** when a release is needed it rewrites `package.json` and `CHANGELOG.md` in the working tree; only `release-prepare.yml` runs it, to draft the version PR. | `<out-dir>/notes.md` and the tool's own release-needed/version outputs |
-| `pnpm run release:candidate -- --artifact-dir <dir> --out-dir <dir>` | exactly `--artifact-dir <dir> --out-dir <dir>` | Builds and validates `candidate.json` (see §2) from verified evidence plus the package version, and copies the VSIX/manifest/digest/SBOM/provenance into the candidate bundle. | `<out-dir>/candidate.json` plus the copied artifact files |
+| `pnpm run ci:evidence --out-dir <relative-directory>` | exactly `--out-dir <dir>` | Well-formed CI identity for the current run (full 40-char commit SHA, positive-integer run id/attempt, an `eventName`, the VSIX file name and digest) and writes `evidence.json` (`releaseEligible: false` always — this file is never itself release authority). | `<out-dir>/evidence.json` |
+| `pnpm run release:provenance --artifact-dir <relative-directory>` | exactly `--artifact-dir <dir>` | Builds the SBOM (`sbom.json`, runtime dependency list) and the provenance evidence file (`provenance.json`: source SHA, CI run id/attempt, event name, artifact digest, attestation subject/digest, signer workflow) for the artifact already in that directory. | `<artifact-dir>/sbom.json`, `<artifact-dir>/provenance.json` |
+| `pnpm run release:prepare --out-dir <relative-directory>` | exactly `--out-dir <dir>`; requires `RELEASE_REPOSITORY_URL` | Computes the next semantic-release version and changelog entry from commit history. **Mutating:** when a release is needed it rewrites `package.json` and `CHANGELOG.md` in the working tree; only `release-prepare.yml` runs it, to draft the version PR. | `<out-dir>/notes.md` and the tool's own release-needed/version outputs |
+| `pnpm run release:candidate --artifact-dir <dir> --out-dir <dir>` | exactly `--artifact-dir <dir> --out-dir <dir>` | Builds and validates `candidate.json` (see §2) from verified evidence plus the package version, and copies the VSIX/manifest/digest/SBOM/provenance into the candidate bundle. | `<out-dir>/candidate.json` plus the copied artifact files |
 
-`pnpm run check:vsce -- --out-dir <relative-directory> --require-clean-worktree` (§2, `src/tools/verifyVsix.ts`)
+`pnpm run check:vsce --out-dir <relative-directory> --require-clean-worktree` (§2, `src/tools/verifyVsix.ts`)
 belongs in this list operationally even though it is a packaging check, not an audit: it also
 compiles the verifier first (`pnpm run test:compile`) and refuses to run against a dirty tree
 when `--require-clean-worktree` is passed, exactly as `ci.yml`'s `package` job does.
 
 ## 4. Packaged smoke
 
-`pnpm run test:packaged -- --artifact-dir <directory> --expected-sha <40-char-sha> --channel
+`pnpm run test:packaged --artifact-dir <directory> --expected-sha <40-char-sha> --channel
 <minimum|stable>` (`src/test/packagedSmokeCli.ts`) installs the produced VSIX into a real VS Code
 Extension Host and confirms it activates. `ci.yml`'s `packaged-smoke` job runs it across a
 `ubuntu-latest` / `windows-latest` / `macos-latest` × `minimum` / `stable` matrix (six runs),
@@ -192,23 +194,13 @@ Dated facts about the credentials in use, current as of 2026-09-18:
 
 ## 6. Post-publish verification
 
-`release.yml`'s own "Compare post-publish registry copies" step is meant to run this automatically,
-seconds after both publishes, in the same job. The download URLs the registries actually serve are:
+`release.yml`'s own "Compare post-publish registry copies" step already runs this automatically,
+seconds after both publishes, in the same job, downloading both copies at the URLs shown below:
 
 ```
 Marketplace: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/greentech-solutions/vsextensions/nestro/<version>/vspackage
 Open VSX:    https://open-vsx.org/api/greentech-solutions/nestro/<version>/file/greentech-solutions.nestro-<version>.vsix
 ```
-
-**Known mismatch (verified 2026-09-18):** the workflow builds the Open VSX URL as
-`https://open-vsx.org/api/<publisher>/<name>/<version>/file/<name>-<version>.vsix`, but Open VSX
-names the file `<publisher>.<name>-<version>.vsix` — for the published `0.4.2` the registry answers
-`302` for the form above and `404` for the workflow's form. Until the workflow (and the policy that
-pins that URL) is corrected, expect the automated step to fail after both publishes; the manual
-comparison in 6.1-6.2 is then the authoritative check. Because `finalize` declares `needs: publish`
-without `always()`, it is skipped when `publish` fails, and re-running `publish` hits the same 404, so
-until the workflow is fixed the GitHub Release has to be created and its assets attached by hand
-from the candidate artifact (retained for 90 days); re-running the job only helps after the fix.
 
 The automated step downloads both (capped at 2 MiB, HTTPS-only, bounded redirects/retries), parses each as a real
 ZIP (entry count/size caps, no unsafe paths, no symlinks), checks the packaged `package.json`
@@ -221,7 +213,7 @@ Do this again yourself, independently and later — the automated check only pro
 served back the right bytes the moment they were asked, not that the listing itself is correct or
 that nothing changed afterward:
 
-1. Re-download both URLs above (`curl -L -o marketplace.vsix ...`, `curl -L -o openvsx.vsix ...`)
+1. Re-download both URLs above (`curl -L --compressed -o marketplace.vsix ...`, `curl -L --compressed -o openvsx.vsix ...`)
    and `shasum -a 256` them against the GitHub Release asset.
 2. `src/tools/publishedArtifact.ts` exports `comparePublishedVsix()`, which implements exactly
    the identity/normalized-manifest comparison above in code — **it has no CLI or `package.json`
@@ -268,7 +260,8 @@ Per-release checklist template — copy this table into the release record and f
 
 | Item | Evidence link / value | Checked by | Date |
 |---|---|---|---|
-| Verify run (`required` green) | | | |
+| Version pull request: approved `Verify` run + merge (§1.7) | | | |
+| Verify run on the tagged commit (`required` green, §1.5) | | | |
 | Release candidate run + `candidate.json` digest | | | |
 | Tag `v<version>` → source SHA | | | |
 | `release` environment approval | | | |
@@ -285,8 +278,7 @@ Per-release checklist template — copy this table into the release record and f
 - Dependency and signature audits, and the CI/release workflow policy, all passed (§3).
 - Packaged smoke and both Extension Host channels passed on every platform in the matrix (§4).
 - A human approved the `release` environment deployment for that specific tag (§5).
-- Both registries were compared against the candidate — automatically, or, while the known
-  mismatch in §6 stands, by the manual comparison in 6.1-6.2 recorded in the §8 table — **and** re-checked
+- Both registries were compared against the candidate automatically, **and** re-checked
   independently afterward, including the listing pages themselves (§6).
 - Every row in the §8 evidence table has a link or value, a name, and a date.
 

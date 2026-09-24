@@ -263,8 +263,7 @@
         "command": "nestro.searchPackages",
         "title": "%commands.nestro.searchPackages.title%",
         "category": "Nestro",
-        "icon": "$(search)",
-        "enablement": "nestro.canSearchPackages"
+        "icon": "$(search)"
       },
       {
         "command": "nestro.clearSearchQuery",
@@ -465,7 +464,8 @@
     "test:packaged": "pnpm run test:compile && node out/test/packagedSmokeCli.js",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
-    "test:unit:watch": "vitest"
+    "test:unit:watch": "vitest",
+    "screenshots": "node scripts/screenshots/capture.mjs"
   },
   "devDependencies": {
     "@semantic-release/changelog": "7.0.0",

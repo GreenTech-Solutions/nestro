@@ -90,3 +90,15 @@ export function formatFailedPackageRootCount(count: number): string {
     ? vscode.l10n.t('{0} package root failed', count)
     : vscode.l10n.t('{0} package roots failed', count);
 }
+
+// Omitting timeZone renders the absolute instant in the caller's local zone.
+export function formatHeldBackDate(instant: string, locale?: string, timeZone?: string): string {
+  const date = new Date(instant);
+  return Number.isNaN(date.getTime())
+    ? instant
+    : new Intl.DateTimeFormat(locale ?? vscode.env.language, { dateStyle: 'medium', timeZone }).format(date);
+}
+
+export function formatFilteredPackageCount(visibleCount: number, totalCount: number): string {
+  return vscode.l10n.t('{0} of {1}', visibleCount, totalCount);
+}

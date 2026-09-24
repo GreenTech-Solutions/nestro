@@ -69,17 +69,22 @@ pin** (shown only when the dependency's current version spec supports pinning), 
 
 ### Filter, search, and status
 
-The active filter and any search text are not shown as rows in the tree — they render as the
-compact text next to the view title (for example `Has Updates (3)` or `Has Updates (3) ·
-"react"`). Select Filter opens a picker for All, Has Updates, Patch, Minor, or Breaking, each
-with a live count. The sidebar badge shows the number of packages with an available update under
-the All filter, independent of whatever filter is currently active.
+The active filter and any search text each show as a status row above the package groups — for
+example "Filter: Has Updates" with a "3 of 10" count, or `Search: "react"` with the number of
+matches. Clicking either row reopens the corresponding picker or search box. The same state also
+renders as compact text next to the view title (`Has Updates (3)` or `Has Updates (3) ·
+"react"`), which VS Code shows only in the view's own pane header — for example after moving
+Nestro into a container with more than one view. Select Filter opens a picker for All, Has
+Updates, Patch, Minor, or Breaking, each with a live count. The sidebar badge shows the number of
+packages with an available update under the All filter, independent of whatever filter is
+currently active.
 
 Status rows appear above the package groups when relevant: a run in progress ("Checking
-updates…", "Running audit…"), a summary ("Last update check", "Audit complete"), or a problem
+updates…", "Running audit…"), a summary ("Last update check", "Audit complete"), a problem
 ("Package read incomplete", "Update check incomplete", "Audit incomplete", "Audit failed",
-"Workspace package loading failed"). Rows that report a failure are clickable and open the
-diagnostics report.
+"Workspace package loading failed"), or the active filter/search state ("Filter: …", "Search:
+…"). Rows that report a failure are clickable and open the diagnostics report; the filter and
+search rows are clickable too and reopen their picker or search box.
 
 ## Update checks
 
@@ -170,13 +175,13 @@ owning workspace folder; the nearest directory with a recognized signal wins, an
 ![Nestro sidebar after an update check: packages grouped into Dependencies and Dev Dependencies, each row showing its update type and target version, with the update-count badge on the Activity Bar icon](images/overview.png)
 
 ### Filter by update type
-![Filter picker for narrowing the package list by update type, with a live count per filter](images/filters.png)
+![Filter picker for narrowing the package list by update type, with a live count per filter and the active filter shown as a status row in the tree](images/filters.png)
 
 ### Pick a specific version
 ![Version picker listing the available versions of express, with the row's inline Update and Pick Version actions visible](images/pick-version.png)
 
 ### Security audit
-![Sidebar after Run Security Audit, with the status row reporting the number of vulnerable packages](images/audit.png)
+![Sidebar after Run Security Audit, with the status row reporting the number of vulnerable packages and a warning marker on each directly affected package row](images/audit.png)
 
 ## Settings
 

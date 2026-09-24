@@ -43,7 +43,7 @@ suite('Feature Test Suite', () => {
 ```
 
 ## Packaged Smoke Test
-- `pnpm run test:packaged` compiles, then runs `out/test/packagedSmokeCli.js` against a built VSIX (`-- --artifact-dir <dir> --expected-sha <sha> --channel <minimum|stable>`)
+- `pnpm run test:packaged` compiles, then runs `out/test/packagedSmokeCli.js` against a built VSIX (`--artifact-dir <dir> --expected-sha <sha> --channel <minimum|stable>`)
 
 ## Policy Tests
 Plain Vitest unit tests that assert repository-wide invariants rather than one module's behavior:

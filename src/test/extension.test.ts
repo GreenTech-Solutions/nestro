@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
-import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider, StatusItem } from '../providers';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   assertTaskExitCode,
@@ -806,7 +806,30 @@ suite('Package tree renders only real data rows', function () {
     assert.strictEqual(
       children[0] instanceof GroupItem,
       true,
-      'the first row must be a real data group — Search and Filter are toolbar/QuickPick actions, not tree rows',
+      'with no active filter/search and no diagnostics, the first row must be a real data group — '
+      + 'status rows (Filter, Search, diagnostics) may legitimately precede groups when active, '
+      + 'but a fake, non-interactive placeholder row must never appear in the tree',
+    );
+  });
+
+  test('a Filter status row is in the tree while a filter is active, and is gone once cleared', () => {
+    provider.setFilter('patch');
+    try {
+      const children = provider.getChildren();
+      const filterRow = children.find(
+        (item): item is StatusItem => item instanceof StatusItem && item.label === 'Filter: Patch',
+      );
+      assert.ok(filterRow, 'a Filter status row must appear while the Patch filter is active');
+      assert.deepStrictEqual(filterRow.command, { command: 'nestro.showFilterPicker', title: 'Change filter' });
+    }
+    finally {
+      provider.setFilter('all');
+    }
+
+    assert.strictEqual(
+      provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Filter: Patch'),
+      false,
+      'the Filter status row must disappear once the filter is cleared back to all',
     );
   });
 });
@@ -1007,16 +1030,22 @@ suite('Manifest Contracts', () => {
 
   test('global actions expose their executable workspace capabilities', () => {
     const commands = getManifest().contributes.commands;
+    // nestro.searchPackages carries no command enablement — its row binds it through
+    // TreeItem.command (viewProjectionService.ts), and visibility is when-gated below instead.
     for (const [commandId, context] of Object.entries({
       'nestro.runInstall': 'nestro.canRunInstall',
       'nestro.runAudit': 'nestro.canRunAudit',
-      'nestro.searchPackages': 'nestro.canSearchPackages',
       'nestro.pinAllVersions': 'nestro.canPinAllVersions',
     })) {
       const command = commands.find(entry => entry.command === commandId);
       assert.ok(command, `${commandId} should be a contributed command`);
       assert.strictEqual(command.enablement, context);
     }
+    assert.strictEqual(
+      commands.find(entry => entry.command === 'nestro.searchPackages')?.enablement,
+      undefined,
+      'nestro.searchPackages must carry no enablement — it is bound through TreeItem.command',
+    );
 
     const toolbarEntries = getManifest().contributes.menus['view/title'];
     for (const [commandId, context] of Object.entries({

@@ -439,6 +439,249 @@ describe('parseAuditOutcome()', () => {
   });
 });
 
+// Real `npm audit --json` output (auditReportVersion 2, npm 11.17), captured against a
+// disposable fixture project and trimmed to five packages. Every key and value below is
+// copied verbatim from that run — npm v2 never reports an installed version, only `nodes`.
+const REAL_NPM_AUDIT_V2_DOCUMENT = {
+  auditReportVersion: 2,
+  vulnerabilities: {
+    axios: {
+      name: 'axios',
+      severity: 'high',
+      isDirect: true,
+      via: [
+        {
+          source: 1111034,
+          name: 'axios',
+          dependency: 'axios',
+          title: 'axios Requests Vulnerable To Possible SSRF and Credential Leakage via Absolute URL',
+          url: 'https://github.com/advisories/GHSA-jr5f-v2jv-69x6',
+          severity: 'high',
+          cwe: [
+            'CWE-918',
+          ],
+          cvss: {
+            score: 0,
+            vectorString: null,
+          },
+          range: '<0.30.0',
+        },
+      ],
+      effects: [],
+      range: '<=0.32.0',
+      nodes: [
+        'node_modules/axios',
+      ],
+      fixAvailable: {
+        name: 'axios',
+        version: '1.20.0',
+        isSemVerMajor: true,
+      },
+    },
+    esbuild: {
+      name: 'esbuild',
+      severity: 'moderate',
+      isDirect: false,
+      via: [
+        {
+          source: 1102341,
+          name: 'esbuild',
+          dependency: 'esbuild',
+          title: 'esbuild enables any website to send any requests to the development server and read the response',
+          url: 'https://github.com/advisories/GHSA-67mh-4wv8-2f99',
+          severity: 'moderate',
+          cwe: [
+            'CWE-346',
+          ],
+          cvss: {
+            score: 5.3,
+            vectorString: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N',
+          },
+          range: '<=0.24.2',
+        },
+      ],
+      effects: [
+        'vite',
+      ],
+      range: '<=0.24.2',
+      nodes: [
+        'node_modules/esbuild',
+      ],
+      fixAvailable: {
+        name: 'vitest',
+        version: '5.0.1',
+        isSemVerMajor: true,
+      },
+    },
+    lodash: {
+      name: 'lodash',
+      severity: 'high',
+      isDirect: true,
+      via: [
+        {
+          source: 1106913,
+          name: 'lodash',
+          dependency: 'lodash',
+          title: 'Command Injection in lodash',
+          url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm',
+          severity: 'high',
+          cwe: [
+            'CWE-77',
+            'CWE-94',
+          ],
+          cvss: {
+            score: 7.2,
+            vectorString: 'CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H',
+          },
+          range: '<4.17.21',
+        },
+      ],
+      effects: [],
+      range: '<=4.17.23',
+      nodes: [
+        'node_modules/lodash',
+      ],
+      fixAvailable: {
+        name: 'lodash',
+        version: '4.18.1',
+        isSemVerMajor: false,
+      },
+    },
+    vite: {
+      name: 'vite',
+      severity: 'high',
+      isDirect: false,
+      via: [
+        {
+          source: 1123525,
+          name: 'vite',
+          dependency: 'vite',
+          title: 'vite: `server.fs.deny` bypass on Windows alternate paths',
+          url: 'https://github.com/advisories/GHSA-fx2h-pf6j-xcff',
+          severity: 'high',
+          cwe: [
+            'CWE-22',
+            'CWE-200',
+          ],
+          cvss: {
+            score: 7.5,
+            vectorString: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N',
+          },
+          range: '<=6.4.2',
+        },
+        'esbuild',
+      ],
+      effects: [
+        'vite-node',
+        'vitest',
+      ],
+      range: '<=6.4.2',
+      nodes: [
+        'node_modules/vite',
+      ],
+      fixAvailable: {
+        name: 'vitest',
+        version: '5.0.1',
+        isSemVerMajor: true,
+      },
+    },
+    vitest: {
+      name: 'vitest',
+      severity: 'critical',
+      isDirect: true,
+      via: [
+        {
+          source: 1139528,
+          name: 'vitest',
+          dependency: 'vitest',
+          title: 'When Vitest UI server is listening, arbitrary file can be read and executed',
+          url: 'https://github.com/advisories/GHSA-5xrq-8626-4rwp',
+          severity: 'critical',
+          cwe: [
+            'CWE-22',
+            'CWE-862',
+          ],
+          cvss: {
+            score: 9.8,
+            vectorString: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H',
+          },
+          range: '<3.2.6',
+        },
+        'vite',
+        'vite-node',
+      ],
+      effects: [],
+      range: '<=3.2.5',
+      nodes: [
+        'node_modules/vitest',
+      ],
+      fixAvailable: {
+        name: 'vitest',
+        version: '5.0.1',
+        isSemVerMajor: true,
+      },
+    },
+  },
+  metadata: {
+    vulnerabilities: {
+      info: 0,
+      low: 0,
+      moderate: 1,
+      high: 3,
+      critical: 1,
+      total: 5,
+    },
+    dependencies: {
+      prod: 86,
+      dev: 203,
+      optional: 50,
+      peer: 0,
+      peerOptional: 0,
+      total: 288,
+    },
+  },
+};
+
+describe('parseAuditOutcome() real npm v2 document', () => {
+  it('captures each package\'s node path and severity without inventing a resolved version', () => {
+    const outcome = parseAuditOutcome({
+      command: 'npm',
+      stdout: JSON.stringify(REAL_NPM_AUDIT_V2_DOCUMENT),
+      exitCode: 1,
+    });
+
+    const result = toAuditResult(expectAdvisories(outcome));
+    const byPackage = new Map(result.advisories.map(advisory => [advisory.packageName, advisory]));
+
+    expect(result.vulnerabilities).toEqual(new Map([
+      ['axios', 'high'],
+      ['esbuild', 'moderate'],
+      ['lodash', 'high'],
+      ['vite', 'high'],
+      ['vitest', 'critical'],
+    ]));
+    // Direct dependencies: the schema's only version-shaped hint is the `nodes` path.
+    expect(byPackage.get('axios')).toMatchObject({
+      attribution: 'direct',
+      resolvedPaths: ['node_modules/axios'],
+      resolvedVersions: [],
+    });
+    expect(byPackage.get('lodash')).toMatchObject({
+      attribution: 'direct',
+      resolvedPaths: ['node_modules/lodash'],
+      resolvedVersions: [],
+    });
+    expect(byPackage.get('vitest')).toMatchObject({
+      attribution: 'direct',
+      resolvedPaths: ['node_modules/vitest'],
+      resolvedVersions: [],
+    });
+    // Transitive dependencies (`isDirect: false`): never eligible for row attribution.
+    expect(byPackage.get('esbuild')).toMatchObject({ attribution: 'transitive', resolvedVersions: [] });
+    expect(byPackage.get('vite')).toMatchObject({ attribution: 'transitive', resolvedVersions: [] });
+  });
+});
+
 describe('runAuditOutcome() process failures', () => {
   beforeEach(() => {
     vi.clearAllMocks();

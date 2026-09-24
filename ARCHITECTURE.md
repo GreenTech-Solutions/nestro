@@ -93,16 +93,22 @@ the row's own state: a base of `outdated`/`package`/`installing-<kind>`, a
 
 Package-row context-menu visibility is controlled by those `view/item/context` `"when"`
 expressions; the row actions do not declare `"enablement"`. Some global commands
-(`nestro.runAudit`, `nestro.updateAllVisible`, `nestro.runInstall`, `nestro.searchPackages`,
-`nestro.pinAllVersions`) do declare `"enablement"` on `contributes.commands`, independently of the
-`"when"` conditions on their `view/title` entries. These view-title actions may appear in the
-toolbar or its overflow menu; their command enablement is not a Command-Palette-only setting.
-Command enablement is also distinct from menu visibility: for a command assigned through a
-`TreeItem.command`, VS Code checks its enablement precondition when the row is clicked, not only
-when a menu renders — confirmed empirically against VS Code 1.125.0 and 1.138.0. A failing
-precondition can leave that bound click as a no-op. The only tree item that sets `this.command` is
-`StatusItem`: it sets `nestro.openStatusReport` only when a diagnostics row is `actionable`, by
-omitting the command property otherwise. That command has no `"enablement"` entry in `package.json`.
+(`nestro.runAudit`, `nestro.updateAllVisible`, `nestro.runInstall`, `nestro.pinAllVersions`) do
+declare `"enablement"` on `contributes.commands`, independently of the `"when"` conditions on
+their `view/title` entries. These view-title actions may appear in the toolbar or its overflow
+menu; their command enablement is not a Command-Palette-only setting. Command enablement is also
+distinct from menu visibility: for a command assigned through a `TreeItem.command`, VS Code
+checks its enablement precondition when the row is clicked, not only when a menu renders —
+confirmed empirically against VS Code 1.125.0 and 1.138.0. A failing precondition can leave that
+bound click as a no-op, with the row rendered but its click a no-op — exactly the state a
+`TreeItem.command` must never be able to reach. The only tree item that sets `this.command` is
+`StatusItem`: a diagnostics row sets `nestro.openStatusReport` when `actionable`; the Filter and
+Search rows instead carry an explicit `command` (`{ command, title }`) from `projectStatusRows()`
+that opens `nestro.showFilterPicker`/`nestro.searchPackages`. Every other row omits the command
+property. All three of these commands carry no `"enablement"` entry in `package.json`:
+`nestro.searchPackages`'s `view/title` toolbar entry gates its visibility with `"when"` alone,
+exactly like `nestro.showFilterPicker`'s — the invariant holds for every command a tree item can
+bind through `TreeItem.command`, with no exception.
 
 ## 3. Canonical project graph
 
@@ -443,7 +449,12 @@ not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 project through `runRootOperations()`, and folds each outcome into an `AuditProjectSummary`
 (kept even when row attribution is suppressed, so the report never loses a project's result)
 and, where advisories exist, into `auditResults: Map<identityKey, AuditSeverity>` for row
-badges. Row attribution (`applyStructuredProjectAuditResults()`) only badges a row when an
+badges. npm audit report v2 advisories carry no version field of their own, so
+`enrichNpmV2AdvisoryVersions()` resolves one first by reading
+`<projectRoot>/node_modules/<name>/package.json` through a bounded reader — a regular file
+under a size cap, a value matching a plain semver pattern, and a realpath check placing the
+read inside the project root — leaving the version unresolved on any failure. Row attribution
+(`applyStructuredProjectAuditResults()`) only badges a row when an
 advisory's `attribution` is `'direct'`, resolves to exactly one row by manifest and canonical
 resolved path (`resolvedPathBelongsToManifest()`, itself gated on the project having exactly
 one origin manifest), and the row's spec is compatible with the resolved version inside the
@@ -613,8 +624,11 @@ not silently re-introduce it.
 - **Package-row context actions use `viewItem` conditions for visibility.** Global `view/title`
   actions may also appear in the title overflow and use their own `when` conditions alongside
   command `enablement` (section 2). For commands assigned through `TreeItem.command`, VS Code
-  checks the enablement precondition when the row is clicked; `StatusItem` instead controls
-  `nestro.openStatusReport` availability by setting or omitting the command property.
+  checks the enablement precondition when the row is clicked; `StatusItem` instead controls which
+  command a row invokes — `nestro.openStatusReport`, `nestro.showFilterPicker`, or
+  `nestro.searchPackages` — by setting or omitting the command property. None of the three carries
+  `enablement`: a row-bound command must never be able to render clickable while its precondition
+  is false.
 - **The three text sanitizers stay separate rather than being consolidated into one.** Each
   serves a different audience with a different policy (log continuation lines, truncated tree
   labels, audit report text); merging them would touch each call site's already-reviewed
@@ -641,8 +655,15 @@ in `provider.withWriteSuppressed()`.
 
 **Adding a status row.** Add a case to `projectStatusRows()` in `viewProjectionService.ts`
 reading from the `ViewProjectionSnapshot` fields `buildViewProjectionSnapshot()` already
-exposes; if the new row needs state the snapshot does not yet carry, add the field to both the
-provider and `ViewProjectionSnapshot`, keeping the projection a pure function of the snapshot.
+exposes; set `actionable: true` for a row that should open the diagnostics report, or an explicit
+`command: { command, title }` for a row that should invoke a different existing command instead —
+that command must carry no `"enablement"` in `package.json`; gate its visibility with `"when"`
+only (section 2/9). Rows are ordered package-read/no-dependencies diagnostics, then check state,
+then audit state, then the active Filter row, then the active Search row — `projectStatusRows()`
+builds them in exactly that order and it is pinned by test; place a new row accordingly rather
+than appending it unconditionally to the end. If the new row needs state the snapshot does not
+yet carry, add the field to both the provider and `ViewProjectionSnapshot`, keeping the
+projection a pure function of the snapshot.
 
 **Adding a context key.** Add it to `VIEW_CONTEXT_KEYS` (`viewProjectionService.ts`), compute
 its value inside `computeViewProjection()`, and reference it from a `"when"` clause in

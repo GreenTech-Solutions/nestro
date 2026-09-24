@@ -1693,6 +1693,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       row.icon,
       row.color,
       row.actionable,
+      row.command,
     ));
   }
 

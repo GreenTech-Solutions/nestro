@@ -52,10 +52,15 @@ the public registry returned on the capture date (2026-09-18) and will drift.
 
 | File | Size (px) | What the frame shows | How the state was produced |
 |---|---|---|---|
-| `overview.png` | 348×346 | Sidebar after an update check: toolbar with Refresh, Check for Updates, Update All and the `…` overflow; the update-count badge on the Activity Bar icon; the "Last update check" status row; Dependencies and Dev Dependencies groups with the update type per row | **Check for Updates**, wait for the check to finish |
-| `filters.png` | 1030×186 | The **Select Filter** QuickPick with All / Has Updates / Patch / Minor / Breaking and their live counts, Patch active; the tree behind it filtered to the single patch update | select the Patch filter, then open **Select Filter** again |
-| `pick-version.png` | 1030×440 | The **Pick Version...** QuickPick for `express`: version list with the `latest` tag and a held-back entry; the focused row shows its two inline actions, Update Package and Pick Version | focus the `express` row, run **Pick Version...** for it |
-| `audit.png` | 348×370 | Sidebar after **Run Security Audit**: the "Audit complete · 6 vulnerable packages" status row above the package groups | **Run Security Audit**, wait for the audit to finish |
+| `overview.png` | 348×333 | Sidebar after an update check: toolbar with Refresh, Check for Updates, Update All and the `…` overflow; the update-count badge on the Activity Bar icon; the "Last update check" status row; Dependencies and Dev Dependencies groups with the update type per row | **Check for Updates**, wait for the check to finish |
+| `filters.png` | 1030×173 | The **Select Filter** QuickPick with All / Has Updates / Patch / Minor / Breaking and their live counts, Patch active; the tree behind it filtered to the single patch update, with the "Filter: Patch · 1 of 10" status row above the group | select the Patch filter, then open **Select Filter** again |
+| `pick-version.png` | 1030×445 | The **Pick Version...** QuickPick for `express`: version list with the `latest` tag and a held-back entry with its eligibility date; the focused row shows its two inline actions, Update Package and Pick Version | focus the `express` row, run **Pick Version...** for it |
+| `audit.png` | 348×355 | Sidebar after **Run Security Audit**: the "Audit complete · 6 vulnerable packages" status row above the package groups, and the vulnerability marker on the three directly affected rows (`axios`, `lodash`, `vitest`) | **Run Security Audit**, wait for the audit to finish |
+
+The sizes above are from the run that produced the current `images/*.png`. `scripts/screenshots/capture.mjs`
+crops each frame's bottom edge to the content it actually captured, so a later run's sizes come from
+that run and depend on live registry data (how many rows are outdated, how long version strings are)
+rather than reproducing these exact numbers.
 
 Crops: Activity Bar plus sidebar for `overview.png` and `audit.png`; sidebar plus QuickPick for the
 two picker frames; the title bar and status bar are excluded. Frames were captured at 2x with
@@ -68,14 +73,27 @@ is 300 px wide in every file.
   query is active), Run Install, Run Security Audit, Pin All Versions, Settings.
 - The row context menu: Open on npmjs.com, Copy Package Name, Switch to dev/dep, Toggle version
   pin (only for rows whose spec can be pinned), Remove Package.
-- The active filter or search query is published as the view description. VS Code renders a view
-  description only in the view's own header, and while Nestro is the only view in its container
-  that header is merged into the sidebar title, so the description does not appear in the frames.
-- Row vulnerability badges. npm's audit report v2 (npm 7 and later) carries no resolved package
-  versions, so with this fixture the audit outcome is the status row plus the **Nestro Security
-  Audit** Output channel rather than per-row badges.
+- The "Search: …" status row (no search query is active in any frame); it appears above the
+  groups in the same way as the filter row in `filters.png`.
+- The active filter or search query as the *view description* — the compact text next to the view
+  title. VS Code renders it only in the view's own pane header, and while Nestro is the only view
+  in its container that header is merged into the sidebar title, so the description text does not
+  appear in the frames.
 
 ## Reproducing
+
+The capture tooling in `scripts/screenshots/` (`README.md` there has the full requirements and
+options) automates all of this on macOS:
+
+```sh
+pnpm run build
+node scripts/screenshots/capture.mjs --out images
+```
+
+It builds the fixture, drives VS Code through the four states, captures each window, and crops
+and downscales the frames the same way this document describes.
+
+Manual fallback, e.g. on another OS or to capture a one-off variant:
 
 1. Build the extension (`pnpm run build`) and open the fixture folder in an Extension Development
    Host (F5 → Run Extension) with the settings above.

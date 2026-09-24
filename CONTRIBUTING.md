@@ -54,7 +54,7 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `check:vsce` | `pnpm run test:compile && node out/tools/verifyVsixCli.js` | Compile the verifier and validate the VSIX package boundary. | No |
 | `audit:dependencies` | `pnpm audit --audit-level high` | Run pnpm's dependency vulnerability audit, failing at high severity. | Yes |
 | `audit:signatures` | `pnpm run test:compile && node out/tools/auditSignaturesCli.js` | Compile and verify pnpm package signatures. | No |
-| `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence; pass `-- --out-dir <relative-directory>` to choose the output directory. | No |
+| `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence into the directory given as `--out-dir <relative-directory>` (required). | No |
 | `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration, CODEOWNERS, and Dependabot policy. | No |
 | `release:provenance` | `pnpm run test:compile && node out/tools/artifactProvenanceCli.js` | Build SBOM and provenance evidence for a release artifact. | No |
 | `release:prepare` | `pnpm run test:compile && node out/tools/releasePrepareCli.js` | Build and validate release preparation evidence. | No |
@@ -68,10 +68,11 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `test:minimum` | `vscode-test --label minimum` | Run Extension Host tests on VS Code `1.125.0`. | No |
 | `pretest:stable` | `pnpm run pretest` | Compile and lint before the stable channel. | No |
 | `test:stable` | `vscode-test --label stable` | Run Extension Host tests on the stable VS Code channel. | No |
-| `test:packaged` | `pnpm run test:compile && node out/test/packagedSmokeCli.js` | Run the packaged VSIX smoke test; pass `-- --artifact-dir <directory> --expected-sha <40-char-sha> --channel <minimum\|stable>`. | No |
+| `test:packaged` | `pnpm run test:compile && node out/test/packagedSmokeCli.js` | Run the packaged VSIX smoke test; pass `--artifact-dir <directory> --expected-sha <40-char-sha> --channel <minimum\|stable>`. | No |
 | `test:unit` | `vitest run` | Run the Vitest unit-test suite. | Yes |
 | `test:unit:coverage` | `vitest run --coverage` | Run unit tests and produce the V8 coverage report. | No |
 | `test:unit:watch` | `vitest` | Run Vitest in watch mode. | No |
+| `screenshots` | `node scripts/screenshots/capture.mjs` | Reproduce the four README screenshots on macOS; writes to a temporary directory by default, or into `images/` if run with `--out images`. See `scripts/screenshots/README.md`. | No |
 
 `lint` is the safe check to use in normal validation. Use `lint:fix` only when you explicitly
 intend to accept automated source edits.

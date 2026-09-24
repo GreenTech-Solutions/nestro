@@ -587,7 +587,10 @@ describe('PackagesProvider', () => {
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1]).toBeInstanceOf(GroupItem);
+    expect(tree[0].label).toBe('Last update check');
+    expect(tree[1]).toBeInstanceOf(StatusItem);
+    expect(tree[1].label).toBe('Filter: Has Updates');
+    expect(tree[2]).toBeInstanceOf(GroupItem);
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
@@ -707,6 +710,39 @@ describe('PackagesProvider', () => {
 
     filterManager.clearSearch();
     expect(treeView.description).toBeUndefined();
+
+    provider.dispose();
+  });
+
+  it('shows Filter and Search status rows in the tree, each opening its own picker on click', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+
+    await provider.loadPackages();
+    await provider.checkUpdates();
+    expect(provider.getChildren().some(item => item instanceof StatusItem
+      && (item.label === 'Filter: Has Updates' || (typeof item.label === 'string' && item.label.startsWith('Search: '))))).toBe(false);
+
+    filterManager.set('hasUpdates');
+    const filterRow = provider.getChildren().find(
+      (item): item is StatusItem => item instanceof StatusItem && item.label === 'Filter: Has Updates',
+    );
+    expect(filterRow).toBeInstanceOf(StatusItem);
+    expect(filterRow?.description).toBe('1 of 2');
+    expect(filterRow?.command).toEqual({ command: 'nestro.showFilterPicker', title: 'Change filter' });
+
+    filterManager.setSearch('react');
+    const searchRow = provider.getChildren().find(
+      (item): item is StatusItem => item instanceof StatusItem && item.label === 'Search: "react"',
+    );
+    expect(searchRow).toBeInstanceOf(StatusItem);
+    expect(searchRow?.description).toBe('1 package');
+    expect(searchRow?.command).toEqual({ command: 'nestro.searchPackages', title: 'Edit search' });
+
+    filterManager.clearSearch();
+    filterManager.set('all');
+    expect(provider.getChildren().some(item => item instanceof StatusItem
+      && (item.label === 'Filter: Has Updates' || item.label === 'Search: "react"'))).toBe(false);
 
     provider.dispose();
   });

@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   formatAdvisoryRows,
   formatAuditSeverityLabel,
   formatDependencySectionLabel,
+  formatFilteredPackageCount,
+  formatHeldBackDate,
   formatPackageCount,
   formatPackageGroupDescription,
   formatPackageLevelFindings,
@@ -79,5 +81,35 @@ describe('localization plural helpers', () => {
 
   it.each(['critical', 'high', 'moderate', 'low', 'info'] as const)('localizes the %s audit severity label', (severity) => {
     expect(formatAuditSeverityLabel(severity)).toBe(severity);
+  });
+
+  it.each([
+    [0, 0, '0 of 0'],
+    [1, 3, '1 of 3'],
+    [3, 3, '3 of 3'],
+  ] as const)('formats %s visible of %s total as %s', (visibleCount, totalCount, expected) => {
+    expect(formatFilteredPackageCount(visibleCount, totalCount)).toBe(expected);
+  });
+});
+
+describe('formatHeldBackDate()', () => {
+  const originalLanguage = vscode.env.language;
+
+  afterEach(() => {
+    Object.defineProperty(vscode.env, 'language', { configurable: true, value: originalLanguage });
+  });
+
+  it('formats a valid instant as a medium date in the given locale and time zone', () => {
+    expect(formatHeldBackDate('2026-09-21T06:46:38.631Z', 'en-US', 'UTC')).toBe('Sep 21, 2026');
+  });
+
+  it('falls back to vscode.env.language when no locale is given', () => {
+    Object.defineProperty(vscode.env, 'language', { configurable: true, value: 'de-DE' });
+
+    expect(formatHeldBackDate('2026-09-21T06:46:38.631Z', undefined, 'UTC')).toBe('21.09.2026');
+  });
+
+  it.each(['', 'not-a-date', 'yesterday'])('returns %j unchanged when the instant cannot be parsed', (raw) => {
+    expect(formatHeldBackDate(raw, 'en-US', 'UTC')).toBe(raw);
   });
 });

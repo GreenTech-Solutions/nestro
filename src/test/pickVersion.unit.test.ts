@@ -213,7 +213,8 @@ describe('pickVersionCommand()', () => {
       await pickVersionCommand(new PackageItem('react', '^1.0.0', undefined, 'none'), makeProvider());
 
       const heldBack = quickPick.items.find(item => item.label === '2.0.0');
-      expect(heldBack?.description).toContain('Held back until 2026-06-02T00:00:00.000Z');
+      expect(heldBack?.description).not.toContain('2026-06-02T00:00:00.000Z');
+      expect(heldBack?.description).toMatch(/Held back until [A-Za-z]{3} \d{1,2}, 2026/);
       expect(quickPick.items.map(item => item.label)).toContain('2.0.0');
     }
     finally {

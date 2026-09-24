@@ -1,15 +1,22 @@
 import * as vscode from 'vscode';
-import { formatViewDescription, projectPackageTree } from './treeBuilder';
+import { formatViewDescription, projectPackageTree, truncateSearchQuery } from './treeBuilder';
 import type { PackageTreeEntry, PackageTreeProjection } from './treeBuilder';
+import { getFilterLabel } from './FilterManager';
 import type { FilterType } from './FilterManager';
+import { sanitizePackageText } from './PackageItem';
 import type { WorkspaceCapabilities } from './PackagesProvider';
 import {
   formatFailedPackageFileCount,
   formatFailedPackageRootCount,
+  formatFilteredPackageCount,
+  formatPackageCount,
   formatPackageUpdatesAvailable,
   formatVulnerablePackageCount,
 } from '../utils';
 import type { StatusReportFailure } from '../utils';
+
+const SHOW_FILTER_PICKER_COMMAND = 'nestro.showFilterPicker';
+const SEARCH_PACKAGES_COMMAND = 'nestro.searchPackages';
 
 export type CheckState = 'idle' | 'running' | 'done' | 'incomplete';
 export type AuditState = 'idle' | 'running' | 'done' | 'incomplete' | 'failed';
@@ -33,6 +40,12 @@ export interface ViewProjectionSnapshot {
   readonly failedAuditPaths: readonly string[];
 }
 
+/** A row's click target when it opens something other than the diagnostics report. */
+export interface StatusRowCommand {
+  readonly command: string;
+  readonly title: string;
+}
+
 /** Plain data for one status row; the provider converts it to a `StatusItem`. */
 export interface StatusRowProjection {
   readonly label: string;
@@ -40,6 +53,7 @@ export interface StatusRowProjection {
   readonly icon: string;
   readonly color?: string;
   readonly actionable: boolean;
+  readonly command?: StatusRowCommand;
 }
 
 export const VIEW_CONTEXT_KEYS = {
@@ -96,7 +110,10 @@ export function resolvePublishedWorkspaceCapabilities(
   };
 }
 
-/** Computes the full view for the current state in one pass: two `projectPackageTree()` calls, no more. */
+/**
+ * Computes the full view for the current state in one pass: two `projectPackageTree()` calls,
+ * no more — the second is the same filtered projection `projectStatusRows()` reuses below.
+ */
 export function computeViewProjection(snapshot: ViewProjectionSnapshot): ViewProjection {
   const allEntriesProjection = projectPackageTree(snapshot.entries, 'all');
   const packageTree = projectPackageTree(snapshot.entries, snapshot.filterType, snapshot.search);
@@ -127,7 +144,7 @@ export function computeViewProjection(snapshot: ViewProjectionSnapshot): ViewPro
     contexts,
     badge,
     description,
-    statusRows: projectStatusRows(snapshot),
+    statusRows: projectStatusRows(snapshot, packageTree),
     packageTree,
   };
 }
@@ -155,8 +172,15 @@ export function createAllFalseViewContexts(): ViewContextMap {
   return Object.fromEntries(entries) as ViewContextMap;
 }
 
-/** Status rows for the current state, cheap enough to recompute on every tree read. */
-export function projectStatusRows(snapshot: ViewProjectionSnapshot): StatusRowProjection[] {
+/**
+ * Status rows for the current state, cheap enough to recompute on every tree read. `packageTree`
+ * lets a caller with the filtered projection already in hand skip a second, identical
+ * `projectPackageTree()` call — reuse, not a cache; without it, one is computed here instead.
+ */
+export function projectStatusRows(
+  snapshot: ViewProjectionSnapshot,
+  packageTree?: PackageTreeProjection,
+): StatusRowProjection[] {
   const rows: StatusRowProjection[] = [];
 
   const failedPackageReadCount = uniqueStrings(
@@ -258,6 +282,32 @@ export function projectStatusRows(snapshot: ViewProjectionSnapshot): StatusRowPr
       color: 'charts.yellow',
       actionable: true,
     });
+  }
+
+  // Placed last, directly above the (possibly filtered) tree these rows describe.
+  if (snapshot.filterType !== 'all' || snapshot.search !== '') {
+    const filteredProjection = packageTree ?? projectPackageTree(snapshot.entries, snapshot.filterType, snapshot.search);
+    if (snapshot.filterType !== 'all') {
+      rows.push({
+        label: vscode.l10n.t('Filter: {0}', getFilterLabel(snapshot.filterType)),
+        description: formatFilteredPackageCount(
+          filteredProjection.filterCounts[snapshot.filterType],
+          filteredProjection.filterCounts.all,
+        ),
+        icon: 'filter',
+        actionable: false,
+        command: { command: SHOW_FILTER_PICKER_COMMAND, title: vscode.l10n.t('Change filter') },
+      });
+    }
+    if (snapshot.search !== '') {
+      rows.push({
+        label: vscode.l10n.t('Search: "{0}"', truncateSearchQuery(sanitizePackageText(snapshot.search))),
+        description: formatPackageCount(filteredProjection.filterCounts.all),
+        icon: 'search',
+        actionable: false,
+        command: { command: SEARCH_PACKAGES_COMMAND, title: vscode.l10n.t('Edit search') },
+      });
+    }
   }
 
   return rows;

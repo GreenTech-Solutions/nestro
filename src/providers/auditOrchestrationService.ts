@@ -1,8 +1,8 @@
 import * as path from 'node:path';
-import { realpath as fsRealpath } from 'node:fs/promises';
+import { readFile as fsReadFile, realpath as fsRealpath, stat as fsStat } from 'node:fs/promises';
 import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject, PackageManager } from '../clients';
-import { cloneAuditAdvisory, inferPathAttribution, mergeAuditAdvisories, runRootOperations } from '../utils';
+import { cloneAuditAdvisory, inferPathAttribution, mergeAuditAdvisories, mergeSeverity, runRootOperations } from '../utils';
 import type {
   AuditAdvisory,
   AuditPackageManager,
@@ -12,6 +12,12 @@ import type {
   OperationCoordinator,
 } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
+
+/** Real installed `package.json` files are tiny; this bound only guards against a corrupt read. */
+const AUDIT_NODE_PACKAGE_JSON_MAX_BYTES = 1024 * 1024;
+
+/** Loose enough to accept a prerelease/build suffix; the exact major.minor.patch parser downstream still fail-closes on it. */
+const PLAIN_SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /** Project-level audit data remains available when row attribution is suppressed. */
 export interface AuditProjectSummary {
@@ -82,6 +88,8 @@ export interface AuditOrchestrationDependencies {
   ) => Promise<Awaited<ReturnType<typeof resolveAuditProjects>>>;
   readonly createClient: (packageManager: PackageManager, projectRoot: string) => AuditableClient;
   readonly realpath: (targetPath: string) => Promise<string>;
+  /** Bounded read of one `package.json`'s `version` field; `undefined` on any failure. */
+  readonly readPackageJsonVersion: (packageJsonPath: string) => Promise<string | undefined>;
 }
 
 export interface AuditOrchestrationServiceContract {
@@ -109,7 +117,115 @@ function createDefaultDependencies(checkCoordinator: OperationCoordinator): Audi
     resolveAuditProjects: packageFilePaths => resolveAuditProjects(packageFilePaths),
     createClient: (packageManager, projectRoot) => clientManager.createClient(packageManager, projectRoot),
     realpath: targetPath => fsRealpath(targetPath),
+    readPackageJsonVersion: packageJsonPath => readNodePackageJsonVersion(packageJsonPath),
   };
+}
+
+/**
+ * Reads the `version` field of one installed `package.json`, bounded by file type, size and
+ * JSON validity. Any failure — missing file, oversized file, malformed JSON, non-semver
+ * version — resolves `undefined` rather than throwing, so a caller can fail closed uniformly.
+ */
+export async function readNodePackageJsonVersion(packageJsonPath: string): Promise<string | undefined> {
+  try {
+    const stats = await fsStat(packageJsonPath);
+    if (!stats.isFile() || stats.size > AUDIT_NODE_PACKAGE_JSON_MAX_BYTES) {
+      return undefined;
+    }
+    const raw = await fsReadFile(packageJsonPath, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const { version } = parsed as { version?: unknown };
+    return typeof version === 'string' && PLAIN_SEMVER_PATTERN.test(version) ? version : undefined;
+  }
+  catch {
+    return undefined;
+  }
+}
+
+/** An immediate `node_modules/<name>` (or `node_modules/@scope/name`) node; a nested one is transitive. */
+export function parseDirectNodeModulesNode(nodePath: string, packageName: string): string | undefined {
+  const normalized = nodePath.replace(/\\/g, '/');
+  const segments = normalized.split('/');
+  if (segments[0] !== 'node_modules') {
+    return undefined;
+  }
+  const rest = segments.slice(1);
+  const isScoped = rest[0]?.startsWith('@') ?? false;
+  if (rest.length !== (isScoped ? 2 : 1) || rest.some(segment => segment === '' || segment === '.' || segment === '..')) {
+    return undefined;
+  }
+  const name = isScoped ? `${rest[0]}/${rest[1]}` : rest[0];
+  return name === packageName ? normalized : undefined;
+}
+
+/**
+ * Resolves the version at one advisory's single `nodes[]` entry, proving — by realpath, the
+ * same check as `resolvedPathBelongsToManifest()` — that the read stays inside the project
+ * root; any failure leaves the advisory's version unresolved.
+ */
+async function resolveInstalledVersionFromNode(
+  project: AuditProject,
+  packageName: string,
+  nodePath: string,
+  dependencies: AuditOrchestrationDependencies,
+): Promise<string | undefined> {
+  const directNode = parseDirectNodeModulesNode(nodePath, packageName);
+  if (directNode === undefined) {
+    return undefined;
+  }
+  const candidatePath = path.join(project.projectRoot, directNode, 'package.json');
+  try {
+    const [canonicalProjectRoot, canonicalTarget] = await Promise.all([
+      dependencies.realpath(project.projectRoot),
+      dependencies.realpath(candidatePath),
+    ]);
+    if (!isWithinPath(canonicalTarget, canonicalProjectRoot)) {
+      return undefined;
+    }
+    return await dependencies.readPackageJsonVersion(canonicalTarget);
+  }
+  catch {
+    // Missing paths, broken symlinks, and other realpath failures do not constitute
+    // ownership evidence; the advisory's version stays unresolved.
+    return undefined;
+  }
+}
+
+/**
+ * Fills in the installed version for npm audit v2 advisories, whose schema exposes no
+ * version field of its own. Only a schema-v2 advisory with no version yet and exactly one
+ * `nodes[]` entry is eligible; every other schema and shape passes through unchanged.
+ */
+function enrichNpmV2AdvisoryVersions(
+  project: AuditProject,
+  advisories: readonly AuditAdvisory[],
+  dependencies: AuditOrchestrationDependencies,
+): Promise<AuditAdvisory[]> {
+  // Memoized per call, not across runs: npm v2 gives one package several via-split
+  // advisories sharing the same node, so this collapses their fs work to one read.
+  const resolutionsByKey = new Map<string, Promise<string | undefined>>();
+  const resolveVersionOnce = (packageName: string, nodePath: string): Promise<string | undefined> => {
+    const key = `${project.projectRoot}\0${packageName}\0${nodePath}`;
+    const cached = resolutionsByKey.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const pending = resolveInstalledVersionFromNode(project, packageName, nodePath, dependencies);
+    resolutionsByKey.set(key, pending);
+    return pending;
+  };
+  return Promise.all(advisories.map(async (advisory) => {
+    if (advisory.schema !== 'npm-v2-vulnerabilities'
+      || advisory.resolvedVersions.length > 0
+      || advisory.resolvedPaths.length !== 1) {
+      return advisory;
+    }
+    const version = await resolveVersionOnce(advisory.packageName, advisory.resolvedPaths[0]);
+    return version === undefined ? advisory : { ...advisory, resolvedVersions: [version] };
+  }));
 }
 
 function auditRowKey(row: Pick<AuditableRow, 'packageName' | 'packageFilePath' | 'dev'>): string {
@@ -278,7 +394,12 @@ async function applyStructuredProjectAuditResults(
     const [match] = owningRows;
     if (matchesManifestVersion(match.currentVersion, resolvedVersion)
       && isVersionInAffectedRange(resolvedVersion, advisory.affectedRanges)) {
-      auditResults.set(auditRowKey(match), advisory.severity);
+      // A package can own several proven advisories (npm v2 splits one package's report
+      // into one advisory per `via` entry); the row badge must show the worst of them,
+      // not whichever advisory happened to be attributed last.
+      const key = auditRowKey(match);
+      const existing = auditResults.get(key);
+      auditResults.set(key, existing === undefined ? advisory.severity : mergeSeverity(existing, advisory.severity));
     }
   }
 }
@@ -525,18 +646,22 @@ export class AuditOrchestrationService implements AuditOrchestrationServiceContr
         }
         if (value.kind === 'structured') {
           successfulAuditRootCount += 1;
+          const enrichedAdvisories = await enrichNpmV2AdvisoryVersions(project, value.advisories, this.dependencies);
+          if (!request.isCurrent() || request.signal.aborted) {
+            return { kind: 'discarded', reason: 'cancelled' };
+          }
           auditProjects.push({
             project,
             status: 'success',
             manager: value.manager,
             schema: value.schema,
             vulnerabilities: new Map(value.vulnerabilities),
-            advisories: value.advisories.map(advisory => cloneAuditAdvisory(advisory)),
+            advisories: enrichedAdvisories.map(advisory => cloneAuditAdvisory(advisory)),
           });
           await applyStructuredProjectAuditResults(
             request.rows,
             project,
-            value.advisories,
+            enrichedAdvisories,
             auditResults,
             this.dependencies,
           );

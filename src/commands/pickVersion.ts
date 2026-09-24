@@ -5,6 +5,7 @@ import {
   classifyVersionReleaseAge,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   fetchPackageMetadata,
+  formatHeldBackDate,
   logger,
   readMinimumReleaseAgeDays,
   selectVersionsForPicker,
@@ -112,7 +113,7 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
       );
       releaseAgeByVersion.set(version, releaseAge);
       const ageDescription = releaseAge.kind === 'held-back'
-        ? vscode.l10n.t('Held back until {0}', sanitizePackageText(releaseAge.eligibleAt))
+        ? vscode.l10n.t('Held back until {0}', sanitizePackageText(formatHeldBackDate(releaseAge.eligibleAt)))
         : releaseAge.kind === 'unknown' && !releaseAgeUnavailable
           ? vscode.l10n.t('Release age unknown; update is not blocked.')
           : undefined;
