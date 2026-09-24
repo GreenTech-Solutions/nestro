@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { formatPackageGroupDescription } from '../utils';
 
 export class GroupItem extends vscode.TreeItem {
   constructor(
@@ -9,9 +10,7 @@ export class GroupItem extends vscode.TreeItem {
     isDev: boolean,
   ) {
     super(label, vscode.TreeItemCollapsibleState.Expanded);
-    this.description = outdatedCount > 0
-      ? `${totalCount} packages · ${outdatedCount} outdated`
-      : `${totalCount} packages`;
+    this.description = formatPackageGroupDescription(totalCount, outdatedCount);
     this.iconPath = new vscode.ThemeIcon(isDev ? 'tools' : 'package');
     this.contextValue = 'group';
   }

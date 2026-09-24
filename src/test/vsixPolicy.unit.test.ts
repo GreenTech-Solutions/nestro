@@ -62,7 +62,7 @@ describe('evaluateVsixPolicy() — clean package', () => {
     const report = evaluate();
 
     expect(report.violations).toEqual([]);
-    expect(report.packagedFileCount).toBe(9);
+    expect(report.packagedFileCount).toBe(10);
     expect(report.packagePaths).toEqual([
       'LICENSE.txt',
       'changelog.md',
@@ -70,6 +70,7 @@ describe('evaluateVsixPolicy() — clean package', () => {
       'out/chunk-AbCdEf12.cjs',
       'out/extension.cjs',
       'package.json',
+      'package.nls.json',
       'readme.md',
       'resources/icon.png',
       'resources/icon.svg',
@@ -85,6 +86,7 @@ describe('evaluateVsixPolicy() — clean package', () => {
     expect(toSourcePath('changelog.md')).toBe('CHANGELOG.md');
     expect(toSourcePath('LICENSE.txt')).toBe('LICENSE');
     expect(toSourcePath('out/extension.cjs')).toBe('out/extension.cjs');
+    expect(toSourcePath('package.nls.json')).toBe('package.nls.json');
   });
 });
 
@@ -195,11 +197,14 @@ describe('evaluateVsixPolicy() — forbidden classes', () => {
     });
   });
 
-  it('reports a required package file that is missing', () => {
-    expect(evaluate({ entries: without('extension/LICENSE.txt') }).violations).toContainEqual({
+  it.each([
+    ['LICENSE.txt', 'LICENSE'],
+    ['package.nls.json', 'package.nls.json'],
+  ])('reports a required package file that is missing (%s)', (packagePath, sourcePath) => {
+    expect(evaluate({ entries: without(`extension/${packagePath}`) }).violations).toContainEqual({
       kind: 'missing-required-file',
-      path: 'LICENSE.txt',
-      detail: 'required package file is missing (source LICENSE)',
+      path: packagePath,
+      detail: `required package file is missing (source ${sourcePath})`,
     });
   });
 });
@@ -543,9 +548,9 @@ describe('evaluateVsixPolicy() — budgets', () => {
     // Pins the exact numbers rather than deriving them, so raising the underlying constant
     // is caught here as a deliberate edit instead of silently following through the budget
     // arithmetic.
-    expect(CLEAN_BASELINE_COMPRESSED_BYTES).toBe(717682);
+    expect(CLEAN_BASELINE_COMPRESSED_BYTES).toBe(901406);
     expect(CLEAN_BASELINE_PACKAGED_FILE_COUNT).toBe(16);
-    expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(897102);
+    expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(1126757);
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(26);
   });
 
@@ -574,7 +579,7 @@ describe('evaluateVsixPolicy() — budgets', () => {
       (_unused, index) => archiveEntry(`extension/images/shot-${index}.png`, 'png'),
     );
     const entries = [...cleanVsixArchiveEntries(), ...extras];
-    const expectedCount = 9 + PACKAGED_FILE_COUNT_BUDGET;
+    const expectedCount = 10 + PACKAGED_FILE_COUNT_BUDGET;
 
     expect(evaluate({ entries }).violations).toContainEqual({
       kind: 'file-count-budget',

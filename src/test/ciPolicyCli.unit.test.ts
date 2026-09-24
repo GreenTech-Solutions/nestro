@@ -7,29 +7,40 @@ import {
   CODEOWNERS_PATH,
   createNodeCiPolicyCliDependencies,
   DEPENDABOT_CONFIG_PATH,
+  RELEASE_CANDIDATE_WORKFLOW_PATH,
+  RELEASE_CONFIG_PATH,
+  RELEASE_DISPATCH_WORKFLOW_PATH,
+  RELEASE_PREPARE_WORKFLOW_PATH,
+  RELEASE_WORKFLOW_PATH,
   runCiPolicyCli,
 } from '../tools';
 import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
-const releaseWorkflowPath = '.github/workflows/release.yml';
+const releaseWorkflowPath = RELEASE_WORKFLOW_PATH;
+const canonicalReleaseSource = readFile(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
 
 const canonicalPolicyReaders: Pick<
   CiPolicyCliDependencies,
-  'readCodeowners' | 'readDependabotConfigs'
+  'readCodeowners' | 'readDependabotConfigs' | 'readReleaseConfig'
 > = {
   readCodeowners: () => readFile(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8'),
   readDependabotConfigs: async () => [{
     path: DEPENDABOT_CONFIG_PATH,
     source: await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8'),
   }],
+  readReleaseConfig: () => readFile(resolve(repositoryRoot, RELEASE_CONFIG_PATH), 'utf8'),
 };
 
-function readCanonicalWorkflows(): Promise<WorkflowPolicySource[]> {
-  return Promise.all([CI_WORKFLOW_PATH, releaseWorkflowPath].map(async path => ({
-    path,
-    source: await readFile(resolve(repositoryRoot, path), 'utf8'),
-  })));
+async function readCanonicalWorkflows(): Promise<WorkflowPolicySource[]> {
+  const releaseSource = await canonicalReleaseSource;
+  return [
+    { path: CI_WORKFLOW_PATH, source: await readFile(resolve(repositoryRoot, CI_WORKFLOW_PATH), 'utf8') },
+    { path: RELEASE_PREPARE_WORKFLOW_PATH, source: await readFile(resolve(repositoryRoot, RELEASE_PREPARE_WORKFLOW_PATH), 'utf8') },
+    { path: RELEASE_CANDIDATE_WORKFLOW_PATH, source: await readFile(resolve(repositoryRoot, RELEASE_CANDIDATE_WORKFLOW_PATH), 'utf8') },
+    { path: RELEASE_DISPATCH_WORKFLOW_PATH, source: await readFile(resolve(repositoryRoot, RELEASE_DISPATCH_WORKFLOW_PATH), 'utf8') },
+    { path: releaseWorkflowPath, source: releaseSource },
+  ];
 }
 
 describe('CI policy CLI', () => {
@@ -69,6 +80,7 @@ describe('CI policy CLI', () => {
     ['the workflow reader', 'readWorkflows'],
     ['the CODEOWNERS reader', 'readCodeowners'],
     ['the Dependabot reader', 'readDependabotConfigs'],
+    ['the release config reader', 'readReleaseConfig'],
   ] as const)('reports a failure from %s', async (_label, rejectedReader) => {
     const writeError = vi.fn();
     const rejected = () => Promise.reject(new Error('read denied'));
@@ -80,6 +92,9 @@ describe('CI policy CLI', () => {
       readDependabotConfigs: rejectedReader === 'readDependabotConfigs'
         ? rejected
         : canonicalPolicyReaders.readDependabotConfigs,
+      readReleaseConfig: rejectedReader === 'readReleaseConfig'
+        ? rejected
+        : canonicalPolicyReaders.readReleaseConfig,
       readWorkflows: rejectedReader === 'readWorkflows' ? rejected : readCanonicalWorkflows,
       writeOut: vi.fn(),
       writeError,
@@ -105,12 +120,21 @@ describe('CI policy CLI', () => {
       const dependencies = createNodeCiPolicyCliDependencies(repositoryRoot);
       const workflows = await dependencies.readWorkflows();
       const dependabotConfigs = await dependencies.readDependabotConfigs();
-      expect(workflows.map(workflow => workflow.path)).toEqual([CI_WORKFLOW_PATH, releaseWorkflowPath]);
+      const expectedWorkflowPaths = [
+        CI_WORKFLOW_PATH,
+        RELEASE_CANDIDATE_WORKFLOW_PATH,
+        RELEASE_DISPATCH_WORKFLOW_PATH,
+        RELEASE_PREPARE_WORKFLOW_PATH,
+      ];
+      expectedWorkflowPaths.push(releaseWorkflowPath);
+      expect(workflows.map(workflow => workflow.path)).toEqual(expectedWorkflowPaths);
       expect(workflows[0].source).toContain('name: Verify');
-      expect(workflows[1].source).toContain('name: Release');
+      expect(workflows.find(workflow => workflow.path === RELEASE_CANDIDATE_WORKFLOW_PATH)?.source)
+        .toContain('name: Release candidate');
       await expect(dependencies.readCodeowners()).resolves.toBe('/.github/ @GreenTech-Solutions\n');
       expect(dependabotConfigs.map(config => config.path)).toEqual([DEPENDABOT_CONFIG_PATH]);
       expect(dependabotConfigs[0].source).toContain('package-ecosystem: github-actions');
+      await expect(dependencies.readReleaseConfig?.()).resolves.toContain('@semantic-release/commit-analyzer');
       dependencies.writeOut('accepted');
       dependencies.writeError('rejected');
       expect(output).toHaveBeenCalledWith('accepted\n');
@@ -194,9 +218,9 @@ describe('CI policy CLI', () => {
   });
 
   it.each([
-    ['mutable tag', 'actions/checkout@v6', 'immutable-action'],
-    ['arbitrary SHA', `actions/checkout@${'f'.repeat(40)}`, 'reviewed-action'],
-    ['substituted locator', 'attacker/checkout@d23441a48e516b6c34aea4fa41551a30e30af803', 'reviewed-action'],
+    ['mutable tag', 'actions/download-artifact@v8', 'immutable-action'],
+    ['arbitrary SHA', `actions/download-artifact@${'f'.repeat(40)}`, 'reviewed-action'],
+    ['substituted locator', 'attacker/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c', 'reviewed-action'],
   ])('rejects a %s in release.yml with a path-qualified error', async (_label, replacement, rule) => {
     const workflows = await readCanonicalWorkflows();
     const release = workflows.find(workflow => workflow.path === releaseWorkflowPath);
@@ -210,7 +234,7 @@ describe('CI policy CLI', () => {
         ? {
             ...workflow,
             source: workflow.source.replace(
-              'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+              'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
               replacement,
             ),
           }
@@ -263,7 +287,11 @@ describe('CI policy CLI', () => {
           resolve(temporaryRoot, DEPENDABOT_CONFIG_PATH),
           await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH)),
         ),
-        writeFile(resolve(workflowsDirectory, 'release.yml'), await readFile(resolve(repositoryRoot, releaseWorkflowPath))),
+        writeFile(resolve(temporaryRoot, RELEASE_CONFIG_PATH), await readFile(resolve(repositoryRoot, RELEASE_CONFIG_PATH))),
+        writeFile(resolve(workflowsDirectory, 'release.yml'), await canonicalReleaseSource),
+        writeFile(resolve(workflowsDirectory, 'release-candidate.yml'), await readFile(resolve(repositoryRoot, RELEASE_CANDIDATE_WORKFLOW_PATH))),
+        writeFile(resolve(workflowsDirectory, 'release-dispatch.yml'), await readFile(resolve(repositoryRoot, RELEASE_DISPATCH_WORKFLOW_PATH))),
+        writeFile(resolve(workflowsDirectory, 'release-prepare.yml'), await readFile(resolve(repositoryRoot, RELEASE_PREPARE_WORKFLOW_PATH))),
         writeFile(resolve(workflowsDirectory, 'ci.yml'), await readFile(resolve(repositoryRoot, CI_WORKFLOW_PATH))),
         writeFile(resolve(workflowsDirectory, 'extra.yaml'), 'jobs:\n  test:\n    uses: owner/repo/.github/workflows/test.yml@main\n'),
         writeFile(resolve(workflowsDirectory, 'README.md'), 'not a workflow'),
@@ -274,6 +302,9 @@ describe('CI policy CLI', () => {
       expect(workflows.map(workflow => workflow.path)).toEqual([
         CI_WORKFLOW_PATH,
         '.github/workflows/extra.yaml',
+        RELEASE_CANDIDATE_WORKFLOW_PATH,
+        RELEASE_DISPATCH_WORKFLOW_PATH,
+        RELEASE_PREPARE_WORKFLOW_PATH,
         releaseWorkflowPath,
       ]);
       const writeError = vi.fn();

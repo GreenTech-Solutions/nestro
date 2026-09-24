@@ -133,7 +133,7 @@ default, three is the ceiling.
   PR links never appear in `src/**`. That context belongs to the commit message and the
   tracker; in code it goes stale and means nothing to a reader who cannot open them.
 - **No narrative.** Benchmark tables, rejected alternatives, "before this change ..." and
-  rationale essays belong in the commit message or a `workflow/` report, not in the source.
+  rationale essays belong in the commit message, not in the source.
 - **Say what the signature cannot.** A comment restating the function name is noise —
   delete it.
 - A non-obvious constant justifies its value in one clause, not a methodology write-up.
@@ -232,4 +232,4 @@ ghost(test): add unit tests for compareRawVersions
 | Floating promise (unhandled async call) | Prefix with `void` or `await` |
 | Mutating provider state from arbitrary places | Use `markPackage*()` / `invalidateUpdateCache()` methods, then fire `_onDidChangeTreeData` |
 | Task / audit id in a code comment (`AUD-09`, `ARC-01`) | Drop it — that context lives in the commit message and the tracker |
-| Multi-paragraph comment explaining rationale or benchmarks | One-line description; rationale goes in the commit message or a `workflow/` report |
+| Multi-paragraph comment explaining rationale or benchmarks | One-line description; rationale goes in the commit message |

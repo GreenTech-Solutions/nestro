@@ -425,7 +425,7 @@ describe('advisory identity and report safety', () => {
       [{ packageFilePaths: ['/workspace/missing/package.json'], reason: 'workspace-escape', detail: '/private/secrets/cwd' }],
     );
     expect(report).toContain('Status: Clean');
-    expect(report).toContain('1 advisory row(s)');
+    expect(report).toContain('1 advisory row');
     expect(report).toContain('Status: Incomplete');
     expect(report).toContain('Unassigned audit projects: 1');
     expect(report).not.toContain('registry-token');

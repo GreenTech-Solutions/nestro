@@ -13,9 +13,9 @@
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [
-				"${workspaceFolder}/out/**/*.js"
+				"${workspaceFolder}/out/**/*.cjs"
 			],
-			"preLaunchTask": "${defaultBuildTask}"
+			"preLaunchTask": "tsdown: watch"
 		}
 	]
 }

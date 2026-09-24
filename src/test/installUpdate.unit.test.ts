@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { logger } from '../utils';
 import type { ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
@@ -19,7 +20,9 @@ const identityMocks = vi.hoisted(() => {
       currentVersion: item.currentVersion ?? '',
       latest: item.latest,
       updateType: 'none' as const,
-      installing: item.installing ?? false,
+      operation: item.installing
+        ? { kind: 'update' as const, target: item.latest ?? item.currentVersion ?? '' }
+        : undefined,
       vulnerabilitySeverity: undefined,
       packageFilePath: item.packageFilePath,
       dev: item.dev,
@@ -58,6 +61,7 @@ vi.mock('../commands/packageIdentity', () => identityMocks);
 let taskProcessEndListener: ((event: vscode.TaskProcessEndEvent) => unknown) | undefined;
 let taskEndListener: ((event: vscode.TaskEndEvent) => unknown) | undefined;
 let taskExecutionCount = 0;
+const loggerErrorMock = vi.spyOn(logger, 'error');
 
 describe('installUpdateCommand()', () => {
   beforeEach(() => {
@@ -157,12 +161,12 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, true);
+    }, { kind: 'update', target: '5.9.3' });
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('shows an error when an update task exits with a non-zero code', async () => {
@@ -183,7 +187,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('shows an error when an update task ends without an exit code', async () => {
@@ -204,7 +208,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('clears package update progress when starting the task throws', async () => {
@@ -226,7 +230,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('rejects an option-shaped manifest key before the update task ever launches', async () => {
@@ -551,7 +555,7 @@ describe('installUpdateCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, false);
+    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, undefined);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
@@ -590,7 +594,7 @@ describe('installUpdateCommand()', () => {
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it('preserves devDependencies when updating through the package manager', async () => {
@@ -683,6 +687,25 @@ describe('runInstallCommand()', () => {
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
     expect(shellExecution.commandLine).toBe(command);
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('marks every row in the selected manifest while install runs', async () => {
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
+      Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
+    );
+    const provider = makeProvider([]);
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+
+    await runInstallCommand(provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenNthCalledWith(1, identity, { kind: 'install' });
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
   });
 
   it('asks for a package root when the workspace has multiple package.json files', async () => {
@@ -864,7 +887,7 @@ describe('runInstallCommand()', () => {
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 
-  it('shows an error when the package root prompt is cancelled', async () => {
+  it('quietly returns when the package root prompt is cancelled', async () => {
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/workspace/package.json', path: '/workspace/package.json' },
       { fsPath: '/workspace/apps/web/package.json', path: '/workspace/apps/web/package.json' },
@@ -873,8 +896,19 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(loggerErrorMock).not.toHaveBeenCalled();
+    expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
+  });
+
+  it('shows an error when package root discovery fails', async () => {
+    const error = new Error('workspace search failed');
+    vi.mocked(vscode.workspace.findFiles).mockRejectedValueOnce(error);
+
+    await runInstallCommand();
+
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to run install — Install cancelled.',
+      'Nestro: failed to run install — workspace search failed',
     );
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
@@ -1018,10 +1052,6 @@ describe('updateAllVisibleCommand()', () => {
       if (writeCount === 2) {
         return Promise.reject(new Error('second write failed'));
       }
-      if (writeCount === 3) {
-        expect(uri.fsPath).toBe('/workspace/apps/web/package.json');
-        expect(Buffer.from(content).toString('utf8')).toContain('"vite": "^5.0.0"');
-      }
       return Promise.resolve();
     });
     const provider = makeProvider([
@@ -1031,21 +1061,26 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(writeCount).toBe(4);
-    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[2][1]).toString('utf8'))
-      .toContain('"vite": "^5.0.0"');
-    expect(Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[3][1]).toString('utf8'))
+    const writeCalls = vi.mocked(vscode.workspace.fs.writeFile).mock.calls;
+    expect(writeCount).toBe(3);
+    expect(writeCalls).toHaveLength(3);
+    expect(writeCalls[1][0].fsPath).toBe('/workspace/apps/web/package.json');
+    expect(Buffer.from(writeCalls[1][1]).toString('utf8'))
+      .toContain('"vite": "^5.1.0"');
+    expect(writeCalls[2][0].fsPath)
+      .toBe('/workspace/package.json');
+    expect(Buffer.from(writeCalls[2][1]).toString('utf8'))
       .toContain('"react": "^18.0.0"');
     expect(provider.markPackageUpdating).toHaveBeenCalledWith({
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(provider.markPackageUpdating).toHaveBeenCalledWith({
       packageName: 'vite',
       packageFilePath: '/workspace/apps/web/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: failed to update packages — second write failed',
     );
@@ -1077,7 +1112,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed; failed to roll back: apps/web/package.json',
+      'Nestro: failed to update packages — second write failed; failed to roll back: package.json',
     );
   });
 
@@ -1397,7 +1432,7 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, false);
+    expect(provider.markPackageUpdatingForCapability).toHaveBeenLastCalledWith(firstCapability, undefined);
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 

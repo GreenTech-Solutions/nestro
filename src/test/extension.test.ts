@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   assertTaskExitCode,
@@ -69,20 +69,37 @@ interface ManifestMenuEntry {
   readonly group?: string;
 }
 
+interface WorkspaceCapability {
+  readonly supported: boolean;
+  readonly description: string;
+}
+
 interface ExtensionManifest {
-  readonly capabilities?: Record<string, unknown>;
+  readonly activationEvents: readonly string[];
+  readonly capabilities: {
+    readonly untrustedWorkspaces: WorkspaceCapability;
+    readonly virtualWorkspaces: WorkspaceCapability;
+  };
   readonly contributes: {
     readonly commands: readonly ManifestCommand[];
     readonly menus: {
       readonly commandPalette: readonly ManifestMenuEntry[];
+      readonly 'view/title': readonly ManifestMenuEntry[];
       readonly 'view/item/context': readonly ManifestMenuEntry[];
     };
   };
+  readonly extensionKind: readonly string[];
 }
 
 /** Reads the real, installed manifest rather than trusting a copy of `package.json` in test code. */
 function getManifest(): ExtensionManifest {
   return requireExtension().packageJSON as ExtensionManifest;
+}
+
+function compileViewItemPattern(when: string): RegExp {
+  const match = /viewItem\s*=~\s*\/(.*)\/([a-z]*)$/.exec(when);
+  assert.ok(match, `Manifest entry does not contain a viewItem regex: ${when}`);
+  return new RegExp(match[1] ?? '', match[2] ?? '');
 }
 
 function isInside(parent: string, candidate: string): boolean {
@@ -175,6 +192,11 @@ suite('Extension Test Suite', () => {
     assert.strictEqual(await vscode.commands.executeCommand('nestro.openAuditReport'), undefined);
   });
 
+  test('nestro.openStatusReport command is registered', async () => {
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes('nestro.openStatusReport'), 'Open diagnostics report command should be registered');
+  });
+
   test('nestro.removePackage command is registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('nestro.removePackage'), 'Remove package command should be registered');
@@ -242,7 +264,7 @@ suite('command boundary smoke', function () {
         '^1.3.0',
         '99.99.99',
         'breaking',
-        false,
+        undefined,
         undefined,
         packageFilePath,
         false,
@@ -259,6 +281,51 @@ suite('command boundary smoke', function () {
       await restoreDeferredInstall();
     }
   });
+});
+
+// Smoke only: the extension exports no API, so a host test cannot read the active filter back.
+// The behavioural matrix lives in the unit suite, which can observe the provider call.
+suite('nestro.setFilter argument guard', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+
+  suiteSetup(async () => {
+    opened = await openTrackedFixture(fixture);
+    await vscode.commands.executeCommand('nestro.refresh');
+  });
+
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand('nestro.setFilter', 'all');
+    await closeIfOpen(opened);
+    opened = undefined;
+  });
+
+  const REJECTED_FILTER_VALUES: readonly { readonly label: string; readonly value: unknown }[] = [
+    { label: 'undefined', value: undefined },
+    { label: 'null', value: null },
+    { label: 'an empty string', value: '' },
+    { label: 'an arbitrary string', value: 'not-a-filter' },
+    { label: 'a number', value: 42 },
+    { label: 'a plain object', value: {} },
+  ];
+
+  for (const { label, value } of REJECTED_FILTER_VALUES) {
+    test(`survives ${label} without throwing, leaving the workspace refreshable`, async () => {
+      requireOpen(opened);
+      await vscode.commands.executeCommand('nestro.setFilter', value);
+      await vscode.commands.executeCommand('nestro.refresh');
+    });
+  }
+
+  for (const filterType of FILTER_TYPES) {
+    test(`accepts the valid "${filterType}" filter without throwing`, async () => {
+      requireOpen(opened);
+      await vscode.commands.executeCommand('nestro.setFilter', filterType);
+      await vscode.commands.executeCommand('nestro.refresh');
+    });
+  }
 });
 
 suite('Fixture Materialization', () => {
@@ -672,11 +739,11 @@ suite('Shell Task Lifecycle: package update busy state', function () {
   test('clears busy state and applies the new version after a successful task', async () => {
     const before = findPackageItem('left-pad');
     assert.ok(before, 'left-pad should be present after loadPackages()');
-    assert.strictEqual(before.installing, false);
+    assert.strictEqual(before.operation, undefined);
 
     const identity = identityFor(before);
-    provider.markPackageUpdating(identity, true);
-    assert.strictEqual(findPackageItem('left-pad')?.installing, true, 'Item should be marked installing while the task runs');
+    provider.markPackageUpdating(identity, { kind: 'update', target: '9.9.9' });
+    assert.strictEqual(findPackageItem('left-pad')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
     const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
     assert.strictEqual(exitCode, 0);
@@ -686,7 +753,7 @@ suite('Shell Task Lifecycle: package update busy state', function () {
 
     const after = findPackageItem('left-pad');
     assert.ok(after);
-    assert.strictEqual(after.installing, false, 'Busy state must clear once the task exits successfully');
+    assert.strictEqual(after.operation, undefined, 'Busy state must clear once the task exits successfully');
     assert.strictEqual(after.currentVersion, `${before.versionPrefix}9.9.9`);
   });
 
@@ -696,34 +763,82 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     const originalVersion = before.currentVersion;
 
     const identity = identityFor(before);
-    provider.markPackageUpdating(identity, true);
-    assert.strictEqual(findPackageItem('rimraf')?.installing, true, 'Item should be marked installing while the task runs');
+    provider.markPackageUpdating(identity, { kind: 'update', target: originalVersion });
+    assert.strictEqual(findPackageItem('rimraf')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
     const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
     assert.notStrictEqual(exitCode, 0);
 
-    provider.markPackageUpdating(identity, false);
+    provider.markPackageUpdating(identity, undefined);
 
     const after = findPackageItem('rimraf');
     assert.ok(after);
-    assert.strictEqual(after.installing, false, 'Busy state must clear after a failing task — no stuck busy state');
+    assert.strictEqual(after.operation, undefined, 'Busy state must clear after a failing task — no stuck busy state');
     assert.strictEqual(after.currentVersion, originalVersion, 'A failing task must not apply the pending version');
   });
 });
 
-suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 19 documented entries', () => {
-    assert.strictEqual(getManifest().contributes.commands.length, 19);
+suite('Package tree renders only real data rows', function () {
+  this.timeout(30000);
+
+  const fixture = SINGLE_ROOT_FIXTURES[0];
+  let opened: OpenedFixtureWorkspace | undefined;
+  let filterManager: FilterManager;
+  let provider: PackagesProvider;
+
+  suiteSetup(async () => {
+    opened = await openTrackedFixture(fixture);
+    filterManager = new FilterManager();
+    provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
   });
 
-  test('capabilities.untrustedWorkspaces / virtualWorkspaces are not declared — implicit VS Code default today', () => {
-    // These will eventually be declared explicitly; this documents the present (absent)
-    // state as a baseline to flip later.
-    assert.strictEqual(getManifest().capabilities, undefined);
+  suiteTeardown(async () => {
+    provider.dispose();
+    filterManager.dispose();
+    await closeIfOpen(opened);
+    opened = undefined;
+  });
+
+  test('the first child of a populated tree is a package group, not a fake action row', () => {
+    const children = provider.getChildren();
+    assert.ok(children.length > 0, 'the tree should not be empty for a populated fixture');
+    assert.strictEqual(
+      children[0] instanceof GroupItem,
+      true,
+      'the first row must be a real data group — Search and Filter are toolbar/QuickPick actions, not tree rows',
+    );
+  });
+});
+
+suite('Manifest Contracts', () => {
+  test('contributes.commands has exactly the 20 documented entries', () => {
+    assert.strictEqual(getManifest().contributes.commands.length, 20);
+  });
+
+  // Global commands gate on capability contexts published only after the provider's first
+  // load, so a workspace holding a package.json activates without opening the sidebar first.
+  test('activates on a package.json without waiting for the sidebar to open', () => {
+    assert.deepStrictEqual(getManifest().activationEvents, ['workspaceContains:package.json']);
+  });
+
+  test('declares unsupported workspace modes and workspace-side execution', () => {
+    const manifest = getManifest();
+    assert.deepStrictEqual(manifest.capabilities, {
+      untrustedWorkspaces: {
+        supported: false,
+        description: 'Nestro reads local package files and runs package-manager processes.',
+      },
+      virtualWorkspaces: {
+        supported: false,
+        description: 'Nestro requires local package files and package-manager processes.',
+      },
+    });
+    assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
   });
 
   test('row capabilities keep update actions working and hide pin for unsupported specs', () => {
-    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', false, 'high', '/workspace/package.json', false, '^');
+    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', undefined, 'high', '/workspace/package.json', false, '^');
     assert.strictEqual(item.contextValue, 'outdated-pinnable-vulnerable-high');
 
     const menuEntries = getManifest().contributes.menus['view/item/context'];
@@ -742,7 +857,7 @@ suite('Manifest Contracts', () => {
     assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
 
     const pinEntries = menuEntries.filter(entry => entry.command === 'nestro.pinVersion');
-    assert.strictEqual(pinEntries.length, 2);
+    assert.strictEqual(pinEntries.length, 1);
     for (const pinEntry of pinEntries) {
       const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
       assert.strictEqual(typeof pinRegexSource, 'string');
@@ -755,6 +870,81 @@ suite('Manifest Contracts', () => {
     for (const pinEntry of pinEntries) {
       const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
       assert.strictEqual(new RegExp(pinRegexSource ?? '').test(unsupported.contextValue as string), false);
+    }
+  });
+
+  test('package row actions stay reachable with no more than two inline actions', () => {
+    const rowMenus = getManifest().contributes.menus['view/item/context']
+      .filter(entry => entry.when.includes('viewItem =~'));
+    assert.deepStrictEqual(rowMenus.map(entry => [entry.command, entry.group]), [
+      ['nestro.installUpdate', 'inline'],
+      ['nestro.pickVersion', 'inline@2'],
+      ['nestro.openOnNpm', 'navigation@1'],
+      ['nestro.copyPackageName', 'navigation@2'],
+      ['nestro.switchDepType', '2_manage@1'],
+      ['nestro.pinVersion', '2_manage@2'],
+      ['nestro.removePackage', '3_danger@1'],
+    ]);
+    assert.strictEqual(new Set(rowMenus.map(entry => entry.command)).size, rowMenus.length);
+
+    const rowCases = [
+      {
+        label: 'outdated vulnerable pinnable',
+        item: new PackageItem('pkg', '^1.0.0', '1.1.0', 'minor', undefined, 'high'),
+        commandIds: [
+          'nestro.installUpdate',
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.pinVersion',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
+      },
+      {
+        label: 'outdated vulnerable pin-unsupported',
+        item: new PackageItem('local-pkg', 'npm:real-pkg@^1.0.0', '2.0.0', 'breaking', undefined, 'critical'),
+        commandIds: [
+          'nestro.installUpdate',
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
+      },
+      {
+        label: 'current pinnable',
+        item: new PackageItem('stable', '^1.0.0', undefined, 'none'),
+        commandIds: [
+          'nestro.pickVersion',
+          'nestro.openOnNpm',
+          'nestro.copyPackageName',
+          'nestro.switchDepType',
+          'nestro.pinVersion',
+          'nestro.removePackage',
+        ],
+        inlineCommandIds: ['nestro.pickVersion'],
+      },
+      {
+        label: 'installing vulnerable',
+        item: new PackageItem('pending', '^1.0.0', '2.0.0', 'minor', { kind: 'update', target: '2.0.0' }, 'high'),
+        commandIds: ['nestro.openOnNpm', 'nestro.copyPackageName'],
+        inlineCommandIds: [],
+      },
+    ] as const;
+
+    for (const { label, item, commandIds, inlineCommandIds } of rowCases) {
+      const matchingMenus = rowMenus.filter(entry => compileViewItemPattern(entry.when).test(item.contextValue ?? ''));
+      assert.deepStrictEqual(matchingMenus.map(entry => entry.command), commandIds, label);
+      assert.deepStrictEqual(
+        matchingMenus.filter(entry => entry.group?.startsWith('inline') === true).map(entry => entry.command),
+        inlineCommandIds,
+        `${label} inline actions`,
+      );
+      assert.ok(inlineCommandIds.length <= 2, `${label} should have at most two inline actions`);
     }
   });
 
@@ -773,6 +963,14 @@ suite('Manifest Contracts', () => {
     'nestro.clearSearchQuery',
   ] as const;
 
+  const PALETTE_GATED_COMMANDS: Readonly<Record<string, string>> = {
+    'nestro.updateAllVisible': 'nestro.canUpdateVisiblePackages',
+    'nestro.runInstall': 'nestro.canRunInstall',
+    'nestro.searchPackages': 'nestro.canSearchPackages',
+    'nestro.runAudit': 'nestro.canRunAudit',
+    'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+  };
+
   test('row-only and contextual commands are hidden from the Command Palette', () => {
     const paletteEntries = getManifest().contributes.menus.commandPalette;
     for (const commandId of PALETTE_HIDDEN_COMMAND_IDS) {
@@ -782,9 +980,14 @@ suite('Manifest Contracts', () => {
     }
     assert.strictEqual(
       paletteEntries.length,
-      PALETTE_HIDDEN_COMMAND_IDS.length,
-      'every commandPalette override should be one of the hidden row-only/contextual commands',
+      PALETTE_HIDDEN_COMMAND_IDS.length + Object.keys(PALETTE_GATED_COMMANDS).length,
+      'every commandPalette override should be a hidden or capability-gated command',
     );
+    for (const [commandId, context] of Object.entries(PALETTE_GATED_COMMANDS)) {
+      const entry = paletteEntries.find(candidate => candidate.command === commandId);
+      assert.ok(entry, `${commandId} should have a capability-gated commandPalette entry`);
+      assert.strictEqual(entry.when, context, `${commandId} should use ${context}`);
+    }
   });
 
   test('every command still visible in the Command Palette carries the Nestro category', () => {
@@ -800,6 +1003,44 @@ suite('Manifest Contracts', () => {
     const command = getManifest().contributes.commands.find(entry => entry.command === 'nestro.updateAllVisible');
     assert.ok(command, 'nestro.updateAllVisible should be a contributed command');
     assert.strictEqual(command.enablement, 'nestro.canUpdateVisiblePackages');
+  });
+
+  test('global actions expose their executable workspace capabilities', () => {
+    const commands = getManifest().contributes.commands;
+    for (const [commandId, context] of Object.entries({
+      'nestro.runInstall': 'nestro.canRunInstall',
+      'nestro.runAudit': 'nestro.canRunAudit',
+      'nestro.searchPackages': 'nestro.canSearchPackages',
+      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+    })) {
+      const command = commands.find(entry => entry.command === commandId);
+      assert.ok(command, `${commandId} should be a contributed command`);
+      assert.strictEqual(command.enablement, context);
+    }
+
+    const toolbarEntries = getManifest().contributes.menus['view/title'];
+    for (const [commandId, context] of Object.entries({
+      'nestro.runInstall': 'nestro.canRunInstall',
+      'nestro.runAudit': 'nestro.canRunAudit',
+      'nestro.searchPackages': 'nestro.canSearchPackages',
+      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+    })) {
+      const entry = toolbarEntries.find(candidate => candidate.command === commandId);
+      assert.ok(entry, `${commandId} should have a toolbar menu entry`);
+      assert.strictEqual(entry.when, `view == nestro.packagesView && ${context}`);
+    }
+  });
+
+  // The narrow view toolbar renders only the navigation group inline; everything else
+  // collapses into the "..." overflow, so the installed manifest must cap navigation at three.
+  test('the view toolbar keeps exactly three primary navigation actions, in order', () => {
+    const toolbarEntries = getManifest().contributes.menus['view/title'];
+    const navigationEntries = toolbarEntries.filter(entry => entry.group === 'navigation' || entry.group?.startsWith('navigation@') === true);
+    assert.deepStrictEqual(navigationEntries.map(entry => entry.command), [
+      'nestro.refresh',
+      'nestro.checkUpdates',
+      'nestro.updateAllVisible',
+    ]);
   });
 });
 
@@ -817,6 +1058,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     'nestro.checkUpdates',
     'nestro.runAudit',
     'nestro.openAuditReport',
+    'nestro.openStatusReport',
     'nestro.installUpdate',
     'nestro.pickVersion',
     'nestro.switchDepType',
@@ -849,9 +1091,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
 
   suiteTeardown(async () => {
     process.off('unhandledRejection', onUnhandledRejection);
-    // nestro.setFilter has no argument guard and silently accepts `undefined` (getFilteredEntries()
-    // in treeBuilder.ts tolerates an unrecognized filter by matching nothing) — restore the
-    // default so later runs of this file are not affected by this suite having executed.
+    // Explicit reset so later runs of this file see a known filter regardless of
+    // whichever command last ran in the loop above.
     await vscode.commands.executeCommand('nestro.setFilter', 'all');
     // nestro.searchPackages opens a real, non-modal InputBox that only
     // resolves on hide/accept; since its handler is fire-and-forget it is
@@ -859,8 +1100,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
   });
 
-  test('contributes.commands still has exactly the 19 entries this suite enumerates', () => {
-    assert.strictEqual(commandIds.length, 19, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
+  test('contributes.commands still has exactly the 20 entries this suite enumerates', () => {
+    assert.strictEqual(commandIds.length, 20, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
     const localeCompare = (left: string, right: string): number => left.localeCompare(right);
     assert.deepStrictEqual([...commandIds].sort(localeCompare), [...COMMAND_IDS_UNDER_TEST].sort(localeCompare));
   });
@@ -895,7 +1136,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     });
   }
 
-  test('the Extension Host is still fully responsive after invoking all 19 commands with no arguments', async () => {
+  test('the Extension Host is still fully responsive after invoking all 20 commands with no arguments', async () => {
     const registered = await vscode.commands.getCommands(true);
     for (const commandId of commandIds) {
       assert.ok(registered.includes(commandId), `${commandId} should still be registered`);

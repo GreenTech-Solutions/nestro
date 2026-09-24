@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
-import { FilterBarItem } from './FilterBarItem';
-import { FilterCounts, FilterType } from './FilterManager';
+import { FilterCounts, FilterType, getFilterLabel } from './FilterManager';
 import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
-import { SearchQueryItem } from './SearchQueryItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import type { UpdateType } from '../utils';
 
@@ -19,6 +17,25 @@ export interface PackageTreeEntry {
   item: PackageItem;
   dev: boolean;
   packageFilePath: string;
+}
+
+export interface PackageGroupProjection {
+  readonly dev: boolean;
+  readonly entries: readonly PackageTreeEntry[];
+  readonly totalCount: number;
+  readonly outdatedCount: number;
+}
+
+export interface PackageTreeProjection {
+  readonly filterType: FilterType;
+  readonly search: string;
+  readonly allPackageFilePaths: readonly string[];
+  readonly searchMatchedEntries: readonly PackageTreeEntry[];
+  readonly visibleEntries: readonly PackageTreeEntry[];
+  readonly visibleOutdatedEntries: readonly PackageTreeEntry[];
+  readonly filterCounts: FilterCounts;
+  readonly groups: readonly PackageGroupProjection[];
+  readonly canUpdateVisiblePackages: boolean;
 }
 
 /** A workspace folder as plain data: no live `vscode` state, safe for pure functions. */
@@ -41,6 +58,11 @@ export interface PackageFileLabel {
   readonly owner: PackageOwnerLabel;
 }
 
+export interface PackageLabelFormatting {
+  readonly rootLabel: string;
+  readonly formatUnicodeDiscriminator: (base: string, ordinal: number) => string;
+}
+
 interface PackageLabelRow {
   packageFilePath: string;
   owner: PackageOwnerLabel;
@@ -48,7 +70,20 @@ interface PackageLabelRow {
 }
 
 const UNOWNED_FOLDER_INDEX = Number.MAX_SAFE_INTEGER;
+/** Keeps `formatViewDescription()` readable in a narrow sidebar. */
+const MAX_DESCRIPTION_SEARCH_LENGTH = 24;
 const UNSAFE_LABEL_CODE_POINT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const DEFAULT_PACKAGE_LABEL_FORMATTING: PackageLabelFormatting = {
+  rootLabel: '(root)',
+  formatUnicodeDiscriminator: (base, ordinal) => `${base} [unicode #${ordinal}]`,
+};
+
+export function getLocalizedPackageLabelFormatting(): PackageLabelFormatting {
+  return {
+    rootLabel: vscode.l10n.t('(root)'),
+    formatUnicodeDiscriminator: (base, ordinal) => vscode.l10n.t('{0} [unicode #{1}]', base, ordinal),
+  };
+}
 
 export function buildTree(
   entries: readonly PackageTreeEntry[],
@@ -61,16 +96,13 @@ export function buildTree(
     return [];
   }
 
+  const projection = projectPackageTree(entries, filterType, search);
   const packageFiles = new Set(entries.map(entry => entry.packageFilePath));
   if (packageFiles.size <= 1 || workspaceFolders === undefined || workspaceFolders.length === 0) {
-    return buildFlatTree(entries, filterType, search);
+    return buildFlatTree(projection);
   }
 
-  return [
-    new SearchQueryItem(search),
-    new FilterBarItem(getFilterCounts(entries), filterType),
-    ...buildWorkspaceGroups(entries, filterType, search, workspaceFolders, allPackageFilePaths),
-  ];
+  return buildWorkspaceGroups(projection, workspaceFolders, allPackageFilePaths);
 }
 
 /** Builds plain owner descriptors from live `vscode.WorkspaceFolder` values. */
@@ -133,6 +165,7 @@ export function resolvePackageOwnerLabel(
   packageFilePath: string,
   folders: readonly WorkspaceFolderDescriptor[],
   displayNames: ReadonlyMap<string, string>,
+  formatting: PackageLabelFormatting = DEFAULT_PACKAGE_LABEL_FORMATTING,
 ): PackageOwnerLabel {
   const owner = findOwningWorkspaceFolder(packageFilePath, folders);
   if (owner === undefined) {
@@ -141,10 +174,10 @@ export function resolvePackageOwnerLabel(
   }
 
   const rawRelativeLabel = toRelativeLabel(packageFilePath, owner.path);
-  const relativeLabel = sanitizeLabelText(rawRelativeLabel);
-  const displayName = displayNames.get(owner.path) ?? sanitizeLabelText(owner.name);
   const isRoot = getPathInfo(normalizedPackageFileDirectory(packageFilePath)).comparisonPath
     === getPathInfo(owner.path).comparisonPath;
+  const relativeLabel = sanitizeLabelText(isRoot ? formatting.rootLabel : rawRelativeLabel);
+  const displayName = displayNames.get(owner.path) ?? sanitizeLabelText(owner.name);
   return {
     label: `${displayName} — ${relativeLabel}`,
     folderIndex: owner.index,
@@ -157,6 +190,7 @@ export function resolvePackageOwnerLabel(
 export function resolvePackageFileLabels(
   packageFilePaths: readonly string[],
   folders: readonly WorkspaceFolderDescriptor[],
+  formatting: PackageLabelFormatting = DEFAULT_PACKAGE_LABEL_FORMATTING,
 ): PackageFileLabel[] {
   const uniquePaths: string[] = [];
   const seenPaths = new Set<string>();
@@ -171,11 +205,11 @@ export function resolvePackageFileLabels(
   const displayNames = resolveWorkspaceFolderDisplayNames(folders);
   const rows = uniquePaths.map(packageFilePath => ({
     packageFilePath,
-    owner: resolvePackageOwnerLabel(packageFilePath, folders, displayNames),
+    owner: resolvePackageOwnerLabel(packageFilePath, folders, displayNames, formatting),
     needsUnicodeDiscriminator: packageLabelNeedsUnicodeDiscriminator(packageFilePath, folders, displayNames),
   }));
   ensureUniquePackageLabels(rows);
-  ensureUnicodeDiscriminators(rows);
+  ensureUnicodeDiscriminators(rows, formatting);
   ensureUniquePackageLabels(rows);
   rows.sort((left, right) => comparePackageOwnerLabels(left.owner, right.owner)
     || compareText(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
@@ -204,14 +238,43 @@ export function toRelativeLabel(packageFilePath: string, workspaceRoot: string):
   return folderPath.displaySegments.at(-1) ?? folderPath.displayPath;
 }
 
-export function getFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
+export function projectPackageTree(
+  entries: readonly PackageTreeEntry[],
+  filterType: FilterType,
+  search = '',
+): PackageTreeProjection {
+  const normalizedSearch = search.toLocaleLowerCase();
+  const allPackageFilePaths = entries.map(entry => entry.packageFilePath);
+  const searchMatchedEntries = normalizedSearch === ''
+    ? [...entries]
+    : entries.filter(entry => entry.item.packageName.toLocaleLowerCase().includes(normalizedSearch));
+  const filterCounts = buildFilterCounts(searchMatchedEntries);
+  const visibleEntries = filterType === 'all'
+    ? [...searchMatchedEntries]
+    : searchMatchedEntries.filter(entry => matchesUpdateFilter(entry, filterType));
+  if (filterType === 'hasUpdates') {
+    visibleEntries.sort((left, right) => UPDATE_ORDER[left.item.updateType] - UPDATE_ORDER[right.item.updateType]);
+  }
+  const visibleOutdatedEntries = visibleEntries.filter(isActionableUpdate);
+  const groups = buildGroupProjections(visibleEntries);
   return {
-    all: entries.length,
-    hasUpdates: entries.filter(e => e.item.updateType !== 'none' && !e.item.installing).length,
-    patch: entries.filter(e => e.item.updateType === 'patch' && !e.item.installing).length,
-    minor: entries.filter(e => e.item.updateType === 'minor' && !e.item.installing).length,
-    breaking: entries.filter(e => e.item.updateType === 'breaking' && !e.item.installing).length,
+    filterType,
+    search,
+    allPackageFilePaths,
+    searchMatchedEntries,
+    visibleEntries,
+    visibleOutdatedEntries,
+    filterCounts,
+    groups,
+    canUpdateVisiblePackages: visibleOutdatedEntries.length > 0,
   };
+}
+
+export function getFilterCounts(
+  entries: readonly PackageTreeEntry[],
+  search = '',
+): FilterCounts {
+  return projectPackageTree(entries, 'all', search).filterCounts;
 }
 
 export function getFilteredEntries(
@@ -219,66 +282,66 @@ export function getFilteredEntries(
   filterType: FilterType,
   search = '',
 ): PackageTreeEntry[] {
-  const filteredByType = filterType === 'all'
-    ? [...entries]
-    : filterType === 'hasUpdates'
-      ? entries.filter(e => e.item.updateType !== 'none')
-      : entries.filter(e => e.item.updateType === filterType);
+  return [...projectPackageTree(entries, filterType, search).visibleEntries];
+}
 
-  if (search === '') {
-    return filteredByType;
+/** Compact `treeView.description` for the active filter/search state; `undefined` when both are at their defaults. */
+export function formatViewDescription(
+  filterType: FilterType,
+  search: string,
+  counts: FilterCounts,
+): string | undefined {
+  const filterSegment = filterType === 'all'
+    ? undefined
+    : vscode.l10n.t('{0} ({1})', getFilterLabel(filterType), counts[filterType]);
+  const searchSegment = search === ''
+    ? undefined
+    : vscode.l10n.t('"{0}"', truncateSearchForDescription(search));
+
+  if (filterSegment !== undefined && searchSegment !== undefined) {
+    return vscode.l10n.t('{0} · {1}', filterSegment, searchSegment);
   }
+  return filterSegment ?? searchSegment;
+}
 
-  return filteredByType.filter(entry => entry.item.packageName.toLocaleLowerCase().includes(search));
+function truncateSearchForDescription(search: string): string {
+  const codePoints = [...search];
+  return codePoints.length > MAX_DESCRIPTION_SEARCH_LENGTH
+    ? `${codePoints.slice(0, MAX_DESCRIPTION_SEARCH_LENGTH).join('')}…`
+    : search;
 }
 
 function buildGroups(
-  entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
+  groupsProjection: readonly PackageGroupProjection[],
   search: string,
 ): vscode.TreeItem[] {
-  const filtered = getFilteredEntries(entries, filterType, search);
-  if (filtered.length === 0) {
-    return [new MessageItem(search === '' ? 'No packages match the current filter.' : 'No packages match the current search.')];
+  if (groupsProjection.length === 0) {
+    return [new MessageItem(search === ''
+      ? vscode.l10n.t('No packages match the current filter.')
+      : vscode.l10n.t('No packages match the current search.'))];
   }
 
-  if (filterType === 'hasUpdates') {
-    filtered.sort((left, right) => UPDATE_ORDER[left.item.updateType] - UPDATE_ORDER[right.item.updateType]);
-  }
-
-  const deps = filtered.filter(e => !e.dev).map(e => e.item);
-  const devDeps = filtered.filter(e => e.dev).map(e => e.item);
-  const groups: GroupItem[] = [];
-  if (deps.length > 0) {
-    const outdatedDeps = filtered.filter(e => !e.dev && e.item.updateType !== 'none').length;
-    groups.push(new GroupItem('Dependencies', deps, deps.length, outdatedDeps, false));
-  }
-  if (devDeps.length > 0) {
-    const outdatedDevDeps = filtered.filter(e => e.dev && e.item.updateType !== 'none').length;
-    groups.push(new GroupItem('Dev Dependencies', devDeps, devDeps.length, outdatedDevDeps, true));
-  }
-  return groups;
+  return groupsProjection.map(group => new GroupItem(
+    group.dev ? vscode.l10n.t('Dev Dependencies') : vscode.l10n.t('Dependencies'),
+    group.entries.map(entry => entry.item),
+    group.totalCount,
+    group.outdatedCount,
+    group.dev,
+  ));
 }
 
 function buildFlatTree(
-  entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
-  search: string,
+  projection: PackageTreeProjection,
 ): vscode.TreeItem[] {
-  return [
-    new SearchQueryItem(search),
-    new FilterBarItem(getFilterCounts(entries), filterType),
-    ...buildGroups(entries, filterType, search),
-  ];
+  return buildGroups(projection.groups, projection.search);
 }
 
 function buildWorkspaceGroups(
-  entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
-  search: string,
+  projection: PackageTreeProjection,
   workspaceFolders: readonly WorkspaceFolderDescriptor[],
   allPackageFilePaths?: readonly string[],
 ): vscode.TreeItem[] {
+  const entries = projection.visibleEntries;
   const byFile = new Map<string, PackageTreeEntry[]>();
   for (const entry of entries) {
     const fileKey = getPathInfo(entry.packageFilePath).comparisonPath;
@@ -287,7 +350,7 @@ function buildWorkspaceGroups(
 
   const fileGroups: { packageFilePath: string; groups: GroupItem[] }[] = [];
   for (const fileEntries of byFile.values()) {
-    const groups: GroupItem[] = buildGroups(fileEntries, filterType, search)
+    const groups: GroupItem[] = buildGroups(buildGroupProjections(fileEntries), projection.search)
       .filter((item): item is GroupItem => item instanceof GroupItem);
     if (groups.length > 0) {
       fileGroups.push({ packageFilePath: fileEntries[0].packageFilePath, groups });
@@ -297,8 +360,8 @@ function buildWorkspaceGroups(
   const visibleFileKeys = new Set(fileGroups.map(fileGroup => getPathInfo(fileGroup.packageFilePath).comparisonPath));
   const packageFilePaths = allPackageFilePaths !== undefined && allPackageFilePaths.length > 0
     ? allPackageFilePaths
-    : entries.map(entry => entry.packageFilePath);
-  const labels = resolvePackageFileLabels(packageFilePaths, workspaceFolders)
+    : projection.allPackageFilePaths;
+  const labels = resolvePackageFileLabels(packageFilePaths, workspaceFolders, getLocalizedPackageLabelFormatting())
     .filter(({ packageFilePath }) => visibleFileKeys.has(getPathInfo(packageFilePath).comparisonPath));
   const groupsByPath = new Map(fileGroups.map(fileGroup => [
     getPathInfo(fileGroup.packageFilePath).comparisonPath,
@@ -311,7 +374,65 @@ function buildWorkspaceGroups(
 
   return rows.length > 0
     ? rows
-    : [new MessageItem(search === '' ? 'No packages match the current filter.' : 'No packages match the current search.')];
+    : [new MessageItem(projection.search === ''
+        ? vscode.l10n.t('No packages match the current filter.')
+        : vscode.l10n.t('No packages match the current search.'))];
+}
+
+function buildFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
+  const counts: FilterCounts = {
+    all: entries.length,
+    hasUpdates: 0,
+    patch: 0,
+    minor: 0,
+    breaking: 0,
+  };
+  for (const entry of entries) {
+    if (!isActionableUpdate(entry)) {
+      continue;
+    }
+    counts.hasUpdates += 1;
+    counts[entry.item.updateType] += 1;
+  }
+  return counts;
+}
+
+function buildGroupProjections(entries: readonly PackageTreeEntry[]): PackageGroupProjection[] {
+  const groups: PackageGroupProjection[] = [];
+  for (const dev of [false, true]) {
+    const groupEntries = entries.filter(entry => entry.dev === dev);
+    if (groupEntries.length === 0) {
+      continue;
+    }
+    groups.push({
+      dev,
+      entries: groupEntries,
+      totalCount: groupEntries.length,
+      outdatedCount: groupEntries.filter(isActionableUpdate).length,
+    });
+  }
+  return groups;
+}
+
+function matchesUpdateFilter(entry: PackageTreeEntry, filterType: FilterType): boolean {
+  if (!isActionableUpdate(entry)) {
+    return false;
+  }
+  return filterType === 'hasUpdates' || entry.item.updateType === filterType;
+}
+
+function isActionableUpdate(
+  entry: PackageTreeEntry,
+): entry is PackageTreeEntry & {
+  readonly item: PackageItem & {
+    readonly updateType: Exclude<UpdateType, 'none'>;
+    readonly latest: string;
+    readonly operation: undefined;
+  };
+} {
+  return entry.item.updateType !== 'none'
+    && entry.item.latest !== undefined
+    && entry.item.operation === undefined;
 }
 
 function assignDisambiguatedNames(
@@ -550,7 +671,10 @@ function ensureUniquePackageLabels(rows: PackageLabelRow[]): void {
   });
 }
 
-function ensureUnicodeDiscriminators(rows: PackageLabelRow[]): void {
+function ensureUnicodeDiscriminators(
+  rows: PackageLabelRow[],
+  formatting: PackageLabelFormatting,
+): void {
   const unicodeRows = rows
     .filter(row => row.needsUnicodeDiscriminator)
     .sort((left, right) => compareText(
@@ -561,7 +685,7 @@ function ensureUnicodeDiscriminators(rows: PackageLabelRow[]): void {
   unicodeRows.forEach((row, position) => {
     const ordinal = position + 1;
     const base = row.owner.label;
-    row.owner = { ...row.owner, label: `${base} [unicode #${ordinal}]` };
+    row.owner = { ...row.owner, label: formatting.formatUnicodeDiscriminator(base, ordinal) };
   });
 }
 

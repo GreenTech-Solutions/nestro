@@ -7,11 +7,11 @@ export type FilterType = typeof FILTER_TYPES[number];
 export interface FilterCounts extends Record<FilterType, number> {}
 
 const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
-  all: { label: 'All' },
-  hasUpdates: { label: 'Has Updates', color: 'charts.blue' },
-  patch: { label: 'Patch', color: 'charts.green' },
-  minor: { label: 'Minor', color: 'charts.yellow' },
-  breaking: { label: 'Breaking', color: 'charts.red' },
+  all: { label: vscode.l10n.t('All') },
+  hasUpdates: { label: vscode.l10n.t('Has Updates'), color: 'charts.blue' },
+  patch: { label: vscode.l10n.t('Patch'), color: 'charts.green' },
+  minor: { label: vscode.l10n.t('Minor'), color: 'charts.yellow' },
+  breaking: { label: vscode.l10n.t('Breaking'), color: 'charts.red' },
 };
 
 export function isFilterType(value: unknown): value is FilterType {
@@ -55,7 +55,7 @@ export class FilterManager implements vscode.Disposable {
   private _search = '';
   private readonly clearSearchButton: vscode.QuickInputButton = {
     iconPath: new vscode.ThemeIcon('clear-all'),
-    tooltip: 'Clear search query',
+    tooltip: vscode.l10n.t('Clear search query'),
   };
 
   constructor(initialFilter: FilterType = 'all') {
@@ -93,9 +93,9 @@ export class FilterManager implements vscode.Disposable {
 
   async showSearch(): Promise<void> {
     const inputBox = vscode.window.createInputBox();
-    inputBox.title = 'Search packages';
-    inputBox.prompt = 'Search packages by name';
-    inputBox.placeholder = 'Type a package name';
+    inputBox.title = vscode.l10n.t('Search packages');
+    inputBox.prompt = vscode.l10n.t('Search packages by name');
+    inputBox.placeholder = vscode.l10n.t('Type a package name');
     inputBox.value = this._search;
     inputBox.buttons = [this.clearSearchButton];
 
@@ -140,7 +140,7 @@ export class FilterManager implements vscode.Disposable {
   async showPicker(counts: FilterCounts): Promise<void> {
     const selected = await vscode.window.showQuickPick(
       createFilterQuickPickItems(counts, this._current),
-      { placeHolder: 'Select package filter' },
+      { placeHolder: vscode.l10n.t('Select package filter') },
     );
     if (selected) {
       this.set(selected.filterType);

@@ -4,9 +4,18 @@ on:
   pull_request:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   EXPECTED_SHA: ${{ github.sha }}
@@ -17,6 +26,21 @@ jobs:
     name: Quality gates
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve the dispatched pull request
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]
+          pr="$(gh api "repos/${{ github.repository }}/pulls/$DISPATCH_PR_NUMBER")"
+          test "$(echo "$pr" | jq -r '.head.sha')" = "$DISPATCH_HEAD_SHA"
+          test "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"
+          test "$(echo "$pr" | jq -r '.state')" = "open"
+          test "$(echo "$pr" | jq -r '.base.ref')" = "master"
       - name: Checkout exact tested commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +83,7 @@ jobs:
           printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \
             | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color .github/workflows/ci.yml
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml
       - name: Workflow policy
         run: pnpm run ci:policy
       - name: Unit coverage
@@ -114,6 +138,10 @@ jobs:
     name: Package verified evidence
     needs: [quality, extension-host]
     if: ${{ success() }}
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
@@ -151,7 +179,33 @@ jobs:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_PR_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+      - name: Write deterministic provenance bundle
+        run: pnpm run release:provenance --artifact-dir "$CI_ARTIFACT_DIR"
+        env:
+          PROVENANCE_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PROVENANCE_CI_RUN_ID: ${{ github.run_id }}
+          PROVENANCE_EVENT_NAME: ${{ github.event_name }}
+          PROVENANCE_REPOSITORY: ${{ github.repository }}
+          PROVENANCE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/ci.yml
+          PROVENANCE_SOURCE_SHA: ${{ env.EXPECTED_SHA }}
+      - name: Resolve the exact VSIX attestation subject
+        id: subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
+          test "${#subjects[@]}" = 1
+          case "${subjects[0]}" in
+            "$CI_ARTIFACT_DIR"/*.vsix) ;;
+            *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
+          esac
+          printf 'path=%s\n' "${subjects[0]}" >> "$GITHUB_OUTPUT"
+      - name: Attest the exact VSIX subject
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.2.2
+        with:
+          subject-path: ${{ steps.subject.outputs.path }}
       - name: Upload immutable evidence
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -162,6 +216,8 @@ jobs:
             ${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt
             ${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256
             ${{ env.CI_ARTIFACT_DIR }}/evidence.json
+            ${{ env.CI_ARTIFACT_DIR }}/sbom.json
+            ${{ env.CI_ARTIFACT_DIR }}/provenance.json
           if-no-files-found: error
           overwrite: false
           retention-days: 7

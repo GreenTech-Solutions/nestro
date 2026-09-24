@@ -4,6 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildArtifactProvenance,
+  buildArtifactSbom,
+  buildNormalizedManifest,
+  parsePackagedIdentity,
+  readRuntimeDependencies,
+  readVsixArchive,
+  selectDeliveredRuntimeFiles,
+} from '../tools';
+import {
+  buildZipFixture,
+  CLEAN_EXTENSION_IDENTITY,
+  CLEAN_VSIX_MANIFEST,
+  cleanVsixFixtureEntries,
+} from './fixtures/vsixFixtures';
+import {
   assertSmokeSocketPathFits,
   buildVsixInstallArgs,
   installPackagedVsix,
@@ -14,24 +29,89 @@ import {
 import type { PackagedSmokeDependencies } from './packagedSmokeCli';
 
 const SOURCE_SHA = 'c'.repeat(40);
+const CI_RUN_ID = '42';
+const CI_RUN_ATTEMPT = '1';
 const VSIX_FILE = 'nestro-0.4.2.vsix';
 const roots: string[] = [];
 
-async function createEvidenceDir(): Promise<{ dir: string; digest: string }> {
+interface EvidenceEventOverrides {
+  readonly eventName?: 'push' | 'pull_request' | 'workflow_dispatch';
+  readonly pullRequestHeadSha?: string | null;
+}
+
+async function createEvidenceDir(overrides: EvidenceEventOverrides = {}): Promise<{ dir: string; digest: string }> {
+  const eventName = overrides.eventName ?? 'push';
+  const pullRequestHeadSha = overrides.pullRequestHeadSha ?? null;
   const dir = await mkdtemp(join(tmpdir(), 'nestro-packaged-evidence-'));
   roots.push(dir);
-  const bytes = Buffer.from('downloaded-vsix');
+  const bytes = buildZipFixture(cleanVsixFixtureEntries().map((entry) => {
+    if (entry.path === 'extension/package.json') {
+      return {
+        ...entry,
+        content: JSON.stringify({
+          ...CLEAN_EXTENSION_IDENTITY,
+          version: '0.4.2',
+          main: './out/extension.cjs',
+          icon: 'resources/icon.png',
+        }),
+      };
+    }
+    if (entry.path === 'extension.vsixmanifest') {
+      return { ...entry, content: CLEAN_VSIX_MANIFEST.replaceAll('9.9.9', '0.4.2') };
+    }
+    return entry;
+  }));
   const digest = createHash('sha256').update(bytes).digest('hex');
+  const archiveEntries = readVsixArchive(bytes);
+  const packageEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
+  if (packageEntry === undefined) {
+    throw new Error('fixture package manifest missing');
+  }
+  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const packagedManifest = JSON.parse(new TextDecoder().decode(packageEntry.bytes)) as unknown;
+  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
+  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
+  const normalizedManifest = buildNormalizedManifest(archiveEntries);
+  const manifestSha256 = createHash('sha256').update(normalizedManifest).digest('hex');
+  const sbomContents = `${JSON.stringify(buildArtifactSbom({
+    identity,
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    runtimeFiles,
+    dependencies: runtimeDependencies.dependencies,
+    optionalDependencies: runtimeDependencies.optionalDependencies,
+  }), undefined, 2)}\n`;
+  const sbomSha256 = createHash('sha256').update(sbomContents).digest('hex');
+  const provenanceContents = `${JSON.stringify(buildArtifactProvenance({
+    sourceSha: SOURCE_SHA,
+    ciRunId: CI_RUN_ID,
+    ciRunAttempt: CI_RUN_ATTEMPT,
+    eventName,
+    repository: 'local/repository',
+    signerWorkflow: 'local/repository/.github/workflows/ci.yml',
+    artifactFile: VSIX_FILE,
+    artifactSha256: digest,
+    manifestFile: `${VSIX_FILE}.manifest.txt`,
+    manifestSha256,
+    sbomFile: 'sbom.json',
+    sbomSha256,
+  }), undefined, 2)}\n`;
   await writeFile(join(dir, VSIX_FILE), bytes);
   await writeFile(join(dir, `${VSIX_FILE}.sha256`), `${digest}  ${VSIX_FILE}\n`, 'utf8');
-  await writeFile(join(dir, `${VSIX_FILE}.manifest.txt`), `${digest}  extension/package.json\n`, 'utf8');
+  await writeFile(join(dir, `${VSIX_FILE}.manifest.txt`), normalizedManifest, 'utf8');
   await writeFile(join(dir, 'evidence.json'), JSON.stringify({
     schemaVersion: 1,
     sourceSha: SOURCE_SHA,
     vsixFile: VSIX_FILE,
     vsixSha256: digest,
+    runId: CI_RUN_ID,
+    runAttempt: CI_RUN_ATTEMPT,
+    eventName,
+    pullRequestHeadSha,
     releaseEligible: false,
   }), 'utf8');
+  await writeFile(join(dir, 'sbom.json'), sbomContents, 'utf8');
+  await writeFile(join(dir, 'provenance.json'), provenanceContents, 'utf8');
   return { dir, digest };
 }
 
@@ -42,6 +122,18 @@ afterEach(async () => {
 describe('packaged smoke evidence verifier', () => {
   it('accepts exactly one evidence-only VSIX bound to the expected SHA and digest', async () => {
     const { dir } = await createEvidenceDir();
+
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).resolves.toBe(join(await realpath(dir), VSIX_FILE));
+  });
+
+  it('accepts a pull request identity with a full head SHA', async () => {
+    const { dir } = await createEvidenceDir({ eventName: 'pull_request', pullRequestHeadSha: 'e'.repeat(40) });
+
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).resolves.toBe(join(await realpath(dir), VSIX_FILE));
+  });
+
+  it('accepts a workflow dispatch identity with a full head SHA', async () => {
+    const { dir } = await createEvidenceDir({ eventName: 'workflow_dispatch', pullRequestHeadSha: 'f'.repeat(40) });
 
     await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).resolves.toBe(join(await realpath(dir), VSIX_FILE));
   });
@@ -61,11 +153,34 @@ describe('packaged smoke evidence verifier', () => {
     ['sidecar substitution', (dir: string) => writeFile(join(dir, `${VSIX_FILE}.sha256`), `${'0'.repeat(64)}  ${VSIX_FILE}\n`)],
     ['ambiguous VSIX', (dir: string) => writeFile(join(dir, 'other.vsix'), 'other')],
     ['missing normalized manifest', (dir: string) => rm(join(dir, `${VSIX_FILE}.manifest.txt`))],
+    ['unknown event name', async (dir: string) => {
+      const evidence = JSON.parse(await readFile(join(dir, 'evidence.json'), 'utf8'));
+      evidence.eventName = 'schedule';
+      await writeFile(join(dir, 'evidence.json'), JSON.stringify(evidence));
+    }],
   ])('rejects %s', async (_label, inject) => {
     const { dir } = await createEvidenceDir();
     await inject(dir);
 
     await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow();
+  });
+
+  it('rejects a push identity that carries a head SHA', async () => {
+    const { dir } = await createEvidenceDir({ eventName: 'push', pullRequestHeadSha: 'a'.repeat(40) });
+
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('push identity without a head SHA');
+  });
+
+  it('rejects a pull request identity without a head SHA', async () => {
+    const { dir } = await createEvidenceDir({ eventName: 'pull_request', pullRequestHeadSha: null });
+
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
+  });
+
+  it('rejects a workflow dispatch identity with a short head SHA', async () => {
+    const { dir } = await createEvidenceDir({ eventName: 'workflow_dispatch', pullRequestHeadSha: 'abc123' });
+
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
   });
 
   it('requires explicit artifact directory and a full expected SHA', () => {

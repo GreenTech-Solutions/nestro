@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 // `@scope/name` (scope optional) with exactly one separating slash.
 const SCOPED_NAME_PATTERN = /^(?:@([^/]+)\/)?([^/]+)$/;
 const CONTROL_CHARACTER_PATTERN = /[\x00-\x1f\x7f]/;
@@ -9,23 +11,26 @@ const CONTROL_CHARACTER_PATTERN = /[\x00-\x1f\x7f]/;
  */
 export function validatePackageName(name: string): void {
   if (name.length === 0) {
-    throw new Error('Package name cannot be empty.');
+    throw new Error(vscode.l10n.t('Package name cannot be empty.'));
   }
   if (name.startsWith('-')) {
-    throw new Error(`Package name "${name}" cannot start with a hyphen.`);
+    throw new Error(vscode.l10n.t('Package name "{0}" cannot start with a hyphen.', name));
   }
 
   const match = SCOPED_NAME_PATTERN.exec(name);
   if (match === null) {
-    throw new Error(`Package name "${name}" is not a valid package or scoped package name.`);
+    throw new Error(vscode.l10n.t('Package name "{0}" is not a valid package or scoped package name.', name));
   }
 
   const [, scope, unscopedName] = match;
   if (scope !== undefined && !isUrlSafeSegment(scope)) {
-    throw new Error(`Package scope "${scope}" contains characters a registry URL can't carry.`);
+    throw new Error(vscode.l10n.t('Package scope "{0}" contains characters a registry URL can\'t carry.', scope));
   }
   if (!isUrlSafeSegment(unscopedName)) {
-    throw new Error(`Package name "${unscopedName}" contains characters a registry URL can't carry.`);
+    throw new Error(vscode.l10n.t(
+      'Package name "{0}" contains characters a registry URL can\'t carry.',
+      unscopedName,
+    ));
   }
 }
 
@@ -35,13 +40,13 @@ export function validatePackageName(name: string): void {
  */
 export function validatePackageVersionSpec(version: string): void {
   if (version.length === 0) {
-    throw new Error('Package version cannot be empty.');
+    throw new Error(vscode.l10n.t('Package version cannot be empty.'));
   }
   if (version.startsWith('-')) {
-    throw new Error(`Package version "${version}" cannot start with a hyphen.`);
+    throw new Error(vscode.l10n.t('Package version "{0}" cannot start with a hyphen.', version));
   }
   if (CONTROL_CHARACTER_PATTERN.test(version)) {
-    throw new Error(`Package version "${version}" contains control characters.`);
+    throw new Error(vscode.l10n.t('Package version "{0}" contains control characters.', version));
   }
 }
 

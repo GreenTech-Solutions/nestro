@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider } from '../providers';
 import {
@@ -29,6 +30,11 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
       return;
     }
 
+    const activeCapability = provider.markPackageUpdatingForCapability(checked, { kind: 'switch' });
+    if (activeCapability === undefined) {
+      return;
+    }
+
     try {
       logger.info(`Switching ${checked.item.packageName} dependency type.`);
       await provider.withWriteSuppressed(async () => {
@@ -39,14 +45,19 @@ export async function switchDepTypeCommand(item: unknown, provider: PackagesProv
           checked.item.currentVersion,
         );
       });
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       await provider.loadPackages();
     }
     catch (err) {
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       if (err instanceof DependencyTypeConflictError) {
         showError(err.message);
         return;
       }
-      showError(`failed to switch dependency type — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t(
+        'failed to switch dependency type — {0}',
+        err instanceof Error ? err.message : String(err),
+      ), err);
     }
   });
 }

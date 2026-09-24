@@ -10,6 +10,18 @@ import {
   evaluateWorkflowActionPolicy,
   WORKFLOWS_DIRECTORY_PATH,
 } from './ciPolicy';
+import {
+  evaluateReleaseCandidateWorkflowPolicy,
+  evaluateReleaseConfigPolicy,
+  evaluateReleaseDispatchWorkflowPolicy,
+  evaluateReleasePrepareWorkflowPolicy,
+  evaluateReleaseWorkflowPolicy,
+  RELEASE_CANDIDATE_WORKFLOW_PATH,
+  RELEASE_CONFIG_PATH,
+  RELEASE_DISPATCH_WORKFLOW_PATH,
+  RELEASE_PREPARE_WORKFLOW_PATH,
+  RELEASE_WORKFLOW_PATH,
+} from './releaseWorkflowPolicy';
 
 export interface WorkflowPolicySource {
   readonly path: string;
@@ -20,6 +32,7 @@ export interface CiPolicyCliDependencies {
   readonly readCodeowners: () => Promise<string>;
   readonly readDependabotConfigs: () => Promise<readonly WorkflowPolicySource[]>;
   readonly readWorkflows: () => Promise<readonly WorkflowPolicySource[]>;
+  readonly readReleaseConfig?: () => Promise<string>;
   readonly writeOut: (message: string) => void;
   readonly writeError: (message: string) => void;
 }
@@ -28,11 +41,13 @@ export async function runCiPolicyCli(dependencies: CiPolicyCliDependencies): Pro
   let workflows: readonly WorkflowPolicySource[];
   let codeowners: string;
   let dependabotConfigs: readonly WorkflowPolicySource[];
+  let releaseConfig: string | undefined;
   try {
-    [workflows, codeowners, dependabotConfigs] = await Promise.all([
+    [workflows, codeowners, dependabotConfigs, releaseConfig] = await Promise.all([
       dependencies.readWorkflows(),
       dependencies.readCodeowners(),
       dependencies.readDependabotConfigs(),
+      dependencies.readReleaseConfig?.() ?? Promise.resolve(undefined),
     ]);
   }
   catch (error) {
@@ -62,10 +77,43 @@ export async function runCiPolicyCli(dependencies: CiPolicyCliDependencies): Pro
     dependencies.writeError(`[workflow-set] ${CI_WORKFLOW_PATH}: required canonical workflow is missing`);
     rejected = true;
   }
+  for (const requiredPath of [
+    RELEASE_PREPARE_WORKFLOW_PATH,
+    RELEASE_CANDIDATE_WORKFLOW_PATH,
+    RELEASE_DISPATCH_WORKFLOW_PATH,
+    RELEASE_WORKFLOW_PATH,
+  ]) {
+    if (workflows.every(workflow => workflow.path !== requiredPath)) {
+      dependencies.writeError(`[workflow-set] ${requiredPath}: required canonical workflow is missing`);
+      rejected = true;
+    }
+  }
+  if (releaseConfig === undefined) {
+    dependencies.writeError(`[release-config] ${RELEASE_CONFIG_PATH}: required release configuration is missing`);
+    rejected = true;
+  }
+  else {
+    for (const violation of evaluateReleaseConfigPolicy(releaseConfig)) {
+      dependencies.writeError(`[${violation.rule}] ${RELEASE_CONFIG_PATH}: ${violation.message}`);
+      rejected = true;
+    }
+  }
   for (const workflow of workflows) {
     const violations = evaluateWorkflowActionPolicy(workflow.source);
     if (workflow.path === CI_WORKFLOW_PATH) {
       violations.push(...evaluateCiWorkflowPolicy(workflow.source));
+    }
+    if (workflow.path === RELEASE_PREPARE_WORKFLOW_PATH) {
+      violations.push(...evaluateReleasePrepareWorkflowPolicy(workflow.source));
+    }
+    if (workflow.path === RELEASE_CANDIDATE_WORKFLOW_PATH) {
+      violations.push(...evaluateReleaseCandidateWorkflowPolicy(workflow.source));
+    }
+    if (workflow.path === RELEASE_DISPATCH_WORKFLOW_PATH) {
+      violations.push(...evaluateReleaseDispatchWorkflowPolicy(workflow.source));
+    }
+    if (workflow.path === RELEASE_WORKFLOW_PATH) {
+      violations.push(...evaluateReleaseWorkflowPolicy(workflow.source));
     }
     for (const violation of violations) {
       dependencies.writeError(`[${violation.rule}] ${workflow.path}: ${violation.message}`);
@@ -106,6 +154,7 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
         source: await readFile(resolve(directory, name), 'utf8'),
       })));
     },
+    readReleaseConfig: () => readFile(resolve(cwd, RELEASE_CONFIG_PATH), 'utf8'),
     writeOut: message => process.stdout.write(`${message}\n`),
     writeError: message => process.stderr.write(`${message}\n`),
   };

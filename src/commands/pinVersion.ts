@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider } from '../providers';
 import {
@@ -33,7 +34,16 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
 
     const parsed = parseDependencySpec(checked.item.currentVersion);
     if (!parsed.supported) {
-      showError(`cannot toggle version pin for ${checked.item.packageName} — ${parsed.reason}`);
+      showError(vscode.l10n.t(
+        'cannot toggle version pin for {0} — {1}',
+        checked.item.packageName,
+        parsed.reason,
+      ));
+      return;
+    }
+
+    const activeCapability = provider.markPackageUpdatingForCapability(checked, { kind: 'pin' });
+    if (activeCapability === undefined) {
       return;
     }
 
@@ -49,14 +59,19 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
           shouldPin,
         );
       });
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       await provider.loadPackages();
     }
     catch (err) {
+      provider.markPackageUpdatingForCapability(activeCapability, undefined);
       if (err instanceof VersionPinConflictError) {
         showError(PACKAGE_IDENTITY_REJECTED_MESSAGE);
         return;
       }
-      showError(`failed to toggle version pin — ${err instanceof Error ? err.message : String(err)}`, err);
+      showError(vscode.l10n.t(
+        'failed to toggle version pin — {0}',
+        err instanceof Error ? err.message : String(err),
+      ), err);
     }
   });
 }

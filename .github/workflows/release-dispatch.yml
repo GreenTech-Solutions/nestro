@@ -1,0 +1,148 @@
+name: Release dispatch
+
+on:
+  workflow_run:
+    workflows: [Release candidate]
+    types: [completed]
+
+permissions: {}
+
+env:
+  CANDIDATE_RUN_ID: ${{ github.event.workflow_run.id }}
+  SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+
+concurrency:
+  cancel-in-progress: false
+  group: release-dispatch
+
+jobs:
+  dispatch:
+    name: Tag and dispatch the verified candidate
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master' }}
+    permissions:
+      actions: write
+      contents: write
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify the candidate workflow run
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.id | tostring' <<<"$run_json")" = "$CANDIDATE_RUN_ID"
+          test "$(jq -r '.name' <<<"$run_json")" = 'Release candidate'
+          test "$(jq -r '.event' <<<"$run_json")" = workflow_run
+          test "$(jq -r '.head_branch' <<<"$run_json")" = master
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success
+      - name: Resolve the exact candidate artifact
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifacts="$(gh api "repos/${{ github.repository }}/actions/runs/$CANDIDATE_RUN_ID/artifacts")"
+          candidates="$(jq '[.artifacts[] | select((.name | startswith("release-candidate-")) and (.expired == false))]' <<<"$artifacts")"
+          count="$(jq 'length' <<<"$candidates")"
+          if [ "$count" = 0 ]; then
+            echo 'has-candidate=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$count" = 1
+          echo 'has-candidate=true' >> "$GITHUB_OUTPUT"
+          echo "id=$(jq -r '.[0].id' <<<"$candidates")" >> "$GITHUB_OUTPUT"
+      - name: Download the exact candidate artifact
+        if: ${{ steps.artifact.outputs.has-candidate == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.id }}
+          github-token: ${{ github.token }}
+          path: dist/release-candidate
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Verify the candidate and source run
+        id: candidate
+        if: ${{ steps.artifact.outputs.has-candidate == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=dist/release-candidate/candidate.json
+          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunAttempt,ciRunId,digest,digestFile,manifestFile,manifestSha256,notes,provenanceFile,provenanceSha256,schemaVersion,sbomFile,sbomSha256,sourceSha,version,vsixFile'
+          test "$(jq -r '.schemaVersion' "$candidate")" = 2
+          test "$(jq -r '.candidateRunId' "$candidate")" = "$CANDIDATE_RUN_ID"
+          source_sha="$(jq -r '.sourceSha' "$candidate")"
+          ci_run_id="$(jq -r '.ciRunId' "$candidate")"
+          ci_run_attempt="$(jq -r '.ciRunAttempt' "$candidate")"
+          version="$(jq -r '.version' "$candidate")"
+          vsix_file="$(jq -r '.vsixFile' "$candidate")"
+          digest="$(jq -r '.digest' "$candidate")"
+          digest_file="$(jq -r '.digestFile' "$candidate")"
+          manifest_file="$(jq -r '.manifestFile' "$candidate")"
+          manifest_sha="$(jq -r '.manifestSha256' "$candidate")"
+          sbom_file="$(jq -r '.sbomFile' "$candidate")"
+          sbom_sha="$(jq -r '.sbomSha256' "$candidate")"
+          provenance_file="$(jq -r '.provenanceFile' "$candidate")"
+          provenance_sha="$(jq -r '.provenanceSha256' "$candidate")"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$source_sha" = "$SOURCE_SHA"
+          [[ "$ci_run_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ci_run_attempt" =~ ^[1-9][0-9]*$ ]]
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$vsix_file" =~ ^[A-Za-z0-9._-]+\.vsix$ ]]
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          test "$digest_file" = "$vsix_file.sha256"
+          test "$manifest_file" = "$vsix_file.manifest.txt"
+          test "$sbom_file" = sbom.json
+          test "$provenance_file" = provenance.json
+          [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$sbom_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$provenance_sha" =~ ^[0-9a-f]{64}$ ]]
+          ci_run="$(gh api "repos/${{ github.repository }}/actions/runs/$ci_run_id")"
+          test "$(jq -r '.name' <<<"$ci_run")" = Verify
+          test "$(jq -r '.event' <<<"$ci_run")" = push
+          test "$(jq -r '.head_branch' <<<"$ci_run")" = master
+          test "$(jq -r '.head_sha' <<<"$ci_run")" = "$source_sha"
+          test "$(jq -r '.conclusion' <<<"$ci_run")" = success
+          test "$(sha256sum "dist/release-candidate/$vsix_file" | cut -d ' ' -f 1)" = "$digest"
+          expected_members="$(printf '%s\n' "$vsix_file" "$manifest_file" "$digest_file" "$sbom_file" "$provenance_file" candidate.json | sort)"
+          actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual_members" = "$expected_members"
+          sha256sum --check --strict "dist/release-candidate/$digest_file"
+          test "$(sha256sum "dist/release-candidate/$manifest_file" | cut -d ' ' -f 1)" = "$manifest_sha"
+          test "$(sha256sum "dist/release-candidate/$sbom_file" | cut -d ' ' -f 1)" = "$sbom_sha"
+          test "$(sha256sum "dist/release-candidate/$provenance_file" | cut -d ' ' -f 1)" = "$provenance_sha"
+          {
+            echo "source-sha=$source_sha"
+            echo "tag=v$version"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create or verify the exact source tag
+        if: ${{ steps.artifact.outputs.has-candidate == 'true' }}
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.candidate.outputs.source-sha }}
+          TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          verify_tag() {
+            tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/$TAG")"
+            test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+            test "$(jq -r '.object.sha' <<<"$tag_json")" = "$SOURCE_SHA"
+          }
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            verify_tag
+          elif ! gh api --method POST "repos/${{ github.repository }}/git/refs" \
+            -f "ref=refs/tags/$TAG" -f "sha=$SOURCE_SHA"; then
+            verify_tag
+          fi
+      - name: Dispatch protected publish on the tag
+        if: ${{ steps.artifact.outputs.has-candidate == 'true' }}
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.id }}
+          TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --ref "$TAG" \
+            -f "candidate_run_id=$CANDIDATE_RUN_ID" \
+            -f "artifact_id=$ARTIFACT_ID"

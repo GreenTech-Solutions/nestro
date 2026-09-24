@@ -10,9 +10,19 @@ import {
 
 vi.mock('../utils', async () => {
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
+  const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
+  // Real scheduler primitives: checkUpdates() now schedules NCU fetches through
+  // these, so this suite needs the genuine bounded coordinator, not undefined exports.
+  const operationCoordinator = await vi.importActual<
+    typeof import('../utils/operationCoordinator')
+  >('../utils/operationCoordinator');
+  const rootOperation = await vi.importActual<typeof import('../utils/rootOperation')>('../utils/rootOperation');
   return {
     ...releaseAge,
+    ...operationCoordinator,
+    ...rootOperation,
+    ...localization,
     fetchAllLatestVersions: vi.fn(),
     fetchPackageMetadata: vi.fn(),
     getUpdateType: vi.fn((current: string, latest: string) => (
@@ -21,6 +31,7 @@ vi.mock('../utils', async () => {
     logger: {
       info: vi.fn(),
       error: vi.fn(),
+      warn: vi.fn(),
       dispose: vi.fn(),
     },
     parseDependencySpec,
@@ -179,7 +190,7 @@ describe('PackagesProvider.resetUpdateData()', () => {
 
     await provider.loadPackages();
     await provider.checkUpdates();
-    provider.markPackageUpdating(identity, true);
+    provider.markPackageUpdating(identity, { kind: 'update', target: '19.0.0' });
     provider.resetUpdateData();
 
     const packages = provider.getChildren()
@@ -189,7 +200,7 @@ describe('PackagesProvider.resetUpdateData()', () => {
     expect(packages.find(item => item.packageName === 'react')).toMatchObject({
       latest: undefined,
       updateType: 'none',
-      installing: true,
+      operation: { kind: 'update', target: '19.0.0' },
     });
   });
 });

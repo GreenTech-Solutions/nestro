@@ -1,0 +1,92 @@
+name: Release candidate
+
+on:
+  workflow_run:
+    workflows: [Verify]
+    types: [completed]
+
+permissions: {}
+
+env:
+  SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+  SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+
+jobs:
+  candidate:
+    name: Build the immutable release candidate
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.candidate.outputs.artifact-name }}
+      is-candidate: ${{ steps.candidate.outputs.is-candidate }}
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - name: Verify the completed verification run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          SOURCE_CI_RUN_ID: ${{ env.SOURCE_CI_RUN_ID }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/$SOURCE_CI_RUN_ID")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r '.head_branch' <<<"$run_json")" = master
+          test "$(jq -r '.event' <<<"$run_json")" = push
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success
+      - name: Checkout the exact versioned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Prepare pnpm
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          node-version-file: .nvmrc
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download the exact verified evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          name: verify-evidence-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: dist/ci
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Build the candidate manifest
+        id: candidate
+        env:
+          RELEASE_CANDIDATE_RUN_ID: ${{ github.run_id }}
+          RELEASE_CI_RUN_ID: ${{ env.SOURCE_CI_RUN_ID }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/ci.yml
+        run: pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate
+      - name: Upload the immutable candidate
+        if: ${{ steps.candidate.outputs.is-candidate == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: ${{ steps.candidate.outputs.artifact-name }}
+          overwrite: false
+          path: |
+            dist/release-candidate/*.vsix
+            dist/release-candidate/*.vsix.manifest.txt
+            dist/release-candidate/*.vsix.sha256
+            dist/release-candidate/sbom.json
+            dist/release-candidate/provenance.json
+            dist/release-candidate/candidate.json
+          retention-days: 90

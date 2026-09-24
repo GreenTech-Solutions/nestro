@@ -1,0 +1,174 @@
+name: Release prepare
+
+on:
+  workflow_run:
+    workflows: [Verify]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  cancel-in-progress: false
+  group: release-prepare
+
+env:
+  SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+  SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+  RELEASE_REPOSITORY_URL: https://github.com/${{ github.repository }}
+
+jobs:
+  prepare:
+    name: Prepare the version pull request
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' && github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify the completed verification run
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ env.SOURCE_SHA }}
+          SOURCE_CI_RUN_ID: ${{ env.SOURCE_CI_RUN_ID }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/$SOURCE_CI_RUN_ID")"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r '.head_branch' <<<"$run_json")" = master
+          test "$(jq -r '.event' <<<"$run_json")" = push
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success
+      - name: Checkout the exact tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert checkout identity
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Reject a stale master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin master --quiet
+          test "$(git rev-parse origin/master)" = "$SOURCE_SHA"
+      - name: Reject competing release pull requests
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          releases="$(gh pr list --state open --base master --json number,headRefName,headRefOid,baseRefName)"
+          count="$(jq '[.[] | select(.headRefName | test("^release/v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | length' <<<"$releases")"
+          if [ "$count" -gt 1 ]; then
+            echo 'more than one open release pull request exists' >&2
+            exit 1
+          fi
+          if [ "$count" = 1 ]; then
+            release="$(jq '[.[] | select(.headRefName | test("^release/v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0]' <<<"$releases")"
+            test "$(jq -r '.baseRefName' <<<"$release")" = master
+            number="$(jq -r '.number' <<<"$release")"
+            head_sha="$(jq -r '.headRefOid' <<<"$release")"
+            commit="$(gh api "repos/${{ github.repository }}/git/commits/$head_sha")"
+            test "$(jq '.parents | length' <<<"$commit")" = 1
+            if [ "$(jq -r '.parents[0].sha' <<<"$commit")" != "$SOURCE_SHA" ]; then
+              echo 'existing release pull request is stale relative to the verified master SHA' >&2
+              exit 1
+            fi
+            changed_files="$(gh api --paginate "repos/${{ github.repository }}/pulls/$number/files" --jq '.[].filename' | sort)"
+            test "$changed_files" = $'CHANGELOG.md\npackage.json'
+            {
+              echo 'is-existing=true'
+              echo "number=$number"
+              echo "branch=$(jq -r '.headRefName' <<<"$release")"
+              echo "head-sha=$head_sha"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo 'is-existing=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare pnpm
+        if: ${{ steps.existing.outputs.is-existing == 'false' }}
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+      - name: Setup Node.js
+        if: ${{ steps.existing.outputs.is-existing == 'false' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          node-version-file: .nvmrc
+      - name: Install frozen dependencies
+        if: ${{ steps.existing.outputs.is-existing == 'false' }}
+        run: pnpm install --frozen-lockfile
+      - name: Analyze and prepare the next release
+        if: ${{ steps.existing.outputs.is-existing == 'false' }}
+        id: prepare
+        env:
+          RELEASE_CONFIG: .releaserc.json
+        run: pnpm run release:prepare --out-dir dist/release
+      - name: Create the version pull request
+        if: ${{ steps.existing.outputs.is-existing == 'false' && steps.prepare.outputs.release-needed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.prepare.outputs.version }}"
+          branch="release/v$version"
+          git checkout -b "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add package.json CHANGELOG.md
+          git commit -m "ci(release): prepare v$version"
+          git push origin "$branch"
+          gh pr create --base master --head "$branch" \
+            --title "ci(release): prepare v$version" \
+            --body-file dist/release/notes.md
+      - name: Resolve the exact version pull request
+        id: pull-request
+        if: ${{ steps.existing.outputs.is-existing == 'true' || steps.prepare.outputs.release-needed == 'true' }}
+        shell: bash
+        env:
+          EXISTING_HEAD_SHA: ${{ steps.existing.outputs.head-sha }}
+          IS_EXISTING: ${{ steps.existing.outputs.is-existing }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_EXISTING" = true ]; then
+            number="${{ steps.existing.outputs.number }}"
+            branch="${{ steps.existing.outputs.branch }}"
+          else
+            branch="release/v${{ steps.prepare.outputs.version }}"
+            number="$(gh pr list --state open --base master --head "$branch" --json number --jq '.[0].number')"
+          fi
+          test -n "$number"
+          pr="$(gh api "repos/${{ github.repository }}/pulls/$number")"
+          test "$(jq -r '.state' <<<"$pr")" = open
+          test "$(jq -r '.base.ref' <<<"$pr")" = master
+          test "$(jq -r '.head.ref' <<<"$pr")" = "$branch"
+          head_sha="$(jq -r '.head.sha' <<<"$pr")"
+          test "$head_sha" != null
+          if [ "$IS_EXISTING" = true ]; then
+            test "$head_sha" = "$EXISTING_HEAD_SHA"
+          fi
+          {
+            echo "number=$number"
+            echo "branch=$branch"
+            echo "head-sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+      - name: Dispatch exact-head verification for the version pull request
+        if: ${{ steps.existing.outputs.is-existing == 'true' || steps.prepare.outputs.release-needed == 'true' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          PR_HEAD_SHA: ${{ steps.pull-request.outputs.head-sha }}
+          PR_BRANCH: ${{ steps.pull-request.outputs.branch }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$PR_BRANCH" \
+            -f "pr_number=$PR_NUMBER" \
+            -f "head_sha=$PR_HEAD_SHA"

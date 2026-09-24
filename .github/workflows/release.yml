@@ -1,51 +1,375 @@
 name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: Immutable release candidate artifact ID
+        required: true
+        type: string
+      candidate_run_id:
+        description: Release candidate workflow run ID
+        required: true
+        type: string
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+permissions: {}
+
+concurrency:
+  cancel-in-progress: false
+  group: release
 
 jobs:
-  release:
+  publish:
+    name: Publish the verified candidate
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    environment: release
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
     runs-on: ubuntu-latest
-
+    outputs:
+      artifact-id: ${{ steps.artifact.outputs.id }}
+      has-candidate: ${{ steps.artifact.outputs.has-candidate }}
     steps:
-      - name: 1. Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-
-      - name: 2. Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: ".nvmrc"
-
-      - name: 3.1 Prepare pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
-      - name: 3.2 Install dependencies and audit
-        run: |
-          pnpm ci
-          pnpm audit signatures
-
-      - name: 4. Check for errors
-        run: pnpm typecheck
-
-      - name: 5. Build
-        run: pnpm run build
-
-      - name: 6. Check extension package
-        run: |
-          test -f out/extension.cjs
-          pnpm check:vsce | grep -Fxq 'out/extension.cjs'
-
-      - name: 7. Release
-        run: pnpm exec semantic-release
+      - name: Verify the candidate workflow run
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          run_json="$(gh api "repos/${{ github.repository }}/actions/runs/$CANDIDATE_RUN_ID")"
+          test "$(jq -r '.id | tostring' <<<"$run_json")" = "$CANDIDATE_RUN_ID"
+          test "$(jq -r '.name' <<<"$run_json")" = 'Release candidate'
+          test "$(jq -r '.event' <<<"$run_json")" = workflow_run
+          test "$(jq -r '.head_branch' <<<"$run_json")" = master
+          test "$(jq -r '.conclusion' <<<"$run_json")" = success
+      - name: Resolve the exact candidate artifact
+        id: artifact
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          artifacts="$(gh api "repos/${{ github.repository }}/actions/runs/$CANDIDATE_RUN_ID/artifacts")"
+          candidates="$(jq --argjson id "$ARTIFACT_ID" '[.artifacts[] | select(.id == $id and (.name | startswith("release-candidate-")) and (.expired == false))]' <<<"$artifacts")"
+          count="$(jq 'length' <<<"$candidates")"
+          test "$count" = 1
+          echo 'has-candidate=true' >> "$GITHUB_OUTPUT"
+          echo "id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+      - name: Download the exact candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.id }}
+          github-token: ${{ github.token }}
+          path: dist/release-candidate
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify the candidate manifest, tag and digest
+        id: manifest
+        shell: bash
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate=dist/release-candidate/candidate.json
+          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunAttempt,ciRunId,digest,digestFile,manifestFile,manifestSha256,notes,provenanceFile,provenanceSha256,schemaVersion,sbomFile,sbomSha256,sourceSha,version,vsixFile'
+          test "$(jq -r '.schemaVersion' "$candidate")" = 2
+          test "$(jq -r '.candidateRunId' "$candidate")" = "$CANDIDATE_RUN_ID"
+          source_sha="$(jq -r '.sourceSha' "$candidate")"
+          ci_run_id="$(jq -r '.ciRunId' "$candidate")"
+          ci_run_attempt="$(jq -r '.ciRunAttempt' "$candidate")"
+          version="$(jq -r '.version' "$candidate")"
+          vsix_file="$(jq -r '.vsixFile' "$candidate")"
+          digest="$(jq -r '.digest' "$candidate")"
+          digest_file="$(jq -r '.digestFile' "$candidate")"
+          manifest_file="$(jq -r '.manifestFile' "$candidate")"
+          manifest_sha="$(jq -r '.manifestSha256' "$candidate")"
+          sbom_file="$(jq -r '.sbomFile' "$candidate")"
+          sbom_sha="$(jq -r '.sbomSha256' "$candidate")"
+          provenance_file="$(jq -r '.provenanceFile' "$candidate")"
+          provenance_sha="$(jq -r '.provenanceSha256' "$candidate")"
+          test "$GITHUB_REF" = "refs/tags/v$version"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ci_run_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ci_run_attempt" =~ ^[1-9][0-9]*$ ]]
+          [[ "$vsix_file" =~ ^[A-Za-z0-9._-]+\.vsix$ ]]
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          test "$digest_file" = "$vsix_file.sha256"
+          test "$manifest_file" = "$vsix_file.manifest.txt"
+          test "$sbom_file" = sbom.json
+          test "$provenance_file" = provenance.json
+          [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$sbom_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$provenance_sha" =~ ^[0-9a-f]{64}$ ]]
+          tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$source_sha"
+          ci_run="$(gh api "repos/${{ github.repository }}/actions/runs/$ci_run_id")"
+          test "$(jq -r '.name' <<<"$ci_run")" = Verify
+          test "$(jq -r '.event' <<<"$ci_run")" = push
+          test "$(jq -r '.head_branch' <<<"$ci_run")" = master
+          test "$(jq -r '.head_sha' <<<"$ci_run")" = "$source_sha"
+          test "$(jq -r '.conclusion' <<<"$ci_run")" = success
+          test "$(sha256sum "dist/release-candidate/$vsix_file" | cut -d ' ' -f 1)" = "$digest"
+          expected_members="$(printf '%s\n' "$vsix_file" "$manifest_file" "$digest_file" "$sbom_file" "$provenance_file" candidate.json | sort)"
+          actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual_members" = "$expected_members"
+          sha256sum --check --strict "dist/release-candidate/$digest_file"
+          test "$(sha256sum "dist/release-candidate/$manifest_file" | cut -d ' ' -f 1)" = "$manifest_sha"
+          test "$(sha256sum "dist/release-candidate/$sbom_file" | cut -d ' ' -f 1)" = "$sbom_sha"
+          test "$(sha256sum "dist/release-candidate/$provenance_file" | cut -d ' ' -f 1)" = "$provenance_sha"
+          jq -e --arg source "$source_sha" --arg ci "$ci_run_id" --arg attempt "$ci_run_attempt" --arg digest "$digest" --arg vsix "$vsix_file" --arg manifest "$manifest_file" --arg manifest_sha "$manifest_sha" --arg sbom "$sbom_file" --arg sbom_sha "$sbom_sha" '
+            .schemaVersion == 1
+            and .sourceSha == $source
+            and .ciRunId == $ci
+            and .ciRunAttempt == $attempt
+            and .eventName == "push"
+            and .artifact.file == $vsix
+            and .artifact.sha256 == $digest
+            and .artifact.manifestFile == $manifest
+            and .artifact.manifestSha256 == $manifest_sha
+            and .artifact.sbomFile == $sbom
+            and .artifact.sbomSha256 == $sbom_sha
+            and .attestation.subjectName == $vsix
+            and .attestation.subjectDigest == ("sha256:" + $digest)
+            and .attestation.signerWorkflow == .signerWorkflow' "dist/release-candidate/$provenance_file" >/dev/null
+          echo "vsix-path=dist/release-candidate/$vsix_file" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify protected candidate attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VSIX_PATH: ${{ steps.manifest.outputs.vsix-path }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$VSIX_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"
+      - name: Publish to the Visual Studio Marketplace
+        uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2.0.0
+        env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        with:
+          extensionFile: ${{ steps.manifest.outputs.vsix-path }}
+          pat: ${{ env.VSCE_PAT }}
+          registryUrl: https://marketplace.visualstudio.com
+          skipDuplicate: true
+      - name: Publish to Open VSX
+        uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2.0.0
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        with:
+          extensionFile: ${{ steps.manifest.outputs.vsix-path }}
+          pat: ${{ env.OVSX_PAT }}
+          registryUrl: https://open-vsx.org
+          skipDuplicate: true
+      - name: Compare post-publish registry copies
+        # Registry bytes are checked after both publish actions.
+        shell: bash
+        env:
+          CANDIDATE_VSIX: ${{ steps.manifest.outputs.vsix-path }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          package_json="$(unzip -p "$CANDIDATE_VSIX" extension/package.json)"
+          publisher="$(jq -er '.publisher' <<<"$package_json")"
+          name="$(jq -er '.name' <<<"$package_json")"
+          [[ "$publisher" =~ ^[A-Za-z0-9._-]+$ ]]
+          [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p dist/published
+          marketplace_url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$name/$VERSION/vspackage"
+          openvsx_url="https://open-vsx.org/api/$publisher/$name/$VERSION/file/$name-$VERSION.vsix"
+          curl_args=(
+            --fail --silent --show-error --location
+            --proto '=https' --proto-redir '=https' --max-redirs 3
+            --connect-timeout 10 --max-time 120 --max-filesize 2097152
+            --retry 5 --retry-all-errors --retry-max-time 180
+          )
+          curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix
+          curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix
+          test "$(wc -c < dist/published/marketplace.vsix)" -le 2097152
+          test "$(wc -c < dist/published/openvsx.vsix)" -le 2097152
+          python3 - "$CANDIDATE_VSIX" dist/published/marketplace.vsix dist/published/openvsx.vsix <<'PY'
+          import hashlib
+          import json
+          import stat
+          import sys
+          import xml.etree.ElementTree as ET
+          import zipfile
+
+          MAX_ENTRIES = 26
+          MAX_COMPRESSED_BYTES = 2097152
+          MAX_ENTRY_BYTES = 5242880
+          MAX_UNCOMPRESSED_BYTES = 10485760
+
+          def fail(message):
+              raise SystemExit(message)
+
+          def inspect(path):
+              try:
+                  with zipfile.ZipFile(path) as archive:
+                      entries = []
+                      seen = set()
+                      infos = archive.infolist()
+                      if len(infos) > MAX_ENTRIES:
+                          fail(f"published VSIX has too many entries: {len(infos)}")
+                      compressed_total = sum(info.compress_size for info in infos)
+                      uncompressed_total = sum(info.file_size for info in infos)
+                      if compressed_total > MAX_COMPRESSED_BYTES:
+                          fail(f"published VSIX compressed payload exceeds {MAX_COMPRESSED_BYTES} bytes")
+                      if uncompressed_total > MAX_UNCOMPRESSED_BYTES:
+                          fail(f"published VSIX expanded payload exceeds {MAX_UNCOMPRESSED_BYTES} bytes")
+                      for info in infos:
+                          if info.file_size > MAX_ENTRY_BYTES:
+                              fail(f"published VSIX entry is too large: {info.filename}")
+                          name = info.filename
+                          if (not name or name.startswith("/") or "\\" in name
+                                  or any(part in ("", "..") for part in name.split("/"))
+                                  or name.endswith("/")):
+                              fail(f"unsafe published archive path: {name}")
+                          if name in seen:
+                              fail(f"duplicate published archive path: {name}")
+                          seen.add(name)
+                          mode = (info.external_attr >> 16) & 0xffff
+                          if stat.S_IFMT(mode) == stat.S_IFLNK:
+                              fail(f"published archive contains a symlink: {name}")
+                          entries.append((name, archive.read(info)))
+              except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as error:
+                  fail(f"unsafe published VSIX: {error}")
+              by_name = dict(entries)
+              try:
+                  package = json.loads(by_name["extension/package.json"])
+              except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                  fail(f"published package manifest is invalid: {error}")
+              identity = tuple(package.get(key) for key in ("name", "version", "publisher"))
+              if any(not isinstance(value, str) or not value for value in identity):
+                  fail("published package manifest identity is incomplete")
+              outer = by_name.get("extension.vsixmanifest")
+              if outer is None or b"<!DOCTYPE" in outer.upper() or b"<!ENTITY" in outer.upper():
+                  fail("published outer manifest is missing or contains forbidden declarations")
+              try:
+                  root = ET.fromstring(outer)
+                  metadata = next(child for child in root if child.tag.rsplit("}", 1)[-1] == "Metadata")
+                  identity_node = next(child for child in metadata if child.tag.rsplit("}", 1)[-1] == "Identity")
+              except (ET.ParseError, StopIteration) as error:
+                  fail(f"published outer manifest identity is invalid: {error}")
+              outer_identity = (identity_node.attrib.get("Id"), identity_node.attrib.get("Version"), identity_node.attrib.get("Publisher"))
+              if outer_identity != identity:
+                  fail("published VSIX package and outer identities differ")
+              normalized = "".join(
+                  f"{hashlib.sha256(content).hexdigest()}  {name}\n"
+                  for name, content in sorted(entries)
+              )
+              with open(path, "rb") as handle:
+                  raw = handle.read()
+              return raw, identity, normalized
+
+          candidate, candidate_identity, candidate_manifest = inspect(sys.argv[1])
+          for registry_path in sys.argv[2:]:
+              published, published_identity, published_manifest = inspect(registry_path)
+              if published == candidate:
+                  print(f"{registry_path}: exact candidate bytes")
+              elif published_identity == candidate_identity and published_manifest == candidate_manifest:
+                  print(f"{registry_path}: accepted explicit registry re-pack")
+              else:
+                  fail(f"{registry_path}: registry copy does not match candidate identity and normalized manifest")
+          PY
+  finalize:
+    name: Finalize the GitHub release
+    needs: publish
+    if: ${{ needs.publish.outputs.has-candidate == 'true' }}
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download the exact published candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publish.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          path: dist/release-candidate
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify the exact source tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=dist/release-candidate/candidate.json
+          version="$(jq -r '.version' "$candidate")"
+          source_sha="$(jq -r '.sourceSha' "$candidate")"
+          vsix_file="$(jq -r '.vsixFile' "$candidate")"
+          test "$GITHUB_REF" = "refs/tags/v$version"
+          tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"
+          test "$(jq -r '.object.type' <<<"$tag_json")" = commit
+          test "$(jq -r '.object.sha' <<<"$tag_json")" = "$source_sha"
+          sha256sum --check --strict "dist/release-candidate/$vsix_file.sha256"
+          expected_members="$(printf '%s\n' "$vsix_file" "$vsix_file.manifest.txt" "$vsix_file.sha256" sbom.json provenance.json candidate.json | sort)"
+          actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual_members" = "$expected_members"
+          test "$(sha256sum "dist/release-candidate/$vsix_file.manifest.txt" | cut -d ' ' -f 1)" = "$(jq -r '.manifestSha256' "$candidate")"
+          test "$(sha256sum dist/release-candidate/sbom.json | cut -d ' ' -f 1)" = "$(jq -r '.sbomSha256' "$candidate")"
+          test "$(sha256sum dist/release-candidate/provenance.json | cut -d ' ' -f 1)" = "$(jq -r '.provenanceSha256' "$candidate")"
+          jq -r '.notes' "$candidate" > dist/release-candidate/notes.md
+          {
+            echo "tag=v$version"
+            echo "vsix-file=$vsix_file"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create the GitHub release if absent
+        id: create
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          VSIX_FILE: ${{ steps.release.outputs.vsix-file }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'already-released=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release create "$TAG" \
+            "dist/release-candidate/$VSIX_FILE" \
+            "dist/release-candidate/$VSIX_FILE.manifest.txt" \
+            "dist/release-candidate/$VSIX_FILE.sha256" \
+            dist/release-candidate/sbom.json \
+            dist/release-candidate/provenance.json \
+            dist/release-candidate/candidate.json \
+            --notes-file dist/release-candidate/notes.md \
+            --title "$TAG" \
+            --verify-tag
+          echo 'already-released=false' >> "$GITHUB_OUTPUT"
+      - name: Verify an existing GitHub release safely
+        if: ${{ steps.create.outputs.already-released == 'true' }}
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          VSIX_FILE: ${{ steps.release.outputs.vsix-file }}
+        run: |
+          set -euo pipefail
+          release="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG")"
+          test "$(jq -r '.tag_name' <<<"$release")" = "$TAG"
+          mkdir -p dist/existing-release
+          expected_names="$(printf '%s\n' candidate.json "$VSIX_FILE" "$VSIX_FILE.manifest.txt" "$VSIX_FILE.sha256" sbom.json provenance.json | sort)"
+          unexpected_names="$(jq -r '.assets[].name' <<<"$release" | sort | comm -23 - <(printf '%s\n' "$expected_names"))"
+          test -z "$unexpected_names"
+          while IFS= read -r name; do
+            if jq -e --arg name "$name" '.assets[] | select(.name == $name)' <<<"$release" >/dev/null; then
+              gh release download "$TAG" --dir dist/existing-release --pattern "$name"
+              cmp "dist/release-candidate/$name" "dist/existing-release/$name"
+            else
+              gh release upload "$TAG" "dist/release-candidate/$name"
+            fi
+          done <<<"$expected_names"
+          release="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG")"
+          asset_names="$(jq -r '.assets[].name' <<<"$release" | sort)"
+          test "$asset_names" = "$expected_names"

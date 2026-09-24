@@ -36,7 +36,7 @@ const identityMocks = vi.hoisted(() => {
       currentVersion: '^1.2.3',
       latest: undefined,
       updateType: 'none',
-      installing: false,
+      operation: undefined,
       vulnerabilitySeverity: undefined,
       packageFilePath: '/workspace/package.json',
       dev: false,
@@ -154,6 +154,7 @@ function makeProvider(onBeforeWrite: () => void): PackagesProvider {
       return await fn();
     }),
     loadPackages: vi.fn(),
+    markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
   } as unknown as PackagesProvider;
   return provider;
 }

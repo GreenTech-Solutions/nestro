@@ -104,6 +104,19 @@ describe('switchDepTypeCommand()', () => {
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
+  it('stops before switching when progress marking loses the row', async () => {
+    const provider = makeProvider();
+    provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
+
+    await switchDepTypeCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(switchDependencyType).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+  });
+
   it('moves a devDependency back to dependencies', async () => {
     const provider = makeProvider();
     const item = new PackageItem(
@@ -340,6 +353,19 @@ describe('pinVersionCommand()', () => {
     expect(setVersionPin).not.toHaveBeenCalled();
   });
 
+  it('stops before pinning when progress marking loses the row', async () => {
+    const provider = makeProvider();
+    provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
+
+    await pinVersionCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    expect(setVersionPin).not.toHaveBeenCalled();
+    expect(provider.withWriteSuppressed).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an Error', new Error('pin write failed'), 'pin write failed'],
     ['a non-Error value', 'pin boom', 'pin boom'],
@@ -423,7 +449,7 @@ describe('removePackageCommand()', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, true);
+    }, { kind: 'remove' });
     expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -454,7 +480,7 @@ describe('removePackageCommand()', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
@@ -473,7 +499,7 @@ describe('removePackageCommand()', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
@@ -491,7 +517,7 @@ describe('removePackageCommand()', () => {
     await removePackageCommand(item, provider);
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      'Remove eslint from devDependencies?',
+      'Remove eslint from dev dependencies?',
       { modal: true },
       'Remove Package',
     );
@@ -499,7 +525,7 @@ describe('removePackageCommand()', () => {
       packageName: 'eslint',
       packageFilePath: '/workspace/package.json',
       section: 'devDependencies',
-    }, true);
+    }, { kind: 'remove' });
   });
 
   it('rejects removal when the manifest entry is ambiguous or the final row is stale', async () => {
@@ -557,7 +583,7 @@ describe('removePackageCommand()', () => {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 
   it.each([
@@ -591,7 +617,7 @@ describe('removePackageCommand()', () => {
       packageName: '--global',
       packageFilePath: '/workspace/package.json',
       section: 'dependencies',
-    }, false);
+    }, undefined);
   });
 });
 

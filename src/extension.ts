@@ -6,6 +6,7 @@ import {
   installUpdateCommand,
   openAuditReportCommand,
   openOnNpmCommand,
+  openStatusReportCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
   pinVersionCommand,
@@ -24,7 +25,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
   const filterManager = new FilterManager(defaultFilter);
   const provider = new PackagesProvider(filterManager);
-  const auditReportOutput = vscode.window.createOutputChannel('Nestro Security Audit');
+  const auditReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Security Audit'));
+  const statusReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Diagnostics'));
   const treeView = vscode.window.createTreeView('nestro.packagesView', {
     treeDataProvider: provider,
     showCollapseAll: true,
@@ -42,17 +44,26 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('nestro.openAuditReport', () => {
       openAuditReportCommand(provider, auditReportOutput);
     }),
+    statusReportOutput,
+    vscode.commands.registerCommand('nestro.openStatusReport', () => {
+      openStatusReportCommand(provider, statusReportOutput);
+    }),
     vscode.commands.registerCommand('nestro.installUpdate', (item: unknown) => { void installUpdateCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pickVersion', (item: unknown) => { void pickVersionCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.switchDepType', (item: unknown) => { void switchDepTypeCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.pinVersion', (item: unknown) => { void pinVersionCommand(item, provider); }),
     vscode.commands.registerCommand('nestro.removePackage', (item: unknown) => { void removePackageCommand(item, provider); }),
-    vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(); }),
+    vscode.commands.registerCommand('nestro.runInstall', () => { void runInstallCommand(provider); }),
     vscode.commands.registerCommand('nestro.updateAllVisible', () => { void updateAllVisibleCommand(provider); }),
     vscode.commands.registerCommand('nestro.pinAllVersions', () => { void pinAllVersionsCommand(provider); }),
     vscode.commands.registerCommand('nestro.openOnNpm', (item: unknown) => { openOnNpmCommand(item); }),
     vscode.commands.registerCommand('nestro.copyPackageName', (item: unknown) => { copyPackageNameCommand(item); }),
-    vscode.commands.registerCommand('nestro.setFilter', (type: FilterType) => provider.setFilter(type)),
+    vscode.commands.registerCommand('nestro.setFilter', (type: unknown) => {
+      if (!isFilterType(type)) {
+        return;
+      }
+      provider.setFilter(type);
+    }),
     vscode.commands.registerCommand('nestro.showFilterPicker', () => { void provider.showFilterPicker(); }),
     vscode.commands.registerCommand('nestro.searchPackages', () => { void provider.showSearch(); }),
     vscode.commands.registerCommand('nestro.clearSearchQuery', () => { provider.clearSearch(); }),

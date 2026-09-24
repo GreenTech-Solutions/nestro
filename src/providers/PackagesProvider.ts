@@ -1,45 +1,56 @@
 import * as path from 'path';
-import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { ClientManager, resolveAuditProjects } from '../clients';
+import { resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
 import {
+  createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
-  fetchAllLatestVersions,
-  fetchPackageMetadata,
+  formatAuditSeverityLabel,
+  formatFailedPackageFileCount,
+  formatFailedPackageRootCount,
+  formatPackageUpdatesAvailable,
+  formatUpdateTypeLabel,
+  formatVulnerablePackageCount,
   getUpdateType,
-  getWorkspacePackageFilePaths,
-  inferPathAttribution,
   logger,
-  mergeAuditAdvisories,
   NcuUpdateTarget,
-  readAllWorkspaceDependencies,
+  OperationCoordinator,
   readMinimumReleaseAgeDays,
-  resolveMetadataRegistryKey,
-  resolveUpdateReleaseAge,
+  resolveYarnFamily,
   showError,
 } from '../utils';
-import type { AuditSeverity, PackageMetadataOutcome, ReleaseAgeState, UpdateType } from '../utils';
 import type {
-  AuditAdvisory,
-  AuditPackageManager,
-  AuditResult,
-  AuditSchemaId,
+  AuditSeverity,
+  ReleaseAgeState,
+  StatusReportFailure,
+  StatusReportFileLabel,
+  StatusReportSnapshot,
+  UpdateType,
 } from '../utils';
+import type { PackageFileEntries } from '../utils';
 import { LoadingItem } from './LoadingItem';
 import { isPackageItem, PackageItem, sanitizePackageText } from './PackageItem';
+import type { PackageOperation } from './PackageItem';
 import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
 import { FilterManager, FilterType } from './FilterManager';
-import { buildTree, getFilterCounts, getFilteredEntries, PackageTreeEntry, toWorkspaceFolderDescriptors } from './treeBuilder';
+import {
+  buildTree,
+  formatViewDescription,
+  getFilterCounts,
+  getLocalizedPackageLabelFormatting,
+  PackageTreeEntry,
+  projectPackageTree,
+  resolvePackageFileLabels,
+  toWorkspaceFolderDescriptors,
+} from './treeBuilder';
 import type { WorkspaceFolderDescriptor } from './treeBuilder';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
 import {
   packageIdentityFromValues,
   packageIdentityKey,
   readCanonicalDependencySpec,
-  readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
   samePackageFileStamp,
 } from './packageIdentity';
@@ -51,127 +62,70 @@ import type {
   PackageItemRecord,
   ResolvedPackageItem,
 } from './packageIdentity';
+import {
+  AuditOrchestrationService,
+  cloneAuditProjectFailure,
+  cloneAuditProjectSummary,
+  describeAuditFailure,
+  PackageLoadingService,
+  UpdateOrchestrationService,
+} from './index';
+import type {
+  AuditableRow,
+  AuditOrchestrationServiceContract,
+  AuditProjectFailure,
+  AuditProjectSummary,
+  AuditReportSnapshot,
+  PackageLoadingServiceContract,
+  UpdateFingerprintPolicy,
+  UpdateOrchestrationServiceContract,
+} from './index';
 
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
 export type { PackageIdentityResolution, ResolvedPackageItem } from './packageIdentity';
 
-/**
- * One resolved audit project (canonical root, lockfile, origin manifests) together with
- * the raw vulnerability map its audit run produced. Kept project-level, not flattened
- * into row badges, so the full result and origin manifest set survive even when row
- * attribution is suppressed below and can back a structured, resolved-path-aware report.
- */
-export interface AuditProjectSummary {
-  readonly project: AuditProject;
-  readonly status: 'success' | 'failure';
-  readonly manager: AuditPackageManager;
-  readonly schema?: AuditSchemaId;
-  readonly vulnerabilities: ReadonlyMap<string, AuditSeverity>;
-  readonly advisories: readonly AuditAdvisory[];
-  readonly failure?: {
-    readonly reason: string;
-    readonly detail: string;
-  };
+/** Global workspace capabilities used by toolbar and Command Palette contexts. */
+export interface WorkspaceCapabilities {
+  readonly hasPackageFiles: boolean;
+  readonly hasReadablePackageFiles: boolean;
+  readonly hasDependencyEntries: boolean;
+  readonly hasAuditableProjects: boolean;
+  readonly canRunInstall: boolean;
+  readonly canRunAudit: boolean;
+  readonly canSearchPackages: boolean;
+  readonly canFilterPackages: boolean;
+  readonly canPinAllVersions: boolean;
 }
 
-export interface AuditProjectFailure {
-  readonly project?: AuditProject;
-  readonly packageFilePaths: readonly string[];
-  readonly manager?: AuditPackageManager;
-  readonly reason: string;
-  readonly detail: string;
-}
+const EMPTY_WORKSPACE_CAPABILITIES: WorkspaceCapabilities = Object.freeze({
+  hasPackageFiles: false,
+  hasReadablePackageFiles: false,
+  hasDependencyEntries: false,
+  hasAuditableProjects: false,
+  canRunInstall: false,
+  canRunAudit: false,
+  canSearchPackages: false,
+  canFilterPackages: false,
+  canPinAllVersions: false,
+});
 
-export interface AuditReportSnapshot {
-  readonly projects: readonly AuditProjectSummary[];
-  readonly failures: readonly AuditProjectFailure[];
-}
+const WORKSPACE_CAPABILITY_CONTEXTS = {
+  hasPackageFiles: 'nestro.hasPackageFiles',
+  hasReadablePackageFiles: 'nestro.hasReadablePackageFiles',
+  hasDependencyEntries: 'nestro.hasDependencyEntries',
+  hasAuditableProjects: 'nestro.hasAuditableProjects',
+  canRunInstall: 'nestro.canRunInstall',
+  canRunAudit: 'nestro.canRunAudit',
+  canSearchPackages: 'nestro.canSearchPackages',
+  canFilterPackages: 'nestro.canFilterPackages',
+  canPinAllVersions: 'nestro.canPinAllVersions',
+} as const;
 
-type UpdateFetchResult
-  = | { readonly accepted: true; readonly data: ReadonlyMap<string, CachedUpdateData> }
-    | { readonly accepted: false };
+/** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
+export const METADATA_CONCURRENCY_CAP = 4;
 
-interface CachedUpdateData {
-  readonly acceptedVersion: string | undefined;
-  readonly releaseAge: ReleaseAgeState;
-}
-
-const METADATA_CONCURRENCY_CAP = 4;
-
-interface MetadataLookup {
-  readonly identity: PackageIdentityTuple;
-  readonly key: string;
-}
-
-async function fetchMetadataOutcomes(
-  identities: readonly PackageIdentityTuple[],
-): Promise<(PackageMetadataOutcome | undefined)[]> {
-  const lookups = await mapWithConcurrency(identities, async (identity): Promise<MetadataLookup> => {
-    let registryKey: string | undefined;
-    try {
-      registryKey = await resolveMetadataRegistryKey(identity.packageName, identity.packageFilePath);
-    }
-    catch {
-      registryKey = undefined;
-    }
-    return {
-      identity,
-      key: buildMetadataLookupKey(identity, registryKey),
-    };
-  }, METADATA_CONCURRENCY_CAP);
-  const uniqueRequests = new Map<string, PackageIdentityTuple>();
-  lookups.forEach(({ key, identity }) => {
-    if (!uniqueRequests.has(key)) {
-      uniqueRequests.set(key, identity);
-    }
-  });
-  const outcomes = await mapWithConcurrency([...uniqueRequests.entries()], async ([key, identity]) => {
-    try {
-      return [key, await fetchPackageMetadata(identity.packageName, identity.packageFilePath)] as const;
-    }
-    catch {
-      return [key, undefined] as const;
-    }
-  }, METADATA_CONCURRENCY_CAP);
-  const outcomesByKey = new Map(outcomes);
-  const keyByIdentity = new Map(lookups.map(({ identity, key }) => [packageIdentityKey(identity), key]));
-  return identities.map(identity => outcomesByKey.get(
-    keyByIdentity.get(packageIdentityKey(identity)) ?? '',
-  ));
-}
-
-function buildMetadataLookupKey(identity: PackageIdentityTuple, registryKey: string | undefined): string {
-  return [
-    identity.packageName,
-    registryKey ?? `unresolved:${identity.packageFilePath}`,
-  ].join('\u0000');
-}
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  worker: (item: T) => Promise<R>,
-  concurrency: number,
-): Promise<R[]> {
-  if (items.length === 0) {
-    return [];
-  }
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(items.length, concurrency) }, async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      const item = items[index];
-      if (item === undefined) {
-        return;
-      }
-      results[index] = await worker(item);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
+type PackageOperationInput = PackageOperation | boolean | undefined;
 
 interface AuditOperation {
   readonly generation: number;
@@ -179,15 +133,29 @@ interface AuditOperation {
   readonly abortController: AbortController;
 }
 
-export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
-  private static readonly CACHE_TTL_MS = 5 * 60 * 1000;
+interface UpdateOperation {
+  readonly generation: number;
+  readonly snapshotGeneration: number;
+  readonly abortController: AbortController;
+}
 
+export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private readonly filterChangeDisposable: vscode.Disposable;
+  private readonly packageLoadingService: PackageLoadingServiceContract;
   private allEntries: PackageTreeEntry[] = [];
   private packageFilePaths: string[] = [];
+  /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
+  private ownerLabelCache: ReadonlyMap<string, string> | undefined;
+  private readablePackageFilePaths: string[] = [];
+  private workspaceCapabilities: WorkspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+  // True once a load has settled (success or failure) at least once. Global actions stay
+  // enabled while this is false so a command is never hidden just because the extension
+  // has not resolved real capabilities yet — see publishedWorkspaceCapabilities().
+  private capabilitiesInitialized = false;
+  private packageReadFailed = false;
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
   private readonly packageCapabilityRecords = new WeakMap<object, {
@@ -215,28 +183,43 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private auditResults: Map<string, AuditSeverity> = new Map();
   private auditProjects: AuditProjectSummary[] = [];
   private auditFailures: AuditProjectFailure[] = [];
-  private checkState: 'idle' | 'running' | 'done' = 'idle';
+  private checkState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
   private lastCheckTime: Date | undefined;
-  private auditState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
+  private auditState: 'idle' | 'running' | 'done' | 'incomplete' | 'failed' = 'idle';
   /**
    * Owns the current audit generation and its cancellation for one run. A completed or
    * superseded run cannot clear a replacement operation through this identity boundary.
    */
   private auditGeneration = 0;
   private auditOperation: AuditOperation | undefined;
+  private updateGeneration = 0;
+  private updateOperation: UpdateOperation | undefined;
+  /** Shared read/process boundary for concurrent update and audit runs. */
+  private readonly checkCoordinator = createCheckCoordinator();
+  /** Nested metadata profile; every metadata request also holds a shared check slot. */
+  private readonly metadataCoordinator = new OperationCoordinator(METADATA_CONCURRENCY_CAP);
+  private readonly updateOrchestrationService: UpdateOrchestrationServiceContract;
+  private readonly auditOrchestrationService: AuditOrchestrationServiceContract;
   private lastAuditCount: number | undefined;
   private lastAuditSuccessfulRootCount: number | undefined;
   private failedAuditPaths: string[] = [];
+  private failedUpdatePaths: string[] = [];
   private failedPackageReadPaths: string[] = [];
-  private readonly clientManager = new ClientManager();
-  private updateCache: {
-    data: Map<string, CachedUpdateData>;
-    timestamp: number;
-    policyKey: string;
-    fingerprint: string;
-  } | undefined;
+  private packageReadFailures: StatusReportFailure[] = [];
+  private updateFailures: StatusReportFailure[] = [];
+  private disposed = false;
 
-  constructor(private readonly filterManager: FilterManager) {
+  constructor(
+    private readonly filterManager: FilterManager,
+    packageLoadingService: PackageLoadingServiceContract = new PackageLoadingService(),
+    updateOrchestrationService?: UpdateOrchestrationServiceContract,
+    auditOrchestrationService?: AuditOrchestrationServiceContract,
+  ) {
+    this.packageLoadingService = packageLoadingService;
+    this.updateOrchestrationService = updateOrchestrationService
+      ?? UpdateOrchestrationService.withCoordinators(this.checkCoordinator, this.metadataCoordinator);
+    this.auditOrchestrationService = auditOrchestrationService
+      ?? AuditOrchestrationService.withCoordinator(this.checkCoordinator);
     this.filterChangeDisposable = this.filterManager.onDidChange(() => this.emitTreeChanged());
   }
 
@@ -426,15 +409,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   /**
    * Project-level audit results from the most recent run, keyed by canonical project
    * root rather than by row. Row badges may be suppressed for ambiguous multi-manifest
-   * or duplicate-name matches (see `applyProjectAuditResults()`), but the underlying
-   * project result and its origin manifest set are always kept here.
+   * or duplicate-name matches (attributed by the audit orchestration service), but the
+   * underlying project result and its origin manifest set are always kept here.
    */
   getAuditProjects(): readonly AuditProjectSummary[] {
-    return this.auditProjects.map(summary => this.cloneAuditProjectSummary(summary));
+    return this.auditProjects.map(summary => cloneAuditProjectSummary(summary));
   }
 
   getAuditFailures(): readonly AuditProjectFailure[] {
-    return this.auditFailures.map(failure => this.cloneAuditProjectFailure(failure));
+    return this.auditFailures.map(failure => cloneAuditProjectFailure(failure));
   }
 
   getAuditReport(): AuditReportSnapshot {
@@ -444,13 +427,53 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     };
   }
 
+  /** Returns a defensive snapshot for the unified status diagnostics report. */
+  getStatusReport(): StatusReportSnapshot {
+    const packageReadFailures = this.packageReadFailures.map(cloneStatusReportFailure);
+    const updateFailures = this.updateFailures.map(cloneStatusReportFailure);
+    const auditFailures = this.auditFailures.map(failure => cloneStatusReportFailure({
+      packageFilePaths: failure.packageFilePaths.length > 0
+        ? failure.packageFilePaths
+        : failure.project?.originManifests ?? [],
+      reason: failure.reason,
+      detail: failure.detail,
+    }));
+    const packageFilePaths = uniqueStrings([
+      ...packageReadFailures.flatMap(failure => failure.packageFilePaths),
+      ...updateFailures.flatMap(failure => failure.packageFilePaths),
+      ...auditFailures.flatMap(failure => failure.packageFilePaths),
+    ]);
+    const fileLabels: StatusReportFileLabel[] = resolvePackageFileLabels(
+      packageFilePaths,
+      this.workspaceFolderDescriptors,
+      getLocalizedPackageLabelFormatting(),
+    ).map((entry, order) => ({
+      packageFilePath: entry.packageFilePath,
+      label: entry.owner.label,
+      order,
+    }));
+    return {
+      packageReadFailures,
+      updateFailures,
+      auditFailures,
+      fileLabels,
+    };
+  }
+
   getVisibleOutdatedPackages(): PackageItem[] {
     if (this.loading) {
       return [];
     }
-    return getFilteredEntries(this.allEntries, this.filterManager.current, this.filterManager.search)
-      .map(entry => entry.item)
-      .filter(item => item.updateType !== 'none' && item.latest !== undefined && !item.installing);
+    return projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search)
+      .visibleOutdatedEntries
+      .map(entry => entry.item);
+  }
+
+  getPackageIdentitiesForFile(packageFilePath: string): PackageStateIdentity[] {
+    return this.allEntries
+      .filter(entry => entry.packageFilePath === packageFilePath)
+      .map(entry => this.packageItemRecords.get(entry.item)?.identity)
+      .filter((identity): identity is PackageStateIdentity => identity !== undefined);
   }
 
   markPackageUpdated(identity: PackageStateIdentity, newVersion: string): void {
@@ -466,7 +489,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.versionPrefix + newVersion,
         undefined,
         'none',
-        false,
+        undefined,
         entryPackageFilePath,
         dev,
         item.versionPrefix,
@@ -496,7 +519,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         row.versionPrefix + newVersion,
         undefined,
         'none',
-        false,
+        undefined,
         row.packageFilePath,
         row.dev,
         row.versionPrefix,
@@ -515,7 +538,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         undefined,
         'none',
-        item.installing,
+        item.operation,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -527,19 +550,20 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   invalidateUpdateCache(): void {
-    this.updateCache = undefined;
+    this.updateOrchestrationService.invalidateCache();
     this.lastCheckTime = undefined;
     logger.info('Update cache invalidated.');
   }
 
-  markPackageUpdating(identity: PackageStateIdentity, installing: boolean): void {
+  markPackageUpdating(identity: PackageStateIdentity, operation: PackageOperationInput): void {
     const index = this.findEntryIndex(identity);
     if (index === -1) {
       return;
     }
 
     const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
-    const updateType = installing || item.latest === undefined
+    const activeOperation = normalizeOperation(operation, item.latest ?? item.currentVersion);
+    const updateType = activeOperation !== undefined || item.latest === undefined
       ? item.updateType
       : getUpdateType(item.currentVersion, item.latest);
     this.allEntries[index] = {
@@ -548,7 +572,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         item.latest,
         updateType,
-        installing,
+        activeOperation,
         entryPackageFilePath,
         dev,
         item.versionPrefix,
@@ -567,7 +591,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    */
   markPackageUpdatingForCapability(
     capability: ResolvedPackageItem,
-    installing: boolean,
+    operation: PackageOperationInput,
   ): ResolvedPackageItem | undefined {
     const record = this.getCurrentCapabilityRecord(capability);
     if (record === undefined) {
@@ -585,7 +609,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const previousEntry = currentEntry;
     const previousRecord = currentRecord;
     const row = currentRecord.row;
-    const updateType = installing || row.latest === undefined
+    const activeOperation = normalizeOperation(operation, row.latest ?? row.currentVersion);
+    const updateType = activeOperation !== undefined || row.latest === undefined
       ? row.updateType
       : getUpdateType(row.currentVersion, row.latest);
     this.allEntries[index] = {
@@ -594,7 +619,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         row.currentVersion,
         row.latest,
         updateType,
-        installing,
+        activeOperation,
         row.packageFilePath,
         row.dev,
         row.versionPrefix,
@@ -653,7 +678,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             row.currentVersion,
             row.latest,
             row.updateType,
-            originalRecord.row.installing,
+            originalRecord.row.operation,
             row.packageFilePath,
             row.dev,
             row.versionPrefix,
@@ -746,7 +771,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.allEntries.length === 0) {
       return;
     }
-    await this.filterManager.showPicker(getFilterCounts(this.allEntries));
+    await this.filterManager.showPicker(getFilterCounts(this.allEntries, this.filterManager.search));
   }
 
   async loadPackages(): Promise<void> {
@@ -754,66 +779,62 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const snapshotGeneration = this.packageSnapshotGeneration + 1;
     this.packageSnapshotGeneration = snapshotGeneration;
     this.loadAbortController?.abort();
+    this.updateOperation?.abortController.abort();
+    this.updateOperation = undefined;
+    const activeAudit = this.auditOperation;
+    if (activeAudit !== undefined) {
+      activeAudit.abortController.abort();
+      this.auditOperation = undefined;
+      this.auditGeneration += 1;
+    }
+    this.checkState = 'idle';
+    this.auditState = 'idle';
     const abortController = new AbortController();
     this.loadAbortController = abortController;
     this.packageLocationBaselines = new Map();
+    this.packageFilePaths = [];
+    this.readablePackageFilePaths = [];
+    // workspaceCapabilities is intentionally left in place here: it still holds the last
+    // settled result (or the permissive pre-init default), so a reload never flashes global
+    // actions to disabled while it is in flight. It is only overwritten once this load settles.
+    this.packageReadFailed = false;
     this.loading = true;
-    // A reload must not clear another operation's own running guard; only reset audit
-    // state when no audit is currently in flight for it to own.
-    if (this.auditState !== 'running') {
-      this.auditResults = new Map();
-      this.auditProjects = [];
-      this.auditFailures = [];
-      this.auditState = 'idle';
-      this.lastAuditCount = undefined;
-      this.lastAuditSuccessfulRootCount = undefined;
-      this.failedAuditPaths = [];
-    }
+    this.auditResults = new Map();
+    this.auditProjects = [];
+    this.auditFailures = [];
+    this.lastAuditCount = undefined;
+    this.lastAuditSuccessfulRootCount = undefined;
+    this.failedAuditPaths = [];
+    this.failedUpdatePaths = [];
+    this.packageReadFailures = [];
+    this.updateFailures = [];
     this.failedPackageReadPaths = [];
     this.emitTreeChanged();
     try {
-      const entries = await readAllWorkspaceDependencies();
-      const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
-      if (entries.length > 0) {
-        try {
-          const discoveredPackageFilePaths = await getWorkspacePackageFilePaths();
-          packageFilePaths.push(...discoveredPackageFilePaths.filter(
-            packageFilePath => !packageFilePaths.includes(packageFilePath),
-          ));
-        }
-        catch {
-          logger.warn('Failed to discover workspace package files for labels; using loaded package entries.');
-        }
-      }
-      const baselines = new Map<string, CanonicalPackageLocation>();
-      const canonicalManifestOwners = new Map<string, string>();
-      const collidingManifestPaths = new Set<string>();
-      for (const packageFilePath of new Set(entries.map(entry => entry.packageFilePath))) {
-        const location = await resolveCanonicalPackageLocation(packageFilePath);
-        if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
-          return;
-        }
-        if (location.ok) {
-          const canonicalOwner = canonicalManifestOwners.get(location.value.packageFilePath);
-          if (canonicalOwner !== undefined && canonicalOwner !== packageFilePath) {
-            collidingManifestPaths.add(canonicalOwner);
-            collidingManifestPaths.add(packageFilePath);
-            baselines.delete(canonicalOwner);
-            baselines.delete(packageFilePath);
-            continue;
-          }
-          canonicalManifestOwners.set(location.value.packageFilePath, packageFilePath);
-          if (!collidingManifestPaths.has(packageFilePath)) {
-            baselines.set(packageFilePath, freezePackageLocation(location.value));
-          }
-        }
-      }
-      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
+      const snapshot = await this.packageLoadingService.load(abortController.signal);
+      if (snapshot === undefined || this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
-      this.packageLocationBaselines = baselines;
-      this.packageFilePaths = packageFilePaths;
-      this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+      const {
+        entries,
+        packageFilePaths,
+        readablePackageFilePaths,
+        failedPackageReadPaths,
+        failedPackageReadDetails,
+        packageLocationBaselines,
+        packageReadFailed,
+      } = snapshot;
+      this.packageReadFailed = packageReadFailed;
+      this.packageLocationBaselines = new Map(packageLocationBaselines);
+      this.packageFilePaths = [...packageFilePaths];
+      this.ownerLabelCache = undefined;
+      this.readablePackageFilePaths = [...readablePackageFilePaths];
+      this.failedPackageReadPaths = [...failedPackageReadPaths];
+      this.packageReadFailures = createPackageReadFailureSnapshot(
+        failedPackageReadPaths,
+        failedPackageReadDetails,
+        packageReadFailed,
+      );
       logger.info(`Loaded ${entries.length} workspace package(s).`);
       const existingMap = new Map(this.allEntries.map(e => [
         this.packageStateKey({
@@ -834,7 +855,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
         const newSemver = e.current.slice(e.versionPrefix.length);
         const preserveExistingUpdateState = existing !== undefined
-          && (existing.item.installing || existingSemver === newSemver);
+          && (existing.item.operation !== undefined || existingSemver === newSemver);
         if (preserveExistingUpdateState) {
           return {
             item: this.createPackageItem(
@@ -842,7 +863,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               e.current,
               existing.item.latest,
               existing.item.updateType,
-              existing.item.installing,
+              existing.item.operation,
               e.packageFilePath,
               e.dev,
               e.versionPrefix,
@@ -853,18 +874,39 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           };
         }
         return {
-          item: this.createPackageItem(e.name, e.current, undefined, 'none', false, e.packageFilePath, e.dev, e.versionPrefix),
+          item: this.createPackageItem(e.name, e.current, undefined, 'none', undefined, e.packageFilePath, e.dev, e.versionPrefix),
           dev: e.dev,
           packageFilePath: e.packageFilePath,
         };
       });
+      const workspaceCapabilities = await this.resolveWorkspaceCapabilities(
+        packageFilePaths,
+        readablePackageFilePaths,
+        entries,
+      );
+      if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
+        return;
+      }
+      this.workspaceCapabilities = workspaceCapabilities;
+      this.capabilitiesInitialized = true;
     }
     catch (err) {
       if (this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
         return;
       }
       this.packageLocationBaselines = new Map();
-      showError(`failed to load packages — ${err instanceof Error ? err.message : String(err)}`, err);
+      this.packageFilePaths = [];
+      this.readablePackageFilePaths = [];
+      this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+      this.packageReadFailed = true;
+      this.capabilitiesInitialized = true;
+      this.failedPackageReadPaths = [];
+      this.packageReadFailures = [{
+        packageFilePaths: [],
+        reason: 'package-load-failed',
+        detail: err instanceof Error ? err.message : String(err),
+      }];
+      showError(vscode.l10n.t('Failed to load packages — {0}', err instanceof Error ? err.message : String(err)), err);
     }
     finally {
       if (!this.isLoadOutdated(snapshotGeneration, abortController.signal)) {
@@ -884,135 +926,216 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
     const snapshotGeneration = this.packageSnapshotGeneration;
     this.checkState = 'running';
+    this.failedUpdatePaths = [];
+    this.updateFailures = [];
+    let attemptedPackageFilePaths: string[] = [];
+    const operation: UpdateOperation = {
+      generation: this.updateGeneration + 1,
+      snapshotGeneration,
+      abortController: new AbortController(),
+    };
+    this.updateGeneration = operation.generation;
+    this.updateOperation = operation;
     this.emitTreeChanged();
     try {
-      const config = vscode.workspace.getConfiguration('nestro');
-      const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-      const includePreReleases = config.get<boolean>('includePreReleases', false);
-      const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-      const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
-        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: vscode.l10n.t('Checking package updates…'),
+          cancellable: true,
+        },
+        async (_progress, token): Promise<void> => {
+          const cancellation = token.onCancellationRequested(() => this.cancelCheckUpdates());
+          try {
+            if (token.isCancellationRequested) {
+              this.cancelCheckUpdates();
+            }
+            const config = vscode.workspace.getConfiguration('nestro');
+            const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
+            const includePreReleases = config.get<boolean>('includePreReleases', false);
+            const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
+            const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
+              config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+            );
+            const debounceSeconds = config.get<number>('checkUpdatesDebounce', 60);
+            const source = this.allEntries.length > 0
+              ? this.allEntries.map(e => ({
+                  name: e.item.packageName,
+                  current: e.item.currentVersion,
+                  dev: e.dev,
+                  versionPrefix: e.item.versionPrefix,
+                  packageFilePath: e.packageFilePath,
+                }))
+              : await this.readPackagesForUpdateCheck();
+            if (!this.isUpdateCurrent(operation)) {
+              return;
+            }
+            const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
+            attemptedPackageFilePaths = packageFiles;
+            const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
+            const currentVersions = new Map(identities.map((identity, index) => [
+              this.packageStateKey(identity),
+              source[index].current,
+            ]));
+            const result = await this.updateOrchestrationService.check({
+              identities,
+              currentVersions,
+              packageFiles,
+              target,
+              includePreReleases,
+              minimumReleaseAgeDays,
+              forceAlways,
+              debounceSeconds,
+              lastCheckTime: this.lastCheckTime?.getTime(),
+              signal: operation.abortController.signal,
+              isCurrent: () => this.isUpdateCurrent(operation),
+              resolveCurrentPolicy: () => this.currentUpdatePolicy(),
+              onCheckStarted: () => {
+                logger.info('Checking package updates.');
+                logger.info(`Checking updates for ${source.length} package(s).`);
+              },
+              onRootFailure: () => logger.error('Update check failed for a package root; other roots still completed.'),
+              onDiscarded: () => logger.info('Update results discarded — packages or update settings changed during the check.'),
+            });
+            if (!this.isUpdateCurrent(operation)) {
+              return;
+            }
+            if (result.kind === 'debounced') {
+              logger.info('Check for updates skipped — debounce interval has not elapsed.');
+              this.checkState = 'done';
+              return;
+            }
+            if (result.kind === 'discarded') {
+              this.checkState = 'idle';
+              return;
+            }
+            const upgrades = result.data;
+            this.failedUpdatePaths = uniqueStrings(result.failedPackageFilePaths);
+            this.updateFailures = createUpdateFailureSnapshot(
+              result.failedPackageFilePaths,
+              result.failures,
+            );
+            if (result.allFailed) {
+              const failureMessage = result.failure instanceof Error
+                ? result.failure.message
+                : result.failure === undefined ? vscode.l10n.t('all package roots failed') : String(result.failure);
+              showError(vscode.l10n.t('Failed to check updates — {0}', failureMessage), result.failure);
+            }
+            const liveEntries = this.allEntries.length > 0
+              ? this.allEntries
+              : source.map(entry => ({
+                  item: this.createPackageItem(
+                    entry.name,
+                    entry.current,
+                    undefined,
+                    'none',
+                    undefined,
+                    entry.packageFilePath,
+                    entry.dev,
+                    entry.versionPrefix,
+                  ),
+                  dev: entry.dev,
+                  packageFilePath: entry.packageFilePath,
+                }));
+            this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
+              const updateData = upgrades.get(this.packageStateKey(
+                packageIdentityFromValues(item.packageName, packageFilePath, dev),
+              ));
+              const latest = updateData?.acceptedVersion;
+              const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
+              return {
+                item: this.createPackageItem(
+                  item.packageName,
+                  item.currentVersion,
+                  latest,
+                  updateType,
+                  item.operation,
+                  packageFilePath,
+                  dev,
+                  item.versionPrefix,
+                  updateData?.releaseAge,
+                ),
+                dev,
+                packageFilePath,
+              };
+            });
+            logger.info(`Checked updates for ${source.length} package(s).`);
+            this.checkState = this.failedUpdatePaths.length === 0 ? 'done' : 'incomplete';
+            this.lastCheckTime = new Date();
+          }
+          finally {
+            cancellation.dispose();
+          }
+        },
       );
-      const source = this.allEntries.length > 0
-        ? this.allEntries.map(e => ({
-            name: e.item.packageName,
-            current: e.item.currentVersion,
-            dev: e.dev,
-            versionPrefix: e.item.versionPrefix,
-            packageFilePath: e.packageFilePath,
-          }))
-        : await this.readPackagesForUpdateCheck();
-      const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-      const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
-      const currentVersions = new Map(identities.map((identity, index) => [
-        this.packageStateKey(identity),
-        source[index].current,
-      ]));
-      // The debounce gate uses the cheap policy/file-set key: reading every manifest to
-      // decide whether to skip a run would cost more than the run being skipped.
-      const policyKey = this.updatePolicyKey(packageFiles, target, includePreReleases, minimumReleaseAgeDays);
-      if (!forceAlways && this.isCachePolicyCurrent(policyKey) && this.lastCheckTime !== undefined) {
-        const debounceSec = config.get<number>('checkUpdatesDebounce', 60);
-        if (debounceSec > 0 && Date.now() - this.lastCheckTime.getTime() < debounceSec * 1000) {
-          logger.info('Check for updates skipped — debounce interval has not elapsed.');
-          this.checkState = 'done';
-          return;
-        }
-      }
-      const fingerprint = await this.computeUpdateFingerprint(
-        identities,
-        target,
-        includePreReleases,
-        minimumReleaseAgeDays,
-      );
-      const cacheValid = this.isCacheValid(fingerprint);
-      logger.info('Checking package updates.');
-      logger.info(`Checking updates for ${source.length} package(s).`);
-      let upgrades: ReadonlyMap<string, CachedUpdateData>;
-      if (!forceAlways && cacheValid) {
-        upgrades = this.updateCache?.data ?? new Map<string, CachedUpdateData>();
-      }
-      else {
-        const fetchResult = await this.fetchAndCacheUpdates(
-          identities,
-          currentVersions,
-          packageFiles,
-          target,
-          includePreReleases,
-          minimumReleaseAgeDays,
-          policyKey,
-          fingerprint,
-          snapshotGeneration,
-        );
-        if (!fetchResult.accepted) {
-          this.checkState = 'idle';
-          return;
-        }
-        upgrades = fetchResult.data;
-      }
-      if (snapshotGeneration !== this.packageSnapshotGeneration) {
-        this.checkState = 'idle';
-        return;
-      }
-      const liveEntries = this.allEntries.length > 0
-        ? this.allEntries
-        : source.map(entry => ({
-            item: this.createPackageItem(
-              entry.name,
-              entry.current,
-              undefined,
-              'none',
-              false,
-              entry.packageFilePath,
-              entry.dev,
-              entry.versionPrefix,
-            ),
-            dev: entry.dev,
-            packageFilePath: entry.packageFilePath,
-          }));
-      this.allEntries = liveEntries.map(({ item, dev, packageFilePath }) => {
-        const updateData = upgrades.get(this.packageStateKey(
-          packageIdentityFromValues(item.packageName, packageFilePath, dev),
-        ));
-        const latest = updateData?.acceptedVersion;
-        const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
-        return {
-          item: this.createPackageItem(
-            item.packageName,
-            item.currentVersion,
-            latest,
-            updateType,
-            item.installing,
-            packageFilePath,
-            dev,
-            item.versionPrefix,
-            updateData?.releaseAge,
-          ),
-          dev,
-          packageFilePath,
-        };
-      });
-      logger.info(`Checked updates for ${source.length} package(s).`);
-      this.checkState = 'done';
-      this.lastCheckTime = new Date();
     }
     catch (err) {
-      this.checkState = 'idle';
-      showError(`failed to check updates — ${err instanceof Error ? err.message : String(err)}`, err);
+      if (this.isUpdateCurrent(operation)) {
+        this.failedUpdatePaths = uniqueStrings(attemptedPackageFilePaths);
+        this.updateFailures = [{
+          packageFilePaths: attemptedPackageFilePaths,
+          reason: 'update-check-failed',
+          detail: err instanceof Error ? err.message : String(err),
+        }];
+        this.checkState = 'idle';
+        showError(vscode.l10n.t('Failed to check updates — {0}', err instanceof Error ? err.message : String(err)), err);
+      }
     }
     finally {
-      this.emitTreeChanged();
+      if (this.updateOperation === operation) {
+        this.updateOperation = undefined;
+        if (this.checkState === 'running') {
+          this.checkState = 'idle';
+        }
+        if (!operation.abortController.signal.aborted) {
+          this.emitTreeChanged();
+        }
+      }
     }
   }
 
+  /** Reads the update policy live, so a fetch in flight can detect a setting changed mid-check. */
+  private currentUpdatePolicy(): UpdateFingerprintPolicy {
+    const config = vscode.workspace.getConfiguration('nestro');
+    return {
+      target: config.get<NcuUpdateTarget>('updateTarget', 'latest'),
+      includePreReleases: config.get<boolean>('includePreReleases', false),
+      minimumReleaseAgeDays: readMinimumReleaseAgeDays(
+        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+      ),
+    };
+  }
+
+  /** Cancels the in-flight update check and discards its late result. */
+  cancelCheckUpdates(): void {
+    const operation = this.updateOperation;
+    if (this.checkState !== 'running' || operation === undefined) {
+      return;
+    }
+    operation.abortController.abort();
+    this.checkState = 'idle';
+    this.emitTreeChanged();
+  }
+
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
     for (const timer of this.writeSuppressionTimers) {
       clearTimeout(timer);
     }
     this.writeSuppressionTimers.clear();
     this.writeSuppressionDepth = 0;
     this.loadAbortController?.abort();
+    this.cancelCheckUpdates();
     this.cancelAudit();
+    this.disposed = true;
+    this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+    this.packageReadFailed = false;
+    this.setWorkspaceCapabilityContexts(EMPTY_WORKSPACE_CAPABILITIES);
+    void vscode.commands.executeCommand('setContext', 'nestro.canUpdateVisiblePackages', false);
+    void vscode.commands.executeCommand('setContext', 'nestro.noWorkspace', false);
+    void vscode.commands.executeCommand('setContext', 'nestro.hasSearchQuery', false);
     this.filterChangeDisposable.dispose();
     this._onDidChangeTreeData.dispose();
   }
@@ -1037,7 +1160,34 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: vscode.l10n.t('Running package audit…'),
+        cancellable: true,
+      },
+      async (_progress, token): Promise<void> => {
+        const cancellation = token.onCancellationRequested(() => this.cancelAudit());
+        try {
+          if (token.isCancellationRequested) {
+            this.cancelAudit();
+          }
+          await this.runAuditCore();
+        }
+        finally {
+          cancellation.dispose();
+        }
+      },
+    );
+  }
+
+  private async runAuditCore(): Promise<void> {
+    if (this.auditState === 'running') {
+      return;
+    }
+
     this.auditState = 'running';
+    this.lastAuditCount = undefined;
     this.lastAuditSuccessfulRootCount = undefined;
     this.failedAuditPaths = [];
     // Cleared here, not just on success below, so getAuditProjects() never hands back a
@@ -1070,118 +1220,57 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
 
-      // Canonical project graph: manifests sharing a lock file resolve to the same
-      // project root and are audited exactly once. Rejected manifests — no owning
-      // workspace, or a workspace-escaping root — never reach a client at all.
-      const { projects, rejected } = await resolveAuditProjects(packageFilePaths);
-      if (!this.isAuditCurrent(operation)) {
-        return;
-      }
-
-      const auditResults = new Map<string, AuditSeverity>();
-      const auditProjects: AuditProjectSummary[] = [];
-      const auditFailures: AuditProjectFailure[] = rejected.map(rejection => ({
-        packageFilePaths: [rejection.packageFilePath],
-        reason: rejection.reason,
-        detail: rejection.detail,
+      const rows: AuditableRow[] = this.allEntries.map(entry => ({
+        packageName: entry.item.packageName,
+        packageFilePath: entry.packageFilePath,
+        dev: entry.dev,
+        currentVersion: entry.item.currentVersion,
       }));
-      const failedAuditPaths: string[] = rejected.map(rejection => rejection.packageFilePath);
-      let successfulAuditRootCount = 0;
-      let failedProjectCount = 0;
-      for (const project of projects) {
-        if (!this.isAuditCurrent(operation)) {
-          return;
-        }
-        try {
-          const client = this.clientManager.createClient(project.packageManager, project.projectRoot);
-          const reportRunner = client as unknown as {
-            runAuditReport?: (signal?: AbortSignal) => Promise<unknown>;
-          };
-          const rawResult = typeof reportRunner.runAuditReport === 'function'
-            ? await reportRunner.runAuditReport(operation.abortController.signal)
-            : await client.runAudit(operation.abortController.signal);
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
-          successfulAuditRootCount += 1;
-          if (this.isAuditResult(rawResult)) {
-            const advisories = mergeAuditAdvisories(rawResult.advisories);
-            auditProjects.push({
-              project,
-              status: 'success',
-              manager: rawResult.manager,
-              schema: rawResult.schema,
-              vulnerabilities: new Map(rawResult.vulnerabilities),
-              advisories: advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
-            });
-            await this.applyStructuredProjectAuditResults(project, advisories, auditResults);
-            if (!this.isAuditCurrent(operation)) {
-              return;
-            }
-          }
-          else if (rawResult instanceof Map) {
-            const vulnerabilities = new Map(rawResult as Map<string, AuditSeverity>);
-            auditProjects.push({
-              project,
-              status: 'success',
-              manager: project.packageManager,
-              vulnerabilities,
-              advisories: [],
-            });
-            this.applyLegacyProjectAuditResults(project, vulnerabilities, auditResults);
-          }
-          else {
-            throw new Error('Audit client returned an unrecognized audit result.');
-          }
-        }
-        catch (err) {
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
-          failedAuditPaths.push(...project.originManifests);
-          const failure = describeAuditFailure(err);
-          auditProjects.push({
-            project,
-            status: 'failure',
-            manager: project.packageManager,
-            vulnerabilities: new Map(),
-            advisories: [],
-            failure,
-          });
-          auditFailures.push({
-            project,
-            packageFilePaths: [...project.originManifests],
-            manager: project.packageManager,
-            reason: failure.reason,
-            detail: failure.detail,
-          });
-          failedProjectCount += 1;
-        }
-      }
-
+      const result = await this.auditOrchestrationService.run({
+        packageFilePaths,
+        rows,
+        signal: operation.abortController.signal,
+        isCurrent: () => this.isAuditCurrent(operation),
+      });
       if (!this.isAuditCurrent(operation)) {
         return;
       }
+      if (result.kind === 'discarded') {
+        return;
+      }
+      if (result.kind === 'failed') {
+        this.auditFailures = [{
+          packageFilePaths: [],
+          reason: result.reason,
+          detail: result.detail,
+        }];
+        this.auditState = 'failed';
+        shouldEmit = true;
+        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
+        return;
+      }
 
-      this.auditResults = auditResults;
-      this.auditProjects = auditProjects;
-      this.auditFailures = auditFailures;
-      this.failedAuditPaths = failedAuditPaths;
-      this.auditState = failedAuditPaths.length === 0 ? 'done' : 'incomplete';
-      this.lastAuditCount = countProjectVulnerablePackages(auditProjects);
-      this.lastAuditSuccessfulRootCount = successfulAuditRootCount;
+      this.auditResults = new Map(result.auditResults);
+      this.auditProjects = [...result.auditProjects];
+      this.auditFailures = [...result.auditFailures];
+      this.failedAuditPaths = [...result.failedAuditPaths];
+      this.auditState = this.failedAuditPaths.length === 0 ? 'done' : 'incomplete';
+      this.lastAuditCount = result.vulnerablePackageCount;
+      this.lastAuditSuccessfulRootCount = result.successfulAuditRootCount;
       shouldEmit = true;
-      if (rejected.length > 0) {
+      const rejectedManifestCount = this.auditFailures.filter(failure => failure.project === undefined).length;
+      const failedProjectCount = this.auditFailures.length - rejectedManifestCount;
+      if (rejectedManifestCount > 0) {
         logger.error('Audit project resolution failed; see the security audit report for redacted details.');
       }
       for (let index = 0; index < failedProjectCount; index += 1) {
         logger.error('Audit failed for a project; see the security audit report for redacted details.');
       }
       logger.info(
-        failedAuditPaths.length === 0
+        this.failedAuditPaths.length === 0
           ? `Audit: ${this.lastAuditCount} vulnerable package(s).`
           : `Audit incomplete: ${this.lastAuditCount} vulnerable package(s); `
-            + `failed ${failedAuditPaths.length} package root(s).`,
+            + `failed ${this.failedAuditPaths.length} package root(s).`,
       );
       this.rebuildPackageItems();
     }
@@ -1193,9 +1282,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           reason: failure.reason,
           detail: failure.detail,
         }];
-        this.auditState = 'idle';
+        this.auditState = 'failed';
         shouldEmit = true;
-        showError('package audit failed — the security audit report is incomplete.');
+        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
       }
     }
     finally {
@@ -1226,19 +1315,65 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       && !operation.abortController.signal.aborted;
   }
 
+  /** An update check is current only while its operation owns the provider and snapshot. */
+  private isUpdateCurrent(operation: UpdateOperation): boolean {
+    return this.updateOperation === operation
+      && operation.generation === this.updateGeneration
+      && operation.snapshotGeneration === this.packageSnapshotGeneration
+      && this.checkState === 'running'
+      && !operation.abortController.signal.aborted;
+  }
+
   private emitTreeChanged(): void {
     this.updateTreeViewState();
+    const projection = this.loading
+      ? undefined
+      : projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search);
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.canUpdateVisiblePackages',
-      this.getVisibleOutdatedPackages().length > 0,
+      projection?.canUpdateVisiblePackages ?? false,
     );
+    this.setWorkspaceCapabilityContexts(this.publishedWorkspaceCapabilities());
     void vscode.commands.executeCommand(
       'setContext',
       'nestro.noWorkspace',
-      !this.loading && this.allEntries.length === 0 && this.failedPackageReadPaths.length === 0,
+      !this.loading && !this.workspaceCapabilities.hasPackageFiles && !this.packageReadFailed,
+    );
+    void vscode.commands.executeCommand(
+      'setContext',
+      'nestro.hasSearchQuery',
+      this.filterManager.search !== '',
     );
     this._onDidChangeTreeData.fire();
+  }
+
+  /**
+   * Global actions (`can*`) publish as executable before the first load ever settles, since
+   * "not yet known" is not the same as "known impossible". `dispose()` bypasses this by
+   * calling setWorkspaceCapabilityContexts() directly, so teardown still publishes `false`.
+   */
+  private publishedWorkspaceCapabilities(): WorkspaceCapabilities {
+    if (this.capabilitiesInitialized) {
+      return this.workspaceCapabilities;
+    }
+    return {
+      ...this.workspaceCapabilities,
+      canRunInstall: true,
+      canRunAudit: true,
+      canSearchPackages: true,
+      canFilterPackages: true,
+      canPinAllVersions: true,
+    };
+  }
+
+  private setWorkspaceCapabilityContexts(capabilities: WorkspaceCapabilities): void {
+    for (const [capability, context] of Object.entries(WORKSPACE_CAPABILITY_CONTEXTS) as [
+      keyof WorkspaceCapabilities,
+      string,
+    ][]) {
+      void vscode.commands.executeCommand('setContext', context, capabilities[capability]);
+    }
   }
 
   private createPackageItem(
@@ -1246,7 +1381,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     currentVersion: string,
     latest: string | undefined,
     updateType: UpdateType,
-    installing = false,
+    operation: PackageOperation | undefined = undefined,
     packageFilePath = '',
     dev = false,
     versionPrefix = '',
@@ -1257,12 +1392,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       currentVersion,
       latest,
       updateType,
-      installing,
+      operation,
       this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
       packageFilePath,
       dev,
       versionPrefix,
       releaseAge,
+      this.resolveOwnerLabel(packageFilePath),
     );
     const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
     const row: CanonicalPackageItem = Object.freeze({
@@ -1270,7 +1406,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       currentVersion,
       latest,
       updateType,
-      installing,
+      operation,
       vulnerabilitySeverity: this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
       packageFilePath,
       dev,
@@ -1280,6 +1416,46 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const baselineLocation = this.packageLocationBaselines.get(packageFilePath);
     this.packageItemRecords.set(item, Object.freeze({ identity, row, baselineLocation }));
     return item;
+  }
+
+  /** Same owner-qualified label the tree/picker show, so a row's accessible owner never diverges from it. */
+  private resolveOwnerLabel(packageFilePath: string): string | undefined {
+    if (packageFilePath === '') {
+      return undefined;
+    }
+    const cached = this.ownerLabels.get(packageFilePath);
+    if (cached !== undefined) {
+      return cached;
+    }
+    // Defensive: a manifest outside the tracked set resolves on its own instead of
+    // widening the cache every other row's lookup relies on.
+    const folders = this.workspaceFolderDescriptors;
+    if (folders.length === 0) {
+      return undefined;
+    }
+    return resolvePackageFileLabels(
+      [...this.packageFilePaths, packageFilePath],
+      folders,
+      getLocalizedPackageLabelFormatting(),
+    )
+      .find(entry => entry.packageFilePath === packageFilePath)?.owner.label;
+  }
+
+  /** Owner labels for the tracked manifest set; the projection runs once per `packageFilePaths` change, not per row. */
+  private get ownerLabels(): ReadonlyMap<string, string> {
+    if (this.ownerLabelCache === undefined) {
+      const folders = this.workspaceFolderDescriptors;
+      this.ownerLabelCache = folders.length === 0
+        ? new Map()
+        : new Map(resolvePackageFileLabels(
+            this.packageFilePaths,
+            folders,
+            getLocalizedPackageLabelFormatting(),
+          ).map(
+            entry => [entry.packageFilePath, entry.owner.label],
+          ));
+    }
+    return this.ownerLabelCache;
   }
 
   private issuePackageCapability(
@@ -1321,7 +1497,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         item.currentVersion,
         item.latest,
         item.updateType,
-        item.installing,
+        item.operation,
         packageFilePath,
         dev,
         item.versionPrefix,
@@ -1337,163 +1513,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
-    const outdatedCount = this.allEntries.filter(e => (
-      e.item.updateType !== 'none'
-      && e.item.latest !== undefined
-      && !e.item.installing
-    )).length;
+    const outdatedCount = projectPackageTree(this.allEntries, 'all').visibleOutdatedEntries.length;
     this.treeView.badge = outdatedCount > 0
-      ? { tooltip: `${outdatedCount} package updates available`, value: outdatedCount }
+      ? { tooltip: formatPackageUpdatesAvailable(outdatedCount), value: outdatedCount }
       : undefined;
     this.treeView.message = undefined;
-  }
-
-  private isCacheValid(fingerprint: string): boolean {
-    if (this.updateCache === undefined || this.updateCache.fingerprint !== fingerprint) {
-      return false;
-    }
-    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
-  }
-
-  /** Cheap half of cache validity: update policy and package-file set, without reading manifests. */
-  private isCachePolicyCurrent(policyKey: string): boolean {
-    if (this.updateCache === undefined || this.updateCache.policyKey !== policyKey) {
-      return false;
-    }
-    return Date.now() - this.updateCache.timestamp < PackagesProvider.CACHE_TTL_MS;
-  }
-
-  /**
-   * Fetches latest versions, then re-reads manifests and config immediately before
-   * committing the result. A mismatch against the pre-fetch fingerprint, or a newer
-   * load superseding this one, discards the fetch instead of caching or applying it.
-   */
-  private async fetchAndCacheUpdates(
-    identities: readonly PackageIdentityTuple[],
-    currentVersions: ReadonlyMap<string, string>,
-    packageFiles: readonly string[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-    policyKey: string,
-    beforeFingerprint: string,
-    snapshotGeneration: number,
-  ): Promise<UpdateFetchResult> {
-    const upgrades = new Map<string, string>();
-    for (const packageFilePath of packageFiles) {
-      const fileUpgrades = await fetchAllLatestVersions(
-        packageFilePath,
-        target,
-        includePreReleases,
-        minimumReleaseAgeDays,
-      );
-      for (const [packageName, version] of fileUpgrades) {
-        upgrades.set(this.entryKey(packageName, packageFilePath), version);
-      }
-    }
-
-    const metadataOutcomes = minimumReleaseAgeDays === 0
-      ? identities.map((): PackageMetadataOutcome | undefined => undefined)
-      : await fetchMetadataOutcomes(identities);
-    const updateData = new Map<string, CachedUpdateData>();
-    identities.forEach((identity, index) => {
-      const acceptedVersion = upgrades.get(this.entryKey(identity.packageName, identity.packageFilePath));
-      updateData.set(
-        this.packageStateKey(identity),
-        {
-          acceptedVersion,
-          releaseAge: resolveUpdateReleaseAge(
-            currentVersions.get(this.packageStateKey(identity)) ?? '',
-            acceptedVersion,
-            metadataOutcomes[index],
-            minimumReleaseAgeDays,
-          ),
-        },
-      );
-    });
-
-    const config = vscode.workspace.getConfiguration('nestro');
-    const currentTarget = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-    const currentIncludePreReleases = config.get<boolean>('includePreReleases', false);
-    const currentMinimumReleaseAgeDays = readMinimumReleaseAgeDays(
-      config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
+    this.treeView.description = formatViewDescription(
+      this.filterManager.current,
+      this.filterManager.search,
+      getFilterCounts(this.allEntries, this.filterManager.search),
     );
-    const afterFingerprint = await this.computeUpdateFingerprint(
-      identities,
-      currentTarget,
-      currentIncludePreReleases,
-      currentMinimumReleaseAgeDays,
-    );
-    if (afterFingerprint !== beforeFingerprint || snapshotGeneration !== this.packageSnapshotGeneration) {
-      logger.info('Update results discarded — packages or update settings changed during the check.');
-      return { accepted: false };
-    }
-
-    this.updateCache = {
-      data: updateData,
-      timestamp: Date.now(),
-      policyKey,
-      fingerprint: beforeFingerprint,
-    };
-    return { accepted: true, data: updateData };
-  }
-
-  /**
-   * Deterministic key over exactly what makes a cached update result valid: each
-   * package's canonical location, section, name, on-disk spec, and the update policy.
-   * Adding a future policy setting (e.g. a release cooldown) is one extra field here.
-   */
-  private async computeUpdateFingerprint(
-    identities: readonly PackageIdentityTuple[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-  ): Promise<string> {
-    const byManifest = new Map<string, PackageIdentityTuple[]>();
-    for (const identity of identities) {
-      const group = byManifest.get(identity.packageFilePath);
-      if (group === undefined) {
-        byManifest.set(identity.packageFilePath, [identity]);
-      }
-      else {
-        group.push(identity);
-      }
-    }
-    const entryFingerprints: string[] = [];
-    for (const [packageFilePath, manifestIdentities] of byManifest) {
-      const location = await resolveCanonicalPackageLocation(packageFilePath);
-      if (!location.ok) {
-        // The rejection reason stays in the key, so an unresolvable manifest cannot
-        // collapse the fingerprint into a path-only key that accepts any spec change.
-        for (const identity of manifestIdentities) {
-          entryFingerprints.push(JSON.stringify([
-            packageFilePath, identity.section, identity.packageName, null, location.reason,
-          ]));
-        }
-        continue;
-      }
-      const specs = await readCanonicalDependencySpecs(location.value, manifestIdentities);
-      manifestIdentities.forEach((identity, index) => {
-        entryFingerprints.push(JSON.stringify([
-          location.value.packageFilePath, identity.section, identity.packageName, specs[index] ?? null, 'ok',
-        ]));
-      });
-    }
-    // Plain code-unit order, not localeCompare: this key only needs to be
-    // deterministic within one process, never locale- or ICU-stable.
-    entryFingerprints.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ entries: entryFingerprints, target, includePreReleases, minimumReleaseAgeDays });
-  }
-
-  /** Update policy plus the discovered manifest set — everything the fingerprint covers without disk reads. */
-  private updatePolicyKey(
-    packageFiles: readonly string[],
-    target: NcuUpdateTarget,
-    includePreReleases: boolean,
-    minimumReleaseAgeDays: number,
-  ): string {
-    const files = [...packageFiles].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-    return JSON.stringify({ files, target, includePreReleases, minimumReleaseAgeDays });
   }
 
   private get workspaceRoot(): string | undefined {
@@ -1504,181 +1533,88 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
   }
 
+  private async resolveWorkspaceCapabilities(
+    packageFilePaths: readonly string[],
+    readablePackageFilePaths: readonly string[],
+    entries: readonly { readonly packageFilePath: string }[],
+  ): Promise<WorkspaceCapabilities> {
+    const hasPackageFiles = packageFilePaths.length > 0;
+    const hasReadablePackageFiles = readablePackageFilePaths.length > 0;
+    const hasDependencyEntries = entries.length > 0;
+    let hasAuditableProjects = false;
+
+    if (hasReadablePackageFiles) {
+      try {
+        const { projects } = await resolveAuditProjects(readablePackageFilePaths);
+        for (const project of projects) {
+          if (await this.isAuditableProject(project)) {
+            hasAuditableProjects = true;
+            break;
+          }
+        }
+      }
+      catch {
+        logger.warn('Failed to resolve auditable workspace projects.');
+      }
+    }
+
+    return {
+      hasPackageFiles,
+      hasReadablePackageFiles,
+      hasDependencyEntries,
+      hasAuditableProjects,
+      canRunInstall: hasReadablePackageFiles,
+      canRunAudit: hasAuditableProjects,
+      canSearchPackages: hasDependencyEntries,
+      canFilterPackages: hasDependencyEntries,
+      canPinAllVersions: hasDependencyEntries,
+    };
+  }
+
+  private async isAuditableProject(project: AuditProject): Promise<boolean> {
+    if (project.lockfilePath === undefined) {
+      return false;
+    }
+    if (project.packageManager !== 'yarn') {
+      return true;
+    }
+
+    // A Yarn lock file alone does not identify a supported audit command. Keep the
+    // Audit action disabled when the family resolver cannot establish Classic or Modern.
+    if (typeof resolveYarnFamily !== 'function') {
+      return false;
+    }
+    try {
+      const resolution = await resolveYarnFamily(project.projectRoot);
+      return resolution.family !== 'unknown';
+    }
+    catch {
+      return false;
+    }
+  }
+
   private async getKnownPackageFilePaths(): Promise<string[]> {
     const knownPackageFilePaths = [...new Set(this.allEntries.map(entry => entry.packageFilePath).filter(Boolean))];
     if (knownPackageFilePaths.length > 0) {
       return knownPackageFilePaths;
     }
 
-    return await getWorkspacePackageFilePaths();
+    const discoveredPackageFilePaths = await this.packageLoadingService.discoverPackageFilePaths();
+    const failedPackageReadPathSet = new Set(this.failedPackageReadPaths);
+    return discoveredPackageFilePaths.filter(
+      packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
+    );
   }
 
-  private async readPackagesForUpdateCheck(): Promise<Awaited<ReturnType<typeof readAllWorkspaceDependencies>>> {
-    const entries = await readAllWorkspaceDependencies();
+  private async readPackagesForUpdateCheck(): Promise<PackageFileEntries> {
+    const entries = await this.packageLoadingService.readPackageEntries();
     this.failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+    this.packageReadFailures = createPackageReadFailureSnapshot(
+      this.failedPackageReadPaths,
+      entries.skippedFiles,
+      false,
+    );
     return entries;
-  }
-
-  /** Legacy Map-only adapters retain the conservative single-manifest behavior. */
-  private applyLegacyProjectAuditResults(
-    project: AuditProject,
-    vulnerabilities: ReadonlyMap<string, AuditSeverity>,
-    auditResults: Map<string, AuditSeverity>,
-  ): void {
-    if (project.originManifests.length !== 1) {
-      return;
-    }
-
-    const [packageFilePath] = project.originManifests;
-    for (const [packageName, severity] of vulnerabilities) {
-      const matchingRows = this.allEntries.filter(entry => (
-        entry.packageFilePath === packageFilePath && entry.item.packageName === packageName
-      ));
-      if (matchingRows.length === 1) {
-        const [matchingRow] = matchingRows;
-        auditResults.set(this.auditEntryKey(packageName, packageFilePath, matchingRow.dev), severity);
-      }
-    }
-  }
-
-  /**
-   * Projects become row-scoped only when the advisory proves all of the following:
-   * direct attribution, one filesystem resolution path, one installed version, one
-   * owning manifest/section row, and a version/range relationship that can be checked
-   * without guessing. Anything else remains available in the project report only.
-   */
-  private async applyStructuredProjectAuditResults(
-    project: AuditProject,
-    advisories: readonly AuditAdvisory[],
-    auditResults: Map<string, AuditSeverity>,
-  ): Promise<void> {
-    for (const advisory of advisories) {
-      if (advisory.attribution !== 'direct'
-        || advisory.resolvedPaths.length !== 1
-        || advisory.resolvedVersions.length !== 1
-        || advisory.affectedRanges.length === 0) {
-        continue;
-      }
-
-      const resolvedPath = advisory.resolvedPaths[0];
-      const resolvedVersion = advisory.resolvedVersions[0];
-      const owningRows: PackageTreeEntry[] = [];
-      for (const entry of this.allEntries) {
-        if (entry.item.packageName === advisory.packageName
-          && await this.resolvedPathBelongsToManifest(
-            resolvedPath,
-            advisory.packageName,
-            entry.packageFilePath,
-            project,
-          )) {
-          owningRows.push(entry);
-        }
-      }
-      // Resolve ownership before checking versions. If the same manifest declares a
-      // package in both sections, the audit has no authoritative section evidence;
-      // choosing the row whose spec happens to match would create a false badge.
-      if (owningRows.length !== 1) {
-        continue;
-      }
-      const [match] = owningRows;
-      if (matchesManifestVersion(match.item.currentVersion, resolvedVersion)
-        && isVersionInAffectedRange(resolvedVersion, advisory.affectedRanges)) {
-        auditResults.set(
-          this.auditEntryKey(match.item.packageName, match.packageFilePath, match.dev),
-          advisory.severity,
-        );
-      }
-    }
-  }
-
-  private async resolvedPathBelongsToManifest(
-    resolvedPath: string,
-    packageName: string,
-    packageFilePath: string,
-    project: AuditProject,
-  ): Promise<boolean> {
-    if (project.originManifests.length !== 1
-      || resolvedPath.trim() === ''
-      || resolvedPath.startsWith('workspace:')) {
-      return false;
-    }
-    if (packageFilePath !== project.originManifests[0]
-      || inferPathAttribution(packageName, [resolvedPath]) !== 'direct') {
-      return false;
-    }
-    const normalizedPath = resolvedPath.replace(/\\/g, '/');
-    const dependencySuffix = `/node_modules/${packageName.replace(/\\/g, '/')}`;
-
-    // A manager may report `node_modules/pkg` relative to the project root, or an
-    // absolute path. A single-origin project is required before this evidence can
-    // identify one manifest row; merged projects remain report-only.
-    if (normalizedPath !== packageName && normalizedPath !== `node_modules/${packageName}`
-      && !normalizedPath.endsWith(dependencySuffix)) {
-      return false;
-    }
-    const absoluteResolvedPath = path.isAbsolute(resolvedPath)
-      ? path.normalize(resolvedPath)
-      : path.resolve(project.projectRoot, resolvedPath);
-    try {
-      const [canonicalProjectRoot, canonicalManifest, canonicalResolvedPath] = await Promise.all([
-        realpath(project.projectRoot),
-        realpath(packageFilePath),
-        realpath(absoluteResolvedPath),
-      ]);
-      return isWithinPath(canonicalManifest, canonicalProjectRoot)
-        && isWithinPath(canonicalResolvedPath, canonicalProjectRoot);
-    }
-    catch {
-      // Missing paths, broken symlinks, and other realpath failures do not constitute
-      // ownership evidence. Keep the advisory in the project report only.
-      return false;
-    }
-  }
-
-  private isAuditResult(value: unknown): value is AuditResult {
-    if (typeof value !== 'object' || value === null) {
-      return false;
-    }
-    const candidate = value as {
-      vulnerabilities?: unknown;
-      advisories?: unknown;
-      manager?: unknown;
-      schema?: unknown;
-    };
-    return candidate.vulnerabilities instanceof Map
-      && Array.isArray(candidate.advisories)
-      && isAuditPackageManager(candidate.manager)
-      && isAuditSchemaId(candidate.schema);
-  }
-
-  private cloneAuditProjectSummary(summary: AuditProjectSummary): AuditProjectSummary {
-    return {
-      ...summary,
-      project: {
-        ...summary.project,
-        originManifests: [...summary.project.originManifests],
-      },
-      vulnerabilities: new Map(summary.vulnerabilities),
-      advisories: summary.advisories.map(advisory => cloneAdvisorySnapshot(advisory)),
-      failure: summary.failure === undefined ? undefined : { ...summary.failure },
-    };
-  }
-
-  private cloneAuditProjectFailure(failure: AuditProjectFailure): AuditProjectFailure {
-    return {
-      ...failure,
-      project: failure.project === undefined
-        ? undefined
-        : {
-            ...failure.project,
-            originManifests: [...failure.project.originManifests],
-          },
-      packageFilePaths: [...failure.packageFilePaths],
-    };
-  }
-
-  private entryKey(packageName: string, packageFilePath: string): string {
-    return `${packageFilePath}\0${packageName}`;
   }
 
   private auditEntryKey(packageName: string, packageFilePath: string, dev: boolean): string {
@@ -1749,19 +1685,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
     const details = [
-      new PackageDetailItem(item.dev ? 'Dev dependency' : 'Dependency', item.dev ? 'tools' : 'package'),
-      new PackageDetailItem(`Current: ${sanitizePackageText(item.currentVersion)}`, 'tag'),
+      new PackageDetailItem(item.dev ? vscode.l10n.t('Dev dependency') : vscode.l10n.t('Dependency'), item.dev ? 'tools' : 'package'),
+      new PackageDetailItem(vscode.l10n.t('Current: {0}', sanitizePackageText(item.currentVersion)), 'tag'),
     ];
     if (item.latest !== undefined) {
-      details.push(new PackageDetailItem(`Update: ${sanitizePackageText(item.currentVersion)} → ${sanitizePackageText(item.latest)} (${item.updateType})`, 'arrow-up'));
+      details.push(new PackageDetailItem(vscode.l10n.t(
+        'Update: {0} → {1} ({2})',
+        sanitizePackageText(item.currentVersion),
+        sanitizePackageText(item.latest),
+        formatUpdateTypeLabel(item.updateType),
+      ), 'arrow-up'));
     }
     if (item.vulnerabilitySeverity !== undefined) {
-      details.push(new PackageDetailItem(`Vulnerability: ${item.vulnerabilitySeverity}`, 'warning'));
+      details.push(new PackageDetailItem(vscode.l10n.t(
+        'Vulnerability: {0}',
+        formatAuditSeverityLabel(item.vulnerabilitySeverity),
+      ), 'warning'));
     }
     if (this.workspaceRoot !== undefined) {
       const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
       if (relativeFile !== undefined) {
-        details.push(new PackageDetailItem(`File: ${sanitizePackageText(relativeFile)}`, 'file'));
+        details.push(new PackageDetailItem(vscode.l10n.t('File: {0}', sanitizePackageText(relativeFile)), 'file'));
       }
     }
     return details;
@@ -1770,34 +1714,73 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private buildStatusItems(): StatusItem[] {
     const items: StatusItem[] = [];
 
-    if (this.failedPackageReadPaths.length > 0) {
+    const failedPackageReadCount = uniqueStrings(
+      this.packageReadFailures.flatMap(failure => failure.packageFilePaths),
+    ).length;
+    const packageLoadOperationFailed = this.packageReadFailures.some(
+      failure => failure.packageFilePaths.length === 0,
+    );
+    if (failedPackageReadCount > 0) {
       items.push(new StatusItem(
-        'Package read incomplete',
-        `Fix invalid or unreadable package.json: ${this.failedPackageReadPaths.join(', ')}`,
+        vscode.l10n.t('Package read incomplete'),
+        formatFailedPackageFileCount(failedPackageReadCount),
         'warning',
         'charts.yellow',
+        true,
+      ));
+    }
+    if (packageLoadOperationFailed) {
+      items.push(new StatusItem(
+        vscode.l10n.t('Workspace package loading failed'),
+        '',
+        'warning',
+        'charts.yellow',
+        true,
+      ));
+    }
+    // A readable package.json with zero dependencies is a real project, not an empty
+    // workspace — without this row the panel would show nothing at all in that state.
+    else if (
+      failedPackageReadCount === 0
+      && this.workspaceCapabilities.hasPackageFiles
+      && !this.workspaceCapabilities.hasDependencyEntries
+      && !this.packageReadFailed
+    ) {
+      items.push(new StatusItem(
+        vscode.l10n.t('No dependencies to manage'),
+        vscode.l10n.t('This package.json has no dependencies yet.'),
+        'info',
       ));
     }
 
     if (this.checkState === 'running') {
-      items.push(new StatusItem('Checking updates…', '', 'loading~spin'));
+      items.push(new StatusItem(vscode.l10n.t('Checking updates…'), '', 'loading~spin'));
     }
     else if (this.checkState === 'done' && this.lastCheckTime !== undefined) {
       items.push(new StatusItem(
-        'Last update check',
+        vscode.l10n.t('Last update check'),
         this.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         'clock',
       ));
     }
+    else if (this.checkState === 'incomplete') {
+      items.push(new StatusItem(
+        vscode.l10n.t('Update check incomplete'),
+        formatFailedPackageRootCount(uniqueStrings(this.failedUpdatePaths).length),
+        'warning',
+        'charts.yellow',
+        true,
+      ));
+    }
 
     if (this.auditState === 'running') {
-      items.push(new StatusItem('Running audit…', '', 'loading~spin'));
+      items.push(new StatusItem(vscode.l10n.t('Running audit…'), '', 'loading~spin'));
     }
     else if (this.auditState === 'done') {
       const count = this.lastAuditCount ?? 0;
       items.push(new StatusItem(
-        'Audit complete',
-        count === 0 ? 'No vulnerabilities' : `${count} vulnerable package(s)`,
+        vscode.l10n.t('Audit complete'),
+        count === 0 ? vscode.l10n.t('No vulnerabilities') : formatVulnerablePackageCount(count),
         count === 0 ? 'shield-check' : 'warning',
         count === 0 ? 'charts.green' : 'charts.red',
       ));
@@ -1805,14 +1788,23 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     else if (this.auditState === 'incomplete') {
       const count = this.lastAuditCount ?? 0;
       const resultDescription = this.lastAuditSuccessfulRootCount === 0
-        ? 'No successful audit results'
-        : `${count} vulnerable package(s) from successful audit roots`;
+        ? vscode.l10n.t('No successful audit results')
+        : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
       items.push(new StatusItem(
-        'Audit incomplete',
-        `${resultDescription}; `
-        + `failed: ${this.failedAuditPaths.join(', ')}`,
+        vscode.l10n.t('Audit incomplete'),
+        vscode.l10n.t('{0}; {1}', resultDescription, formatFailedPackageRootCount(uniqueStrings(this.failedAuditPaths).length)),
         'warning',
         'charts.yellow',
+        true,
+      ));
+    }
+    else if (this.auditState === 'failed') {
+      items.push(new StatusItem(
+        vscode.l10n.t('Audit failed'),
+        vscode.l10n.t('No audit results available'),
+        'warning',
+        'charts.yellow',
+        true,
       ));
     }
 
@@ -1838,18 +1830,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 }
 
-function isAuditPackageManager(value: unknown): value is AuditPackageManager {
-  return value === 'npm' || value === 'pnpm' || value === 'yarn' || value === 'bun';
-}
-
-function isAuditSchemaId(value: unknown): value is AuditSchemaId {
-  return value === 'npm-v2-vulnerabilities'
-    || value === 'npm-v1-advisories'
-    || value === 'bun-bulk-advisory'
-    || value === 'yarn-classic-audit'
-    || value === 'yarn-modern-npm-audit';
-}
-
 function sameCanonicalPackageLocation(
   left: CanonicalPackageLocation,
   right: CanonicalPackageLocation,
@@ -1861,155 +1841,77 @@ function sameCanonicalPackageLocation(
     && samePackageFileStamp(left.fileStamp, right.fileStamp);
 }
 
-function freezePackageLocation(location: CanonicalPackageLocation): CanonicalPackageLocation {
-  return Object.freeze({
-    ...location,
-    fileStamp: Object.freeze({ ...location.fileStamp }),
-  });
-}
-
-function countProjectVulnerablePackages(projects: readonly AuditProjectSummary[]): number {
-  const packageNames = new Set<string>();
-  for (const project of projects) {
-    for (const packageName of project.vulnerabilities.keys()) {
-      packageNames.add(packageName);
-    }
-  }
-  return packageNames.size;
-}
-
-function describeAuditFailure(error: unknown): { reason: string; detail: string } {
-  if (typeof error === 'object' && error !== null) {
-    const candidate = error as {
-      outcome?: { reason?: unknown; detail?: unknown };
-      message?: unknown;
-    };
-    if (typeof candidate.outcome?.reason === 'string') {
-      return {
-        reason: candidate.outcome.reason,
-        detail: typeof candidate.outcome.detail === 'string'
-          ? candidate.outcome.detail
-          : 'Audit did not produce a complete result.',
-      };
-    }
-    if (typeof candidate.message === 'string') {
-      return { reason: 'audit-failed', detail: candidate.message };
-    }
-  }
-  return { reason: 'audit-failed', detail: String(error) };
-}
-
-function isWithinPath(candidate: string, root: string): boolean {
-  const relative = path.relative(path.normalize(root), path.normalize(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
-interface ParsedVersion {
-  major: number;
-  minor: number;
-  patch: number;
-}
-
-function matchesManifestVersion(spec: string, resolvedVersion: string): boolean {
-  const resolved = parseVersion(resolvedVersion);
-  if (resolved === undefined) {
-    return false;
-  }
-  const normalizedSpec = spec.trim();
-  const exact = parseVersion(normalizedSpec.replace(/^=/, ''));
-  if (exact !== undefined) {
-    return compareVersions(resolved, exact) === 0;
-  }
-  const operator = normalizedSpec[0];
-  if (operator !== '^' && operator !== '~') {
-    return false;
-  }
-  const base = parseVersion(normalizedSpec.slice(1));
-  if (base === undefined || compareVersions(resolved, base) < 0) {
-    return false;
-  }
-  if (operator === '~') {
-    return resolved.major === base.major && resolved.minor === base.minor;
-  }
-  if (base.major > 0) {
-    return resolved.major === base.major;
-  }
-  if (base.minor > 0) {
-    return resolved.major === 0 && resolved.minor === base.minor;
-  }
-  return resolved.major === 0 && resolved.minor === 0 && resolved.patch === base.patch;
-}
-
-function isVersionInAffectedRange(version: string, ranges: readonly string[]): boolean {
-  const parsedVersion = parseVersion(version);
-  if (parsedVersion === undefined) {
-    return false;
-  }
-  return ranges.some((range) => {
-    const normalizedRange = range.trim();
-    if (normalizedRange === '*' || normalizedRange === '') {
-      return normalizedRange === '*';
-    }
-    if (normalizedRange.includes('||')) {
-      return false;
-    }
-    const tokens = normalizedRange.split(/\s+/).filter(Boolean);
-    return tokens.length > 0 && tokens.every(token => matchesComparator(parsedVersion, token));
-  });
-}
-
-function matchesComparator(version: ParsedVersion, token: string): boolean {
-  const match = /^(<=|>=|<|>|=)?(\d+\.\d+\.\d+)$/.exec(token);
-  if (match === null) {
-    return false;
-  }
-  const expected = parseVersion(match[2]);
-  if (expected === undefined) {
-    return false;
-  }
-  const comparison = compareVersions(version, expected);
-  switch (match[1] ?? '=') {
-    case '<':
-      return comparison < 0;
-    case '<=':
-      return comparison <= 0;
-    case '>':
-      return comparison > 0;
-    case '>=':
-      return comparison >= 0;
-    default:
-      return comparison === 0;
-  }
-}
-
-function parseVersion(value: string): ParsedVersion | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
-  if (match === null) {
-    return undefined;
-  }
+function cloneStatusReportFailure(failure: StatusReportFailure): StatusReportFailure {
   return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
+    packageFilePaths: [...failure.packageFilePaths],
+    reason: failure.reason,
+    detail: failure.detail,
   };
 }
 
-function compareVersions(left: ParsedVersion, right: ParsedVersion): number {
-  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
+function createPackageReadFailureSnapshot(
+  paths: readonly string[],
+  details: readonly { readonly packageFilePath: string; readonly error: string }[] | undefined,
+  discoveryFailed: boolean,
+): StatusReportFailure[] {
+  const detailByPath = new Map<string, string[]>();
+  for (const failure of details ?? []) {
+    const current = detailByPath.get(failure.packageFilePath) ?? [];
+    current.push(failure.error);
+    detailByPath.set(failure.packageFilePath, current);
+  }
+  for (const packageFilePath of paths) {
+    if (!detailByPath.has(packageFilePath)) {
+      detailByPath.set(packageFilePath, []);
+    }
+  }
+  if (discoveryFailed && !detailByPath.has('')) {
+    detailByPath.set('', ['Failed to discover workspace package files.']);
+  }
+  return [...detailByPath.entries()].map(([packageFilePath, errors]) => ({
+    packageFilePaths: packageFilePath === '' ? [] : [packageFilePath],
+    reason: packageFilePath === '' ? 'package-discovery-failed' : 'package-read-failed',
+    detail: errors.length === 0 ? undefined : errors.join('; '),
+  }));
 }
 
-function cloneAdvisorySnapshot(advisory: AuditAdvisory): AuditAdvisory {
-  return {
-    ...advisory,
-    sources: [...advisory.sources],
-    titles: [...advisory.titles],
-    urls: [...advisory.urls],
-    affectedRanges: [...advisory.affectedRanges],
-    resolvedPaths: [...advisory.resolvedPaths],
-    resolvedVersions: [...advisory.resolvedVersions],
-    via: advisory.via.map(via => ({ ...via })),
-    fixAvailable: typeof advisory.fixAvailable === 'object' && advisory.fixAvailable !== null
-      ? { ...advisory.fixAvailable }
-      : advisory.fixAvailable,
-  };
+function createUpdateFailureSnapshot(
+  paths: readonly string[],
+  failures: readonly { readonly packageFilePath: string; readonly error: unknown }[],
+): StatusReportFailure[] {
+  const byPath = new Map<string, StatusReportFailure>();
+  for (const failure of failures) {
+    byPath.set(failure.packageFilePath, {
+      packageFilePaths: [failure.packageFilePath],
+      reason: 'update-check-failed',
+      detail: formatFailureDetail(failure.error),
+    });
+  }
+  for (const packageFilePath of uniqueStrings(paths)) {
+    if (!byPath.has(packageFilePath)) {
+      byPath.set(packageFilePath, {
+        packageFilePaths: [packageFilePath],
+        reason: 'update-check-failed',
+      });
+    }
+  }
+  return [...byPath.values()];
+}
+
+function formatFailureDetail(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
+  if (typeof operation !== 'boolean') {
+    return operation;
+  }
+  return operation ? { kind: 'update', target: defaultTarget } : undefined;
 }

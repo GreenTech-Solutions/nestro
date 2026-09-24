@@ -24,7 +24,7 @@ function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependenc
     currentVersion: section === 'dependencies' ? '^1.0.0' : '~1.1.0',
     latest: undefined,
     updateType: 'none' as const,
-    installing: false,
+    operation: undefined,
     vulnerabilitySeverity: undefined,
     packageFilePath,
     dev: section === 'devDependencies',

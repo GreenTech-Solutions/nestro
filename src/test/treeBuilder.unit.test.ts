@@ -1,41 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTree,
-  FilterBarItem,
   findOwningWorkspaceFolder,
+  formatViewDescription,
   getFilterCounts,
+  getFilteredEntries,
   GroupItem,
   MessageItem,
   PackageItem,
   PackageTreeEntry,
+  projectPackageTree,
   resolvePackageFileLabels,
   resolvePackageOwnerLabel,
   resolveWorkspaceFolderDisplayNames,
-  SearchQueryItem,
   toRelativeLabel,
   toWorkspaceFolderDescriptors,
   WorkspaceFolderDescriptor,
   WorkspaceFolderItem,
 } from '../providers';
 import * as vscode from 'vscode';
+import type { PackageOperation } from '../providers';
+import type { AuditSeverity } from '../utils';
 
 describe('buildTree', () => {
   it('returns no tree items when there are no packages', () => {
     expect(buildTree([], 'all', '')).toEqual([]);
   });
 
-  it('builds a filter row and dependency groups', () => {
+  it('builds dependency groups with no action-like rows mixed in', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'all', '');
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
-    const groups = tree.slice(2).filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
+    const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(groups.map(group => group.label)).toEqual(['Dependencies', 'Dev Dependencies']);
-    expect(groups[0].description).toBe('1 packages · 1 outdated');
-    expect(groups[1].description).toBe('1 packages');
+    expect(groups[0].description).toBe('1 package · 1 outdated');
+    expect(groups[1].description).toBe('1 package');
     expect(groups[0].iconPath).toBeInstanceOf(vscode.ThemeIcon);
     expect(groups[1].iconPath).toBeInstanceOf(vscode.ThemeIcon);
     expect((groups[0].iconPath as vscode.ThemeIcon).id).toBe('package');
@@ -48,10 +50,9 @@ describe('buildTree', () => {
       makeEntry('eslint', '8.0.0', undefined, 'none', true),
     ], 'breaking', '');
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
-    expect(tree[2]).toBeInstanceOf(MessageItem);
-    expect(tree[2].label).toBe('No packages match the current filter.');
+    expect(tree[0]).toBeInstanceOf(MessageItem);
+    expect(tree[0].label).toBe('No packages match the current filter.');
+    expect(tree).toHaveLength(1);
   });
 
   it('filters packages by update type', () => {
@@ -86,8 +87,8 @@ describe('buildTree', () => {
       makeEntry('react', '18.0.0', undefined, 'none', false, '/workspace/package.json'),
     ], 'all', '', [makeFolder('/workspace', 'workspace', 0)]);
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
-    expect(tree[1]).toBeInstanceOf(FilterBarItem);
+    expect(tree).toHaveLength(1);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
     expect(tree.some(item => item instanceof WorkspaceFolderItem)).toBe(false);
   });
 
@@ -97,7 +98,7 @@ describe('buildTree', () => {
       makeEntry('ui-lib', '1.0.0', undefined, 'none', false, '/workspace/packages/ui/package.json'),
     ], 'all', '', [makeFolder('/workspace', 'workspace', 0)]);
 
-    expect(tree[0]).toBeInstanceOf(SearchQueryItem);
+    expect(tree.every(item => item instanceof WorkspaceFolderItem)).toBe(true);
     const folders = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
     expect(folders.map(folder => folder.label)).toEqual(['workspace — apps/frontend', 'workspace — packages/ui']);
     expect(folders[0].children[0].children.map(child => child.label)).toEqual(['react']);
@@ -205,15 +206,87 @@ describe('buildTree', () => {
     expect(groups[0].children.map(child => child.label)).toEqual(['react', 'react-dom']);
   });
 
-  it('shows the current search query in a dedicated item', () => {
+  it('keeps only real groups in the tree when a search query is active', () => {
     const tree = buildTree([
       makeEntry('react', '18.0.0', '19.0.0', 'breaking', false),
     ], 'all', 'react');
 
-    expect(tree[0]).toEqual(expect.objectContaining({
-      label: 'Search query',
-      description: 'react',
-    }));
+    expect(tree).toHaveLength(1);
+    expect(tree.every(item => item instanceof GroupItem)).toBe(true);
+  });
+
+  it('keeps busy rows in All while excluding them from update rows and group outdated counts', () => {
+    const entries = [
+      makeEntry(
+        'react-busy',
+        '18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        '/workspace/package.json',
+        { kind: 'remove' },
+      ),
+      makeEntry('react-ready', '1.0.0', '1.1.0', 'minor', false),
+    ];
+
+    const allTree = buildTree(entries, 'all', 'react');
+    const allGroups = allTree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(getFilterCounts(entries, 'react')).toEqual({
+      all: 2,
+      hasUpdates: 1,
+      patch: 0,
+      minor: 1,
+      breaking: 0,
+    });
+    expect(allGroups[0].description).toBe('2 packages · 1 outdated');
+    expect(allGroups[0].children.map(child => child.label)).toEqual(['react-busy', 'react-ready']);
+
+    const updateTree = buildTree(entries, 'hasUpdates', 'react');
+    const updateGroups = updateTree.filter((item): item is GroupItem => item instanceof GroupItem);
+    expect(updateGroups[0].description).toBe('1 package · 1 outdated');
+    expect(updateGroups[0].children.map(child => child.label)).toEqual(['react-ready']);
+  });
+
+  it('keeps workspace label qualifiers stable when search hides package files', () => {
+    const folders = [makeFolder('/workspace', 'workspace', 0)];
+    const tree = buildTree([
+      makeEntry('other', '1.0.0', undefined, 'none', false, '/workspace/0-é-empty/package.json'),
+      makeEntry('alpha', '1.0.0', undefined, 'none', false, '/workspace/α/package.json'),
+      makeEntry('beta', '1.0.0', undefined, 'none', false, '/workspace/β/package.json'),
+    ], 'all', 'beta', folders);
+
+    const workspaceItems = tree.filter((item): item is WorkspaceFolderItem => item instanceof WorkspaceFolderItem);
+    expect(workspaceItems.map(item => item.label)).toEqual(['workspace — β [unicode #3]']);
+  });
+});
+
+describe('formatViewDescription', () => {
+  const counts = { all: 5, hasUpdates: 2, patch: 1, minor: 1, breaking: 0 };
+
+  it('returns undefined when the filter is all and the search is empty', () => {
+    expect(formatViewDescription('all', '', counts)).toBeUndefined();
+  });
+
+  it('shows the filter label with its count when only a filter is active', () => {
+    expect(formatViewDescription('patch', '', counts)).toBe('Patch (1)');
+  });
+
+  it('shows the quoted search query when only a search is active', () => {
+    expect(formatViewDescription('all', 'react', counts)).toBe('"react"');
+  });
+
+  it('combines the filter and the search when both are active', () => {
+    expect(formatViewDescription('minor', 'react', counts)).toBe('Minor (1) · "react"');
+  });
+
+  it('truncates a long search query so the description stays terse', () => {
+    const longSearch = 'a'.repeat(40);
+    expect(formatViewDescription('all', longSearch, counts)).toBe(`"${'a'.repeat(24)}…"`);
+  });
+
+  it('truncates by code point so a surrogate pair is never split', () => {
+    const emojiSearch = `a${'😀'.repeat(30)}`;
+    expect(formatViewDescription('all', emojiSearch, counts)).toBe(`"a${'😀'.repeat(23)}…"`);
   });
 });
 
@@ -617,6 +690,21 @@ describe('resolvePackageOwnerLabel', () => {
     expect(new Set(rows.map(row => row.owner.label)).size).toBe(2);
   });
 
+  it('localizes only the semantic root, not a nested folder named like the root sentinel', () => {
+    const rows = resolvePackageFileLabels([
+      '/workspace/package.json',
+      '/workspace/(root)/package.json',
+    ], [makeFolder('/workspace', 'workspace', 0)], {
+      rootLabel: '(localized root)',
+      formatUnicodeDiscriminator: (base, ordinal) => `${base} [localized unicode #${ordinal}]`,
+    });
+
+    expect(rows.map(row => row.owner.label)).toEqual([
+      'workspace — (localized root)',
+      'workspace — (root)',
+    ]);
+  });
+
   it('sorts the actual root before a nested folder named like the root sentinel', () => {
     const rows = resolvePackageFileLabels([
       '/workspace/(root)/package.json',
@@ -690,7 +778,7 @@ describe('path normalization', () => {
 describe('getFilterCounts', () => {
   it('excludes installing packages from update-related counters but keeps them in all', () => {
     expect(getFilterCounts([
-      makeEntry('patch-installing', '1.0.0', '1.0.1', 'patch', false, '/workspace/package.json', true),
+      makeEntry('patch-installing', '1.0.0', '1.0.1', 'patch', false, '/workspace/package.json', { kind: 'update', target: '1.0.1' }),
       makeEntry('minor-ready', '1.0.0', '1.1.0', 'minor', false),
       makeEntry('breaking-ready', '1.0.0', '2.0.0', 'breaking', false),
       makeEntry('current', '1.0.0', undefined, 'none', false),
@@ -704,6 +792,92 @@ describe('getFilterCounts', () => {
   });
 });
 
+describe('projectPackageTree', () => {
+  it('uses one search-scoped projection for rows, counters, groups, and update capability', () => {
+    const entries = [
+      makeEntry(
+        'react-busy',
+        '18.0.0',
+        '19.0.0',
+        'breaking',
+        false,
+        '/workspace/package.json',
+        { kind: 'update', target: '19.0.0' },
+      ),
+      makeEntry('react-ready', '1.0.0', '1.1.0', 'minor', false),
+      makeEntry('react-vulnerable', '2.0.0', '3.0.0', 'breaking', false, '/workspace/package.json', undefined, 'high'),
+      makeEntry('react-unknown', '1.0.0', undefined, 'patch', false),
+    ];
+
+    const all = projectPackageTree(entries, 'all', 'React');
+
+    expect(all.searchMatchedEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-busy',
+      'react-ready',
+      'react-vulnerable',
+      'react-unknown',
+    ]);
+    expect(all.visibleEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-busy',
+      'react-ready',
+      'react-vulnerable',
+      'react-unknown',
+    ]);
+    expect(all.filterCounts).toEqual({
+      all: 4,
+      hasUpdates: 2,
+      patch: 0,
+      minor: 1,
+      breaking: 1,
+    });
+    expect(all.groups.map(group => ({
+      dev: group.dev,
+      totalCount: group.totalCount,
+      outdatedCount: group.outdatedCount,
+      names: group.entries.map(entry => entry.item.packageName),
+    }))).toEqual([{
+      dev: false,
+      totalCount: 4,
+      outdatedCount: 2,
+      names: ['react-busy', 'react-ready', 'react-vulnerable', 'react-unknown'],
+    }]);
+    expect(all.visibleOutdatedEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-ready',
+      'react-vulnerable',
+    ]);
+    expect(all.canUpdateVisiblePackages).toBe(true);
+
+    const updates = projectPackageTree(entries, 'hasUpdates', 'react');
+    expect(updates.visibleEntries.map(entry => entry.item.packageName)).toEqual([
+      'react-vulnerable',
+      'react-ready',
+    ]);
+    expect(updates.groups[0]).toMatchObject({ totalCount: 2, outdatedCount: 2 });
+    expect(updates.canUpdateVisiblePackages).toBe(true);
+
+    const busyOnly = projectPackageTree(entries, 'hasUpdates', 'busy');
+    expect(busyOnly.visibleEntries).toEqual([]);
+    expect(busyOnly.groups).toEqual([]);
+    expect(busyOnly.canUpdateVisiblePackages).toBe(false);
+
+    const allBusy = projectPackageTree(entries, 'all', 'busy');
+    expect(allBusy.visibleEntries.map(entry => entry.item.packageName)).toEqual(['react-busy']);
+    expect(allBusy.groups[0]).toMatchObject({ totalCount: 1, outdatedCount: 0 });
+    expect(allBusy.visibleOutdatedEntries).toEqual([]);
+    expect(allBusy.canUpdateVisiblePackages).toBe(false);
+  });
+
+  it('keeps the filtered-entry helper on the same projection contract', () => {
+    const entries = [
+      makeEntry('busy', '1.0.0', '2.0.0', 'breaking', false, '/workspace/package.json', { kind: 'install' }),
+      makeEntry('ready', '1.0.0', '1.1.0', 'minor', false),
+    ];
+
+    expect(getFilteredEntries(entries, 'all', 'ready').map(entry => entry.item.packageName)).toEqual(['ready']);
+    expect(getFilteredEntries(entries, 'hasUpdates').map(entry => entry.item.packageName)).toEqual(['ready']);
+  });
+});
+
 function makeEntry(
   name: string,
   current: string,
@@ -711,10 +885,11 @@ function makeEntry(
   updateType: PackageTreeEntry['item']['updateType'],
   dev: boolean,
   packageFilePath = '/workspace/package.json',
-  installing = false,
+  operation: PackageOperation | undefined = undefined,
+  vulnerabilitySeverity: AuditSeverity | undefined = undefined,
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType, installing, undefined, packageFilePath),
+    item: new PackageItem(name, current, latest, updateType, operation, vulnerabilitySeverity, packageFilePath),
     dev,
     packageFilePath,
   };

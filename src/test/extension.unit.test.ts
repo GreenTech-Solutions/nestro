@@ -10,6 +10,7 @@ import {
   installUpdateCommand,
   openAuditReportCommand,
   openOnNpmCommand,
+  openStatusReportCommand,
   pickVersionCommand,
   pinAllVersionsCommand,
   pinVersionCommand,
@@ -26,6 +27,7 @@ vi.mock('../commands', () => ({
   copyPackageNameCommand: vi.fn(),
   installUpdateCommand: vi.fn(),
   openAuditReportCommand: vi.fn(),
+  openStatusReportCommand: vi.fn(),
   openOnNpmCommand: vi.fn(),
   pickVersionCommand: vi.fn(),
   pinAllVersionsCommand: vi.fn(),
@@ -54,6 +56,12 @@ vi.mock('../providers', () => ({
     this.checkUpdates = vi.fn().mockResolvedValue(undefined);
     this.runAudit = vi.fn().mockResolvedValue(undefined);
     this.getAuditReport = vi.fn(() => ({ projects: [], failures: [] }));
+    this.getStatusReport = vi.fn(() => ({
+      packageReadFailures: [],
+      updateFailures: [],
+      auditFailures: [],
+      fileLabels: [],
+    }));
     this.invalidateUpdateCache = vi.fn();
     this.setFilter = vi.fn();
     this.resetUpdateData = vi.fn();
@@ -191,6 +199,7 @@ describe('activate()', () => {
     handlers.get('nestro.openOnNpm')?.(item);
     handlers.get('nestro.copyPackageName')?.(item);
     handlers.get('nestro.openAuditReport')?.();
+    handlers.get('nestro.openStatusReport')?.();
 
     expect(installUpdateCommand).toHaveBeenCalledWith(item, expect.any(Object));
     expect(pickVersionCommand).toHaveBeenCalledWith(item, expect.any(Object));
@@ -203,6 +212,42 @@ describe('activate()', () => {
     expect(openOnNpmCommand).toHaveBeenCalledWith(item);
     expect(copyPackageNameCommand).toHaveBeenCalledWith(item);
     expect(openAuditReportCommand).toHaveBeenCalledWith(expect.any(Object), expect.any(Object));
+    expect(openStatusReportCommand).toHaveBeenCalledWith(expect.any(Object), expect.any(Object));
+  });
+
+  it('applies every valid filter through nestro.setFilter', () => {
+    activate(makeContext());
+    const handlers = new Map(vi.mocked(vscode.commands.registerCommand).mock.calls.map(
+      ([id, handler]) => [id, handler] as const,
+    ));
+    const provider = vi.mocked(PackagesProvider).mock.instances[0] as unknown as PackagesProvider;
+
+    for (const filterType of ['all', 'hasUpdates', 'patch', 'minor', 'breaking']) {
+      handlers.get('nestro.setFilter')?.(filterType);
+    }
+
+    expect(vi.mocked(provider.setFilter).mock.calls.map(([type]) => type))
+      .toEqual(['all', 'hasUpdates', 'patch', 'minor', 'breaking']);
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['an empty string', ''],
+    ['an arbitrary string', 'not-a-filter'],
+    ['a number', 42],
+    ['a plain object', {}],
+    ['an array', []],
+    ['true', true],
+  ])('rejects %s from nestro.setFilter without touching the active filter', (_label, value) => {
+    activate(makeContext());
+    const handlers = new Map(vi.mocked(vscode.commands.registerCommand).mock.calls.map(
+      ([id, handler]) => [id, handler] as const,
+    ));
+    const provider = vi.mocked(PackagesProvider).mock.instances[0] as unknown as PackagesProvider;
+
+    expect(() => handlers.get('nestro.setFilter')?.(value)).not.toThrow();
+    expect(provider.setFilter).not.toHaveBeenCalled();
   });
 
   it.each([

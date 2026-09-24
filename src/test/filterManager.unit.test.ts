@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { createFilterQuickPickItems, FilterManager, getFilterLabel } from '../providers';
+import { createFilterQuickPickItems, FILTER_TYPES, FilterManager, getFilterLabel, isFilterType } from '../providers';
 
 describe('FilterManager', () => {
   beforeEach(() => {
@@ -131,5 +131,19 @@ describe('FilterManager', () => {
       'Minor',
       'Breaking',
     ]);
+  });
+
+  it('accepts every declared filter type', () => {
+    for (const value of FILTER_TYPES) {
+      expect(isFilterType(value)).toBe(true);
+    }
+  });
+
+  it('rejects runtime values that are not a declared filter type', () => {
+    const invalidValues: readonly unknown[] = [undefined, null, '', 'not-a-filter', 0, 42, {}, [], true];
+
+    for (const value of invalidValues) {
+      expect(isFilterType(value)).toBe(false);
+    }
   });
 });

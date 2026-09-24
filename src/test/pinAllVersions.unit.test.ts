@@ -31,7 +31,25 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 3 package version(s).');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 3 package versions.');
+  });
+
+  it('marks rows in every discovered manifest while pinning', async () => {
+    const packageFilePath = '/workspace/package.json';
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([{ fsPath: packageFilePath }] as vscode.Uri[]);
+    vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce({ count: 1, skippedFiles: [] });
+    const provider = makeProvider();
+    const identity = {
+      packageName: 'react',
+      packageFilePath,
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+
+    await pinAllVersionsCommand(provider);
+
+    expect(provider.markPackageUpdating).toHaveBeenNthCalledWith(1, identity, { kind: 'pin' });
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
   });
 
   it('shows a no-op message without reloading when everything is already pinned', async () => {
@@ -55,7 +73,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'Pinned 2 package version(s). Skipped unreadable manifest(s): apps/broken/package.json.',
+      'Pinned 2 package versions. Skipped unreadable manifest: apps/broken/package.json.',
     );
   });
 
@@ -70,7 +88,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).not.toHaveBeenCalled();
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'All other versions are already pinned. Skipped unreadable manifest(s): apps/broken/package.json.',
+      'All other versions are already pinned. Skipped unreadable manifest: apps/broken/package.json.',
     );
   });
 
@@ -127,7 +145,7 @@ describe('pinAllVersionsCommand()', () => {
     // resolveMutationCoordinatorKey() derived from the two discovered manifests.
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package version(s).');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package versions.');
   });
 });
 
@@ -135,6 +153,8 @@ function makeProvider(): PackagesProvider {
   return {
     loadPackages: vi.fn(),
     invalidateUpdateCache: vi.fn(),
+    getPackageIdentitiesForFile: vi.fn(() => []),
+    markPackageUpdating: vi.fn(),
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
   } as unknown as PackagesProvider;
 }
