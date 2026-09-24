@@ -1,9 +1,12 @@
 export { recordedExtensionHosts, recordExtensionHost } from './hostMarker';
 export { fixtureTempRoot, materializeFixture, removeMaterializedFixture, resolveFixturePath } from './materialize';
-export { createPinnedManagerDir, probeNativeTool, removePinnedManagerDir } from './nativeTool';
-export type { PinnedManagerDir } from './nativeTool';
+export { createPinnedManagerDir, detectCorepackManagedYarn, probeNativeTool, removePinnedManagerDir } from './nativeTool';
+export type { CorepackYarnDetection, PinnedManagerDir } from './nativeTool';
+export { canonicalizeForComparison } from './pathComparison';
+export { removeFixturePath } from './removeFixturePath';
 export { buildExitWithCodeCommand, buildSleepCommand, createScriptFixture, removeScriptFixture } from './scriptFixtures';
 export type { ScriptFixture } from './scriptFixtures';
+export { assertTaskExitCode } from './taskExitCode';
 export { awaitTaskOutcome, awaitTaskProcessStart, createNoProcessTask } from './taskObserver';
 export type { WorkspaceFixture } from './types';
 export { archiveEntry, buildCleanVsixFixture, buildZipFixture, CLEAN_EXTENSION_IDENTITY, CLEAN_PACKAGE_MANIFEST, CLEAN_PACKAGE_NLS, CLEAN_TRACKED_SOURCE_PATHS, cleanVsixArchiveEntries, cleanVsixFixtureEntries, findZipFixtureEntryOffsets, SYMLINK_FILE_MODE, toBytes } from './vsixFixtures';

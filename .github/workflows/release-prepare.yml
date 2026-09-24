@@ -112,7 +112,7 @@ jobs:
         id: prepare
         env:
           RELEASE_CONFIG: .releaserc.json
-        run: pnpm run release:prepare -- --out-dir dist/release
+        run: pnpm run release:prepare --out-dir dist/release
       - name: Create the version pull request
         if: ${{ steps.existing.outputs.is-existing == 'false' && steps.prepare.outputs.release-needed == 'true' }}
         shell: bash

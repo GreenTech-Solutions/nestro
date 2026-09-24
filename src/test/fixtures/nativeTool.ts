@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { removeFixturePath } from './removeFixturePath';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,5 +61,33 @@ export async function createPinnedManagerDir(packageManager: string): Promise<Pi
 
 /** Deletes the temporary directory created by {@link createPinnedManagerDir}. */
 export async function removePinnedManagerDir(pinned: PinnedManagerDir): Promise<void> {
-  await rm(pinned.dir, { recursive: true, force: true });
+  await removeFixturePath(pinned.dir);
+}
+
+export interface CorepackYarnDetection {
+  readonly managed: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Tells a Corepack `yarn` shim from a plain PATH install: a shim resolves each pinned
+ * directory's exact release, while a plain install reports one version in both and so
+ * ignores `packageManager`.
+ */
+export async function detectCorepackManagedYarn(
+  classicDir: PinnedManagerDir,
+  modernDir: PinnedManagerDir,
+): Promise<CorepackYarnDetection> {
+  const [classic, modern] = await Promise.all([
+    probeNativeTool('yarn', ['--version'], classicDir.dir),
+    probeNativeTool('yarn', ['--version'], modernDir.dir),
+  ]);
+
+  if (!classic.available || !modern.available) {
+    return { managed: false, reason: classic.reason ?? modern.reason };
+  }
+  if (classic.output === modern.output) {
+    return { managed: false, reason: `both pinned directories report the same version (${classic.output})` };
+  }
+  return { managed: true };
 }

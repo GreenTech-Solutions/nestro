@@ -16,8 +16,8 @@ export async function run(): Promise<void> {
   assert.ok(isolatedExtensionsDir, 'NESTRO_PACKAGED_EXTENSIONS_DIR is required');
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, `Installed extension ${EXTENSION_ID} must be registered`);
-  const canonicalRoot = realpathSync(isolatedExtensionsDir);
-  const canonicalExtensionPath = realpathSync(extension.extensionPath);
+  const canonicalRoot = realpathSync.native(isolatedExtensionsDir);
+  const canonicalExtensionPath = realpathSync.native(extension.extensionPath);
   assert.ok(
     isStrictlyInside(canonicalRoot, canonicalExtensionPath),
     `Packaged extension path ${canonicalExtensionPath} must be inside isolated install root ${canonicalRoot}`,

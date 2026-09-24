@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import {
@@ -19,6 +19,7 @@ import {
   runTests,
   runVSCodeCommand,
 } from '@vscode/test-electron';
+import { removeFixturePath } from './fixtures/removeFixturePath';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
@@ -145,8 +146,11 @@ export async function verifyDownloadedEvidence(artifactDir: string, expectedSha:
   if (evidence.sourceSha !== expectedSha || evidence.releaseEligible !== false || evidence.vsixFile !== vsixFile) {
     throw new Error('downloaded evidence identity does not match the exact tested SHA or evidence-only contract');
   }
-  if (evidence.eventName !== 'push' || evidence.pullRequestHeadSha !== null) {
-    throw new Error('downloaded evidence must be a release-ineligible push identity');
+  const hasConsistentEventIdentity = evidence.eventName === 'push'
+    ? evidence.pullRequestHeadSha === null
+    : evidence.pullRequestHeadSha !== null && FULL_SHA_PATTERN.test(evidence.pullRequestHeadSha);
+  if (!hasConsistentEventIdentity) {
+    throw new Error('downloaded evidence must carry a push identity without a head SHA, or a pull request or workflow dispatch identity with a full head SHA');
   }
   const vsixBytes = await readFile(join(canonicalDir, vsixFile));
   const archiveEntries = readVsixArchive(vsixBytes);
@@ -311,7 +315,7 @@ export function createNodePackagedSmokeDependencies(): PackagedSmokeDependencies
         `--extensions-dir=${extensionsDir}`,
       ],
     }),
-    cleanup: root => rm(root, { recursive: true, force: true }),
+    cleanup: root => removeFixturePath(root),
   };
 }
 
