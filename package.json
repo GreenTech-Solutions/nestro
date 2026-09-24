@@ -2,7 +2,7 @@
   "name": "nestro",
   "displayName": "Nestro",
   "description": "%extension.description%",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "publisher": "greentech-solutions",
   "icon": "resources/icon.png",
   "license": "MIT",
