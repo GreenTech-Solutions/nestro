@@ -26,9 +26,10 @@ push to master
        │
        └─ workflow_run(success) ──▶ Release prepare (.github/workflows/release-prepare.yml)
                                       opens/refreshes PR release/v<version> (package.json +
-                                      CHANGELOG.md) and re-dispatches Verify on its head
+                                      CHANGELOG.md) and re-dispatches Verify on its head — that
+                                      dispatched run does not count toward the required check
 
-release/v<version> merges into master (ordinary PR review)
+release/v<version> merges into master once its pull_request Verify run is approved and green (§1.7)
   └─ new push to master re-enters the pipeline above; this time Release candidate's uploaded
      candidate has a version nothing has tagged yet
 
@@ -47,9 +48,10 @@ candidate_run_id inputs, so pushing a tag by hand publishes nothing
      provenance and candidate.json
 ```
 
-Only one step above needs a human to act without a workflow prompting them: reviewing and
-merging the `release/v<version>` pull request. Everything else is either fully automated or
-paused on the protected `release` environment's required-reviewer approval (§5).
+Only one step above needs a human to act without a workflow prompting them: the
+`release/v<version>` pull request — approving its held `Verify` run, then reviewing and
+merging it (§1.7). Everything else is either fully automated or paused on the protected
+`release` environment's required-reviewer approval (§5).
 
 ## 1. Prerequisites
 
@@ -61,7 +63,7 @@ paused on the protected `release` environment's required-reviewer approval (§5)
 | 1.4 | Clean tree on the commit you intend to ship. | Releaser | `git status --short` (empty) |
 | 1.5 | Every gate in the `Verify` workflow's `required` job is green for that exact commit: `required` (job id) needs `quality`, `extension-host`, `package` and `packaged-smoke` and fails if any of them is not `success` (`.github/workflows/ci.yml`). The README `Verify` badge mirrors this same job (`ci.yml` on `master`; see §6 for when it can read as broken even though the pipeline is fine). | CI, confirmed by releaser | Verify run URL, `required` job conclusion |
 | 1.6 | No open security advisory blocks the release. | Repository owner | Private vulnerability reporting inbox, checked empty or triaged |
-| 1.7 | When Release prepare has opened `release/v<version>`, review and merge that pull request. This is the only human step the `release` environment gate does not cover; nothing is tagged until the merged commit passes Verify again. | Releaser | URL of the merged `release/v<version>` pull request |
+| 1.7 | When Release prepare has opened `release/v<version>`, approve the pending `Verify` run on the pull request (Release prepare opens it with the workflow's `GITHUB_TOKEN`, so GitHub creates its `pull_request` runs as "Action required" on every release; someone with write access starts them with **Approve workflows to run** in the pull request's merge box), wait for `Verify / Required` to pass on the pull request, then review and merge. This is the only human step the `release` environment gate does not cover; nothing is tagged until the merged commit passes Verify again. | Releaser | URL of the approved `Verify` run and URL of the merged `release/v<version>` pull request |
 
 ## 2. Verified SHA and artifact identity
 
@@ -258,7 +260,8 @@ Per-release checklist template — copy this table into the release record and f
 
 | Item | Evidence link / value | Checked by | Date |
 |---|---|---|---|
-| Verify run (`required` green) | | | |
+| Version pull request: approved `Verify` run + merge (§1.7) | | | |
+| Verify run on the tagged commit (`required` green, §1.5) | | | |
 | Release candidate run + `candidate.json` digest | | | |
 | Tag `v<version>` → source SHA | | | |
 | `release` environment approval | | | |
