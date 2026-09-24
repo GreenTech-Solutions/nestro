@@ -204,7 +204,7 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
       PROVENANCE_SOURCE_SHA: '${{ env.EXPECTED_SHA }}',
     },
     name: 'Write deterministic provenance bundle',
-    run: 'pnpm run release:provenance -- --artifact-dir "$CI_ARTIFACT_DIR"',
+    run: 'pnpm run release:provenance --artifact-dir "$CI_ARTIFACT_DIR"',
   },
   {
     name: 'Resolve the exact VSIX attestation subject',
@@ -652,7 +652,7 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
   if (!hasRequiredRunStep(steps, 'pnpm run ci:evidence --out-dir "$CI_ARTIFACT_DIR"')) {
     add(violations, 'evidence-only', 'package must write its non-release evidence identity');
   }
-  if (!hasRequiredRunStep(steps, 'pnpm run release:provenance -- --artifact-dir "$CI_ARTIFACT_DIR"')) {
+  if (!hasRequiredRunStep(steps, 'pnpm run release:provenance --artifact-dir "$CI_ARTIFACT_DIR"')) {
     add(violations, 'provenance', 'package must write the deterministic provenance bundle before attestation');
   }
   const subject = steps.find(step => step.name === 'Resolve the exact VSIX attestation subject');

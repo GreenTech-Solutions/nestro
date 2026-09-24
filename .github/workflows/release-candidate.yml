@@ -74,7 +74,7 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_SOURCE_SHA: ${{ env.SOURCE_SHA }}
           RELEASE_SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/ci.yml
-        run: pnpm run release:candidate -- --artifact-dir dist/ci --out-dir dist/release-candidate
+        run: pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate
       - name: Upload the immutable candidate
         if: ${{ steps.candidate.outputs.is-candidate == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

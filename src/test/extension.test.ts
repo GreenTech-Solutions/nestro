@@ -6,16 +6,19 @@ import { ClientManager } from '../clients';
 import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider, StatusItem } from '../providers';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
+  assertTaskExitCode,
   awaitTaskOutcome,
   awaitTaskProcessStart,
   buildExitWithCodeCommand,
   buildSleepCommand,
+  canonicalizeForComparison,
   closeFixtureWorkspace,
   closeIfOpen,
   countWorkspaceFolders,
   createNoProcessTask,
   createPinnedManagerDir,
   createScriptFixture,
+  detectCorepackManagedYarn,
   fixtureTempRoot,
   materializeFixture,
   MULTI_ROOT_FIXTURES,
@@ -33,7 +36,7 @@ import {
   trackedFixtureRoots,
   waitUntil,
 } from './fixtures';
-import type { OpenedFixtureWorkspace, PinnedManagerDir, ScriptFixture, WorkspaceFixture } from './fixtures';
+import type { CorepackYarnDetection, OpenedFixtureWorkspace, PinnedManagerDir, ScriptFixture, WorkspaceFixture } from './fixtures';
 import type { PackageStateIdentity } from '../providers';
 
 const EXTENSION_ID = 'greentech-solutions.nestro';
@@ -100,7 +103,7 @@ function compileViewItemPattern(when: string): RegExp {
 }
 
 function isInside(parent: string, candidate: string): boolean {
-  const relativePath = relative(parent, candidate);
+  const relativePath = relative(canonicalizeForComparison(parent), canonicalizeForComparison(candidate));
   return relativePath !== '' && !relativePath.startsWith('..') && !isAbsolute(relativePath);
 }
 
@@ -639,7 +642,7 @@ suite('Shell Task Lifecycle', function () {
 
   test('resolves with the exact non-zero exit code on a failing task', async () => {
     const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
-    assert.strictEqual(exitCode, 7);
+    assertTaskExitCode(exitCode, 7);
   });
 
   test('listeners do not leak: a task run after a success resolves independently', async () => {
@@ -647,12 +650,12 @@ suite('Shell Task Lifecycle', function () {
     assert.strictEqual(first, 0);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 3), nextTaskName('Success-Rerun'));
-    assert.strictEqual(second, 3, 'A task started after a successful run must resolve on its own outcome');
+    assertTaskExitCode(second, 3, 'A task started after a successful run must resolve on its own outcome');
   });
 
   test('listeners do not leak: a task run after a failure resolves independently', async () => {
     const first = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 5), nextTaskName('Failure'));
-    assert.strictEqual(first, 5);
+    assertTaskExitCode(first, 5);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Failure-Rerun'));
     assert.strictEqual(second, 0, 'A task started after a failing run must resolve on its own outcome');
@@ -1177,10 +1180,14 @@ suite('Native Package Manager Smoke (bun, yarn)', function () {
 
   let pinnedYarnClassic: PinnedManagerDir;
   let pinnedYarnModern: PinnedManagerDir;
+  let corepackYarn: CorepackYarnDetection;
 
-  suiteSetup(async () => {
+  suiteSetup(async function () {
+    // Leaves headroom above the probe timeout for a first-run Corepack download.
+    this.timeout(90000);
     pinnedYarnClassic = await createPinnedManagerDir('yarn@1.22.19');
     pinnedYarnModern = await createPinnedManagerDir('yarn@4.6.0');
+    corepackYarn = await detectCorepackManagedYarn(pinnedYarnClassic, pinnedYarnModern);
   });
 
   suiteTeardown(async () => {
@@ -1218,6 +1225,11 @@ suite('Native Package Manager Smoke (bun, yarn)', function () {
       this.skip();
       return;
     }
+    if (!corepackYarn.managed) {
+      console.warn(`[native-smoke] Skipping: PATH yarn ignores packageManager pins (${corepackYarn.reason}).`);
+      this.skip();
+      return;
+    }
     assert.strictEqual(
       probe.output,
       '1.22.19',
@@ -1229,6 +1241,11 @@ suite('Native Package Manager Smoke (bun, yarn)', function () {
     const probe = await probeNativeTool('yarn', ['--version'], pinnedYarnModern.dir);
     if (!probe.available) {
       console.warn(`[native-smoke] Skipping: yarn is not available on this machine (${probe.reason}).`);
+      this.skip();
+      return;
+    }
+    if (!corepackYarn.managed) {
+      console.warn(`[native-smoke] Skipping: PATH yarn ignores packageManager pins (${corepackYarn.reason}).`);
       this.skip();
       return;
     }

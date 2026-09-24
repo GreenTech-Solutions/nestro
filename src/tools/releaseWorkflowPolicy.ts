@@ -499,7 +499,7 @@ export function evaluateReleasePrepareWorkflowPolicy(source: string): ReleaseWor
     add(violations, 'duplicate-version-pr', 'preparation must reject competing, stale or non-canonical version pull requests');
   }
   const analyze = findStep(job, 'Analyze and prepare the next release');
-  if (analyze === undefined || normalizedRun(analyze) !== 'pnpm run release:prepare -- --out-dir dist/release'
+  if (analyze === undefined || normalizedRun(analyze) !== 'pnpm run release:prepare --out-dir dist/release'
     || asRecord(analyze.env)?.RELEASE_CONFIG !== RELEASE_CONFIG_PATH) {
     add(violations, 'isolated-analysis', 'preparation must use the isolated analyze-and-notes configuration');
   }
@@ -593,7 +593,7 @@ export function evaluateReleaseCandidateWorkflowPolicy(source: string): ReleaseW
   }
   const buildManifest = findStep(job, 'Build the candidate manifest');
   if (buildManifest === undefined
-    || normalizedRun(buildManifest) !== 'pnpm run release:candidate -- --artifact-dir dist/ci --out-dir dist/release-candidate'
+    || normalizedRun(buildManifest) !== 'pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate'
     || asRecord(buildManifest.env)?.RELEASE_SOURCE_SHA !== '${{ env.SOURCE_SHA }}'
     || asRecord(buildManifest.env)?.RELEASE_CI_RUN_ID !== '${{ env.SOURCE_CI_RUN_ID }}'
     || asRecord(buildManifest.env)?.RELEASE_CANDIDATE_RUN_ID !== '${{ github.run_id }}') {

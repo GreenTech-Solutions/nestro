@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { ShellTaskCommand } from '../../utils';
+import { removeFixturePath } from './removeFixturePath';
 
 const TEMP_DIR_PREFIX = 'nestro-task-script-';
 
@@ -38,7 +39,7 @@ export async function createScriptFixture(): Promise<ScriptFixture> {
 
 /** Deletes the temporary directory created by {@link createScriptFixture}. */
 export async function removeScriptFixture(fixture: ScriptFixture): Promise<void> {
-  await rm(fixture.dir, { recursive: true, force: true });
+  await removeFixturePath(fixture.dir);
 }
 
 /** A shell task command that exits with a controlled, caller-chosen code. */

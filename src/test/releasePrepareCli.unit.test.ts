@@ -34,8 +34,16 @@ async function createReleaseRepository(commitSubject: string): Promise<string> {
   })}\n`, 'utf8');
   await execFileAsync('git', ['add', 'package.json', 'CHANGELOG.md', '.releaserc.json'], { cwd: root });
   await execFileAsync('git', ['commit', '--quiet', '-m', commitSubject], { cwd: root });
+  // A second, older tag exercises the version-comparison sort in latestReleaseTag().
+  await execFileAsync('git', ['tag', 'v0.4.1'], { cwd: root });
   await execFileAsync('git', ['tag', 'v0.4.2'], { cwd: root });
   return root;
+}
+
+async function commitFile(root: string, fileName: string, contents: string, subject: string): Promise<void> {
+  await writeFile(join(root, fileName), contents, 'utf8');
+  await execFileAsync('git', ['add', fileName], { cwd: root });
+  await execFileAsync('git', ['commit', '--quiet', '-m', subject], { cwd: root });
 }
 
 afterEach(async () => {
@@ -58,17 +66,26 @@ describe('release preparation CLI', () => {
   });
 
   it('binds Node dependencies to git, package and changelog files', async () => {
+    // The fixture's version and tag differ from this repository's own, and v0.4.10 sorts
+    // after v0.4.2 only under a numeric comparison.
+    const root = await createReleaseRepository('feat: seed release repository');
+    await commitFile(root, 'package.json', `${JSON.stringify({ name: 'nestro', version: '0.4.10' })}\n`, 'chore(release): 0.4.10');
+    await execFileAsync('git', ['tag', 'v0.4.10'], { cwd: root });
+    const followUpSubject = 'fix: log release automation output';
+    await commitFile(root, 'follow-up.txt', `${followUpSubject}\n`, followUpSubject);
     const dependencies = createNodeReleasePrepareDependencies(
-      repositoryRoot,
+      root,
       'dist/release',
       'https://github.com/acme/nestro',
       '2026-09-11',
       undefined,
     );
-    await expect(dependencies.io.latestReleaseTag()).resolves.toBe('v0.4.2');
-    const commits = await dependencies.io.listCommitsSince('v0.4.2');
-    expect(commits.length).toBeGreaterThan(0);
-    await expect(dependencies.io.readPackageVersion()).resolves.toBe('0.4.2');
+    await expect(dependencies.io.latestReleaseTag()).resolves.toBe('v0.4.10');
+    const commits = await dependencies.io.listCommitsSince('v0.4.10');
+    expect(commits.map(commit => commit.subject)).toEqual([followUpSubject]);
+    await expect(dependencies.io.readPackageVersion()).resolves.toBe('0.4.10');
+    await dependencies.io.prependChangelog('## Unreleased\n\n');
+    await expect(readFile(join(root, 'CHANGELOG.md'), 'utf8')).resolves.toBe('## Unreleased\n\n# Changelog\n');
   });
 
   it('exercises the Node-bound writers and successful release entrypoint', async () => {

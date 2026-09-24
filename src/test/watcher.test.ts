@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerWorkspaceFoldersWatcher } from '../extension';
 import { FilterManager, PackagesProvider } from '../providers';
@@ -16,6 +16,7 @@ import {
   ensureExtensionActivated,
   NATIVE_WATCHER_ATTACH_TIMEOUT_MS,
   openTrackedFixture,
+  removeFixturePath,
   SINGLE_ROOT_FIXTURES,
   SUPPRESSION_SETTLE_MS,
   waitUntil,
@@ -84,7 +85,7 @@ suite('Package.json Watcher (real Extension Host)', function () {
       );
     }
     finally {
-      await rm(sentinelDir, { recursive: true, force: true });
+      await removeFixturePath(sentinelDir);
     }
 
     await delay(DEBOUNCE_SETTLE_MS);
@@ -113,7 +114,7 @@ suite('Package.json Watcher (real Extension Host)', function () {
       await expectSingleReload(harness, baseline, 'creating package.json');
     }
     finally {
-      await rm(nestedDir, { recursive: true, force: true });
+      await removeFixturePath(nestedDir);
     }
   });
 
@@ -141,11 +142,11 @@ suite('Package.json Watcher (real Extension Host)', function () {
     try {
       // Only the file: removing the directory recursively can coalesce into a
       // single event for the directory path, which the glob never matches.
-      await rm(nestedPath, { force: true });
+      await removeFixturePath(nestedPath);
       await expectSingleReload(harness, baseline, 'deleting package.json');
     }
     finally {
-      await rm(nestedDir, { recursive: true, force: true });
+      await removeFixturePath(nestedDir);
     }
   });
 

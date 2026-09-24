@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { registerConfigurationWatcher } from '../extension';
 import { FilterManager, PackagesProvider } from '../providers';
@@ -15,6 +15,7 @@ import {
   NATIVE_WATCHER_ATTACH_TIMEOUT_MS,
   onceTreeChanged,
   openTrackedFixture,
+  removeFixturePath,
   setNestroConfigValue,
   SINGLE_ROOT_FIXTURES,
   waitUntil,
@@ -173,7 +174,7 @@ suite('Configuration Watcher — monorepoGlob recreates the package.json watcher
       }
     }
     finally {
-      await rm(scopedDir, { recursive: true, force: true });
+      await removeFixturePath(scopedDir);
       disposeStubContext(configContext);
       harness.dispose();
     }
