@@ -33,9 +33,10 @@ Push all resources to `context.subscriptions`:
 - Floating promises must be `await`ed or prefixed with `void` (ESLint `no-floating-promises`)
 
 ## Imports & Barrels
-- Always import from barrel `index.ts`, never from implementation files directly
-- `import { Foo } from '../providers'` — not `from '../providers/Foo'`
+- Import another subsystem only through its barrel `index.ts`, never through its implementation files; inside one subsystem siblings import each other directly
+- `import { Foo } from '../providers'` — not `from '../providers/Foo'` (cross-subsystem); `import { Foo } from './Foo'` inside `providers/`
 - Barrel files use selective re-exports (not `export *`) for an explicit public surface
+- Layer order: `tools` isolated; `utils` foundation; `clients` above `utils`; `providers` above `utils`/`clients`; `commands`/`extension.ts` above everything. A module never imports its own subsystem's barrel, whether spelled `./index` or as the directory path. Full contract, allowlisted exceptions and enforcement: **[CODESTYLE.md](../../CODESTYLE.md)** → Module Structure & Barrels, `src/test/importContract.unit.test.ts`
 
 ## Providers
 - Tree item classes live in `src/providers/` (e.g., `PackageItem.ts`, `GroupItem.ts`)

@@ -8,8 +8,8 @@ import type {
 import type {
   CanonicalPackageLocation,
   CanonicalPackageLocationResult,
-} from './index';
-import { resolveCanonicalPackageLocation } from './index';
+} from './packageIdentity';
+import { resolveCanonicalPackageLocation } from './packageIdentity';
 
 export interface PackageLoadingSnapshot {
   readonly entries: readonly PackageFileEntry[];

@@ -77,30 +77,70 @@ function isGroupItem(item: vscode.TreeItem): item is GroupItem {
 
 ## Module Structure & Barrels
 
-Every directory that exports must have an `index.ts` barrel.
-
-**Always import from the barrel, never the implementation file:**
-
-```typescript
-// Correct
-import { PackageItem, GroupItem } from '../providers';
-import { logger, getUpdateType } from '../utils';
-
-// Wrong — breaks encapsulation, bypasses barrel
-import { PackageItem } from '../providers/PackageItem';
-import { logger } from '../utils/logger';
-```
-
-Barrels currently re-export with `export *`:
+Every subsystem directory (`providers/`, `utils/`, `clients/`, `commands/`, `tools/`) has an
+`index.ts` barrel. Barrels re-export by name, never with `export *`:
 
 ```typescript
 // src/utils/index.ts
-export * from './versionUtils';
-export * from './logger';
-export * from './notify';
+export { logger } from './logger';
+export { compareRawVersions, getUpdateType } from './versionUtils';
+export type { UpdateType } from './versionUtils';
 ```
 
-Moving to selective named re-exports on subsystem boundaries is a planned change. Until it lands, describe the wildcard form as the present state and do not claim the selective contract is enforced.
+A barrel exports a symbol only if something outside the subsystem needs it (production code, or
+a test that has no better place to get it). A symbol only its own subsystem uses is not exported
+— siblings import it directly from the implementation file instead. This keeps the barrel a real
+public-surface declaration, not a re-statement of every file in the directory.
+
+### Layer order
+
+```
+tools        (isolated — imports nothing from providers/utils/clients/commands)
+utils        (foundation)
+clients      (above utils)
+providers    (above utils and clients)
+commands, extension.ts   (above everything)
+```
+
+**Production code outside a subsystem imports only that subsystem's barrel** — never one of its
+implementation files — and only a subsystem below it in this order:
+
+```typescript
+// Correct — commands importing providers' and utils' barrels
+import { isPackageItem, PackagesProvider } from '../providers';
+import { logger } from '../utils';
+
+// Wrong — bypasses the barrel
+import { PackageItem } from '../providers/PackageItem';
+
+// Wrong in general — utils is not allowed to import providers (wrong direction).
+// One case of exactly this import is a named, justified exception — see below.
+import type { AuditProjectSummary } from '../providers';
+```
+
+A module never imports its own subsystem's barrel, whether spelled `./index` or as the
+directory path; it imports siblings directly (`import { X } from './Y'`).
+
+### Exceptions
+
+Two kinds of exception exist, both enforced by `src/test/importContract.unit.test.ts`:
+
+1. **`clients` never imports the `utils` barrel.** `clients/*.ts` import `utils` implementation
+   files directly (e.g. `../utils/logger`, `../utils/auditClient`) instead of `'../utils'`.
+   Routing through the barrel would recreate a cycle: the barrel re-exports
+   `packageManager.ts`, which imports `ClientManager` from `clients`. This is a standing,
+   file-level exception, not a one-off.
+2. **Two named back-edges**, each with a one-line reason recorded in the policy test's
+   allowlist: `utils/packageManager.ts` imports the `ClientManager` value from `clients` (a
+   single delegation-only module, documented and tested as part of `utils`; relocating it would
+   ripple through every caller for no behavior change), and `utils/auditReportFormatter.ts`
+   imports the `AuditProjectFailure`/`AuditProjectSummary` types from `providers` (type-only,
+   erased at compile time; the types compose `clients`' `AuditProject` with `utils` audit
+   primitives, so they can only be defined at the `providers` layer above both).
+
+Any new cross-subsystem import that isn't an exact barrel import to a lower layer needs a new,
+justified entry in that allowlist — the policy test fails closed on anything else, including a
+stale allowlist entry whose import no longer exists.
 
 ---
 
@@ -116,7 +156,7 @@ src/utils/
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper
 ├── ncuClient.ts        → npm-check-updates wrapper
-├── registryClient.ts   → npm registry version metadata over HTTPS
+├── registryClient.ts   → config-aware HTTPS registry metadata adapter
 ├── auditClient.ts      → vulnerability audit runner and parser
 ├── shellTask.ts        → VS Code shell task execution and exit codes
 └── index.ts            → barrel re-exports
@@ -224,7 +264,7 @@ ghost(test): add unit tests for compareRawVersions
 | Anti-pattern | Correct approach |
 |---|---|
 | `console.log(...)` | Use `logger` singleton from `src/utils/logger.ts` |
-| Import from implementation file directly | Import from barrel `index.ts` |
+| Import another subsystem's implementation file directly | Import that subsystem's barrel `index.ts` — siblings inside one subsystem import each other directly |
 | `any` | Narrow with a proper type, generic, or `unknown` |
 | Leaking event listeners / disposables | Always push to `context.subscriptions` |
 | `async` function without try/finally when state is mutated | Reset flags in `finally` to avoid stuck loading state |

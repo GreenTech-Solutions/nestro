@@ -3509,7 +3509,7 @@ describe('PackagesProvider', () => {
       provider.dispose();
     });
 
-    it('publishes exactly start and settle updates with each context key set twice', async () => {
+    it('publishes the full context map on the first emit, then only the keys that changed at settle', async () => {
       const load = vi.fn().mockResolvedValue(createLoadingSnapshot('current-package'));
       const service: PackageLoadingServiceContract = {
         load,
@@ -3536,16 +3536,34 @@ describe('PackagesProvider', () => {
         treeChangeCount += 1;
       });
 
-      await provider.loadPackages();
+      const loadPromise = provider.loadPackages();
+
+      // The first-ever emit (loadPackages()'s synchronous start) has no previous
+      // publication to diff against, so it must publish every key exactly once.
+      const startCalls = (vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][])
+        .filter(call => call[0] === 'setContext');
+      expect(startCalls).toHaveLength(contextKeys.length);
+      const startValues = new Map(contextKeys.map(key => [key, getLastContextValue(key)]));
+      for (const contextKey of contextKeys) {
+        expect(startCalls.filter(call => call[1] === contextKey)).toHaveLength(1);
+      }
+
+      await loadPromise;
 
       expect(load).toHaveBeenCalledOnce();
       expect(load.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
       expect(treeChangeCount).toBe(2);
-      const contextCalls = (vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][])
+
+      // The settle emit only re-publishes keys whose resolved value actually changed;
+      // every unchanged key keeps the value from the first publication above.
+      const settleValues = new Map(contextKeys.map(key => [key, getLastContextValue(key)]));
+      const changedKeys = contextKeys.filter(key => settleValues.get(key) !== startValues.get(key));
+      expect(changedKeys.length).toBeGreaterThan(0);
+      const allCalls = (vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][])
         .filter(call => call[0] === 'setContext');
-      expect(contextCalls).toHaveLength(contextKeys.length * 2);
+      expect(allCalls).toHaveLength(contextKeys.length + changedKeys.length);
       for (const contextKey of contextKeys) {
-        expect(contextCalls.filter(call => call[1] === contextKey)).toHaveLength(2);
+        expect(allCalls.filter(call => call[1] === contextKey)).toHaveLength(changedKeys.includes(contextKey) ? 2 : 1);
       }
 
       treeChangeSubscription.dispose();

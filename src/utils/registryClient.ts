@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
-import type { PackageManager } from '../clients';
+import type { PackageManager } from './packageManagerKind';
 import { runBoundedMetadataRequest } from './metadataRunner';
 import type {
   BoundedMetadataOutcome,

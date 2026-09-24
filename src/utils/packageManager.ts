@@ -1,4 +1,5 @@
-import { ClientManager, PackageManager } from '../clients';
+import { ClientManager } from '../clients';
+import type { PackageManager } from './packageManagerKind';
 import { formatShellTaskCommandForLog } from './shellTask';
 
 const clientManager = new ClientManager();

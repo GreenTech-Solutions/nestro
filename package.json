@@ -10,6 +10,10 @@
     "type": "git",
     "url": "https://github.com/GreenTech-Solutions/nestro.git"
   },
+  "homepage": "https://github.com/GreenTech-Solutions/nestro",
+  "bugs": {
+    "url": "https://github.com/GreenTech-Solutions/nestro/issues"
+  },
   "markdown": "standard",
   "keywords": [
     "npm",
@@ -44,8 +48,7 @@
     "workspace"
   ],
   "categories": [
-    "Other",
-    "Programming Languages"
+    "Other"
   ],
   "activationEvents": [
     "workspaceContains:package.json"
