@@ -1,3 +1,95 @@
+## [1.0.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.2...v1.0.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **release:** `nestro.includePreReleases` now defaults to `false`, so update checks and the version picker only offer prerelease versions after you opt in.
+* **release:** A new `nestro.minimumReleaseAgeDays` setting (default `7`) holds back releases younger than seven days: update checks offer the newest eligible version instead, and the version picker marks a held-back version and asks for confirmation before it is applied. Set it to `0` to disable the hold-back.
+* **release:** Update Package, Pick Version..., Switch to dev/dep, Toggle version pin, Remove Package, Open on npmjs.com, and Copy Package Name no longer appear in the Command Palette; run them from a package row in the Nestro view. Update All, Run Install, Search Packages, Run Security Audit, and Pin All Versions still appear in the Command Palette, but only while they can actually run.
+* **release:** Clear Search Query no longer appears in the Command Palette either; it is now in the Nestro view's overflow menu and is shown only while a search is active.
+* **release:** Open on npmjs.com, Switch to dev/dep, Toggle version pin, and Remove Package no longer have inline buttons on a package row; open the row's context menu instead, where Toggle version pin appears only for a dependency whose version spec Nestro can rewrite.
+* **release:** Run Install and Settings are no longer buttons in the Nestro view title bar; both moved into the view's overflow menu, and Run Install is shown there only when it can actually run.
+* **release:** Nestro now declares that it does not support virtual workspaces, so it no longer loads in a virtual workspace such as a Remote Repositories window. It still runs in Remote SSH, Dev Containers, and WSL, where its file access and package-manager processes execute on the remote or container side rather than on the local client.
+* **release:** The search and filter rows were removed from the package tree in favor of status rows, detailed failure output moved to dedicated Output channels, and the Marketplace category "Programming Languages" was dropped, leaving "Other" as the extension's only category.
+
+### Features
+
+* **accessibility:** describe package update states ([68e0fe5](https://github.com/GreenTech-Solutions/nestro/commit/68e0fe528449389303ce5dc5193e2be7a4d85799))
+* **audit:** expose structured advisory reports ([b4d54b3](https://github.com/GreenTech-Solutions/nestro/commit/b4d54b380ad6add514c4af75fb4ef5e4837068d2))
+* **localization:** add english message catalogs ([4465ef9](https://github.com/GreenTech-Solutions/nestro/commit/4465ef93f8f7828e826df01c7f4164c05c4f3e61))
+* remove obsolete skills and update project learnings ([0915a4b](https://github.com/GreenTech-Solutions/nestro/commit/0915a4bb4842cd1dd61f00f1abc8b1985b46f21a))
+* **updates:** enforce a release cooldown ([78d1c44](https://github.com/GreenTech-Solutions/nestro/commit/78d1c4407d4a903cdd5708130efe2facd6aaed46))
+* **workspaces:** parallelize package project checks ([f003255](https://github.com/GreenTech-Solutions/nestro/commit/f003255be687d1d5305c7e8799ef353d435117a0))
+
+### Bug Fixes
+
+* **audit:** attribute npm audit v2 advisories to package rows ([12e377d](https://github.com/GreenTech-Solutions/nestro/commit/12e377d1a34a4b99d1e9e9d8f993857381fa9c60))
+* **audit:** bound audit process execution ([e1e35a7](https://github.com/GreenTech-Solutions/nestro/commit/e1e35a7cfe2011c9be67533daacc51d1b4a01989))
+* **audit:** ignore stale audit completions ([09a8ea8](https://github.com/GreenTech-Solutions/nestro/commit/09a8ea835f36a6a92e8cbb12605bbd72bfbe9301))
+* **audit:** parse bun advisory results ([8f9c376](https://github.com/GreenTech-Solutions/nestro/commit/8f9c376a985f0f158e5f75f9d8d09122ad6cafa8))
+* **audit:** require recognized audit results ([d177e01](https://github.com/GreenTech-Solutions/nestro/commit/d177e018273b786a35766ce67b588caf8d91be95))
+* **audit:** resolve canonical package projects ([c4e5658](https://github.com/GreenTech-Solutions/nestro/commit/c4e5658745c6f66efb401fba888ff26bea9f9959))
+* **audit:** support explicit yarn audit families ([bd0324e](https://github.com/GreenTech-Solutions/nestro/commit/bd0324e46741508dbed62ad8537fabe549355564))
+* **clients:** validate package manager operands ([30c4eb0](https://github.com/GreenTech-Solutions/nestro/commit/30c4eb0147652d46da9f218377b83725c8d36273))
+* **commands:** correct command palette visibility ([0e497ff](https://github.com/GreenTech-Solutions/nestro/commit/0e497ffc6306ae78fb1ae0f6eb0f4a1281d5772b))
+* **commands:** validate current package identity ([cf03f15](https://github.com/GreenTech-Solutions/nestro/commit/cf03f15840ea0a5253176bd7c456b13e682f8c88))
+* **debug:** point the launch configuration at the real bundle ([7606245](https://github.com/GreenTech-Solutions/nestro/commit/7606245c011875375c1a06c40449d6ac9007b9ae))
+* **dependencies:** prevent switch target overwrites ([61cd9c7](https://github.com/GreenTech-Solutions/nestro/commit/61cd9c760d7e0d0890a5efff995cdd698fdd72cf))
+* **filters:** reject unrecognized filter values ([5e4f1b6](https://github.com/GreenTech-Solutions/nestro/commit/5e4f1b66db93b3ae239de19e7fdf1db7d0e34949))
+* **filters:** unify visible package counts ([028c2ec](https://github.com/GreenTech-Solutions/nestro/commit/028c2eceeac3bc64f0c9d9d3cfbf448f65037526))
+* **install:** treat a cancelled package root pick as a cancel ([eab4dc9](https://github.com/GreenTech-Solutions/nestro/commit/eab4dc9167cde285d02dc9716d3b66eb01659e29))
+* **logging:** sanitize extension diagnostics ([ea4411b](https://github.com/GreenTech-Solutions/nestro/commit/ea4411bcbdf437af54f6bbe82bc7d08733d5b887))
+* **manifest:** declare workspace capabilities ([65e225e](https://github.com/GreenTech-Solutions/nestro/commit/65e225eb1c3ffba4b072be5fa429e39e63100f81))
+* **operations:** serialize package project mutations ([5956d1e](https://github.com/GreenTech-Solutions/nestro/commit/5956d1e28ea87ebd374e09d8795c0ecd626278e4))
+* **packaging:** enforce the vsix content allowlist ([158e011](https://github.com/GreenTech-Solutions/nestro/commit/158e0111dc24178412d5ac5cdeae5776191d5f7e))
+* **picker:** format the held-back date ([95f68b1](https://github.com/GreenTech-Solutions/nestro/commit/95f68b1752875a8768f368a4f7c74c8f0839b4fd))
+* **pinning:** make pin all atomic ([125a2a7](https://github.com/GreenTech-Solutions/nestro/commit/125a2a733fb6b8fa5c7641aba377f83787b9a892))
+* **pinning:** preserve dependency spec semantics ([0665a7e](https://github.com/GreenTech-Solutions/nestro/commit/0665a7e9788ad93838fb80cbbfcaec9f2ffa1dc5))
+* **provider:** ignore stale package loads ([8061ec2](https://github.com/GreenTech-Solutions/nestro/commit/8061ec2b52a7d9f469c13ea4aab5a5e5aa903439))
+* **registry:** honor bun project configuration ([f50ffbe](https://github.com/GreenTech-Solutions/nestro/commit/f50ffbe6ecf23f795ee6d0ab01682c9570261a51))
+* **registry:** honor npm project configuration ([6ce57f8](https://github.com/GreenTech-Solutions/nestro/commit/6ce57f8fd3e5ca5fa98b7540483e06abda4b56f7))
+* **registry:** honor yarn project configuration ([ef67ef7](https://github.com/GreenTech-Solutions/nestro/commit/ef67ef742f1e5c813733f1c83ce9e7f56a2af668))
+* **release:** add missing release rules for refactor and style types [skip ci] ([a988079](https://github.com/GreenTech-Solutions/nestro/commit/a988079022cf6d4ce6c9316806a6d18ed3c04d0c))
+* **release:** align analyzed release types ([eec0afb](https://github.com/GreenTech-Solutions/nestro/commit/eec0afbe3d2358cd3229aa29c43df56aa82edb96))
+* **test:** terminate tasks through the started execution ([206af74](https://github.com/GreenTech-Solutions/nestro/commit/206af74eda4987e464b47b0c6e6acaef56f7432c))
+* **ui:** describe the running operation on a busy row ([e970548](https://github.com/GreenTech-Solutions/nestro/commit/e970548eff367d5a942932833fc9a35b1b070a51))
+* **ui:** enable global actions only where they can run ([24af9c3](https://github.com/GreenTech-Solutions/nestro/commit/24af9c317d3b86cf601d7c8cf8b75f303f5e7641))
+* **ui:** move detailed failures to output ([a826111](https://github.com/GreenTech-Solutions/nestro/commit/a826111fcee8beae7fb421c58b1489fa47483670))
+* **ui:** show the active filter and search in the tree ([c9aee8e](https://github.com/GreenTech-Solutions/nestro/commit/c9aee8e315c27c44dbd592848653a1e51f083f30))
+* **updates:** make prerelease updates opt in ([f4f85f0](https://github.com/GreenTech-Solutions/nestro/commit/f4f85f0fb0c4ea7d7852cb4d349599a03b2232fb))
+* **updates:** reject stale update results ([3206b24](https://github.com/GreenTech-Solutions/nestro/commit/3206b24a0c844beb8877a0d6c371d61880d74efe))
+* **workspaces:** disambiguate package root labels ([f1d217f](https://github.com/GreenTech-Solutions/nestro/commit/f1d217fc6c7e69d8880b28c0b710c71b0c5fcd4c))
+
+### Maintenance
+
+* **branding:** replace the marketplace icon ([59fb6c3](https://github.com/GreenTech-Solutions/nestro/commit/59fb6c32d808ac6abf18a9d01dfe122a1558535b))
+* **deps:** patch brace expansion tooling ([034d3dd](https://github.com/GreenTech-Solutions/nestro/commit/034d3dd21a229eece5bce13313b8ef05af1ea6fc))
+* **deps:** patch drifted tooling advisories ([ad66b06](https://github.com/GreenTech-Solutions/nestro/commit/ad66b069dea935517641fd8daeef41fe562fe998))
+* **deps:** patch drifted tooling advisories ([b194e2b](https://github.com/GreenTech-Solutions/nestro/commit/b194e2b9206e3572f3eb4c6fa1d9fa17d31fd362))
+* **deps:** patch redrifted tooling advisories ([e938d96](https://github.com/GreenTech-Solutions/nestro/commit/e938d9677841b6bb82aa695c38e00a9419dd1421))
+* **deps:** patch release tooling advisories ([6f6b8d5](https://github.com/GreenTech-Solutions/nestro/commit/6f6b8d5acfc9c1430e5c8a9ccff9fe12ab9fa431))
+* **deps:** patch vite tooling advisories ([6595acc](https://github.com/GreenTech-Solutions/nestro/commit/6595accbcc9cd1e552cfe68771d637cdb6088bd1))
+* **deps:** remove the unused script runner ([51a6051](https://github.com/GreenTech-Solutions/nestro/commit/51a6051d37cac000ce7554a17a1cddcdbb2dcde1))
+* **lint:** make validation non-mutating ([7defa20](https://github.com/GreenTech-Solutions/nestro/commit/7defa20d570e553ed275297b6e0f8225a8fe874c))
+* **marketplace:** complete extension metadata ([7c51a8c](https://github.com/GreenTech-Solutions/nestro/commit/7c51a8c220232a42ef9bc42a361d4ea629cbc99a))
+* **modules:** enforce selective barrel exports ([f72f19c](https://github.com/GreenTech-Solutions/nestro/commit/f72f19c4a7ad2e74d4b75752ee163d8cdd6bff76))
+* **package:** rebaseline the vsix size budget ([1bc22a0](https://github.com/GreenTech-Solutions/nestro/commit/1bc22a002ea1c082dcbcf52862f4481f8afeba52))
+* **packages:** separate transforms from file access ([8146af7](https://github.com/GreenTech-Solutions/nestro/commit/8146af7ae193ecc2a810ddd357f56eb1fa11da80))
+* **package:** update ([e4a4d1d](https://github.com/GreenTech-Solutions/nestro/commit/e4a4d1de320d0e78106fde5077e6f016f59acfbd))
+* **pnpm:** drop the stale script hook setting ([88db29b](https://github.com/GreenTech-Solutions/nestro/commit/88db29b915c1688e2a41fe715b781f39f0d9dc8b))
+* **pnpm:** enable package signature verification ([e715f3e](https://github.com/GreenTech-Solutions/nestro/commit/e715f3e3f52471b5ccb62527c6d0cc7b07b3b0a1))
+* **provider:** extract audit orchestration ([ce057b8](https://github.com/GreenTech-Solutions/nestro/commit/ce057b850dce88b5ae8716d6da1812c66b7c3621))
+* **provider:** extract package loading ([e2e9e98](https://github.com/GreenTech-Solutions/nestro/commit/e2e9e987ac390daf620b45caf477790dd7af5eec))
+* **provider:** extract update orchestration ([e9e81bf](https://github.com/GreenTech-Solutions/nestro/commit/e9e81bf535966af85b773dd8439c389e5b6aee14))
+* **provider:** extract view projection ([e1ce2d0](https://github.com/GreenTech-Solutions/nestro/commit/e1ce2d05a26be2f386c2fe7f092458d2d3ce3133))
+* **registry:** add metadata adapter contracts ([e2e4c40](https://github.com/GreenTech-Solutions/nestro/commit/e2e4c401617e54f91475c2bb3b52f18feb558463))
+* **release:** declare the 1.0 stable baseline ([1ac1783](https://github.com/GreenTech-Solutions/nestro/commit/1ac178308caa036d5d0654cca22a94163e6b34ed))
+* **tests:** shorten coverage threshold comments ([66b8aee](https://github.com/GreenTech-Solutions/nestro/commit/66b8aeea11d9bb17f7a0995c5b3de27a1e7b83e1))
+* **types:** align node types with the extension host ([d01ca1b](https://github.com/GreenTech-Solutions/nestro/commit/d01ca1b48cffd71f896c4cdbe5948866fa18e782))
+* **ui:** remove search and filter rows ([cc3b07b](https://github.com/GreenTech-Solutions/nestro/commit/cc3b07bd8ee29e1c05e76b7fde649d74904100e2))
+* **ui:** simplify package row actions ([f40717f](https://github.com/GreenTech-Solutions/nestro/commit/f40717f0a8c244607e52177db5c6ca50e225999c))
+* **ui:** simplify package view toolbar ([f575e36](https://github.com/GreenTech-Solutions/nestro/commit/f575e36808bb1a2db455059284aed7f4a8e727bd))
+
 ## [0.4.2](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.1...v0.4.2) (2026-07-12)
 
 
