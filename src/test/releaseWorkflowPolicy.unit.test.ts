@@ -331,6 +331,34 @@ describe('release workflow policies', () => {
     })), 'release-run-identity');
   });
 
+  it('requires the reviewed pnpm and Node.js setup in preparation and candidate jobs', () => {
+    for (const [source, evaluate, job] of [
+      [prepareSource, evaluateReleasePrepareWorkflowPolicy, 'prepare'],
+      [candidateSource, evaluateReleaseCandidateWorkflowPolicy, 'candidate'],
+    ] as const) {
+      const setupOptions = (workflow: Record<string, unknown>, name: string): Record<string, unknown> =>
+        steps(workflow, job).find(step => step.name === name)!.with as Record<string, unknown>;
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        delete setupOptions(workflow, 'Prepare pnpm')['node-version-file'];
+      })), 'toolchain');
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        setupOptions(workflow, 'Prepare pnpm').cache = true;
+      })), 'toolchain');
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        setupOptions(workflow, 'Prepare pnpm').install = true;
+      })), 'toolchain');
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        steps(workflow, job).find(step => step.name === 'Prepare pnpm')!.uses = 'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2';
+      })), 'toolchain');
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        setupOptions(workflow, 'Setup Node.js')['node-version'] = '22.0.0';
+      })), 'toolchain');
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        steps(workflow, job).find(step => step.name === 'Install frozen dependencies')!.run = 'pnpm install';
+      })), 'frozen-install');
+    }
+  });
+
   it('requires the verified workflow-dispatch PR head in CI', () => {
     const ciSource = readFileSync(resolve(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
     expect(evaluateCiWorkflowPolicy(ciSource)).toEqual([]);

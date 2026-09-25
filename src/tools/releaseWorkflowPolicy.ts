@@ -21,7 +21,7 @@ const CANDIDATE_ACTIONS = {
   checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   download: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   node: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-  pnpm: 'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2',
+  pnpm: 'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024',
   upload: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
 } as const;
 const PUBLISH_ACTION = 'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db';
@@ -81,6 +81,27 @@ function keys(value: UnknownRecord | undefined): string[] {
 
 function exactKeys(value: UnknownRecord | undefined, expected: readonly string[]): boolean {
   return JSON.stringify(keys(value)) === JSON.stringify([...expected].sort((left, right) => left.localeCompare(right)));
+}
+
+function assertToolchain(job: UnknownRecord | undefined, label: string, violations: ReleaseWorkflowPolicyViolation[]): void {
+  const pnpmSetup = findStep(job, 'Prepare pnpm');
+  const pnpmOptions = asRecord(pnpmSetup?.with);
+  if (pnpmSetup?.uses !== CANDIDATE_ACTIONS.pnpm
+    || !exactKeys(pnpmOptions, ['cache', 'install', 'node-version-file'])
+    || pnpmOptions?.cache !== false
+    || pnpmOptions.install !== false
+    || pnpmOptions['node-version-file'] !== false) {
+    add(violations, 'toolchain', `${label} must use the reviewed pnpm/setup without implicit install, duplicate cache or a second Node.js runtime`);
+  }
+  const nodeSetup = findStep(job, 'Setup Node.js');
+  const nodeOptions = asRecord(nodeSetup?.with);
+  if (nodeSetup?.uses !== CANDIDATE_ACTIONS.node
+    || !exactKeys(nodeOptions, ['cache', 'cache-dependency-path', 'node-version-file'])
+    || nodeOptions?.cache !== 'pnpm'
+    || nodeOptions['cache-dependency-path'] !== 'pnpm-lock.yaml'
+    || nodeOptions['node-version-file'] !== '.nvmrc') {
+    add(violations, 'toolchain', `${label} must use the reviewed setup-node with .nvmrc and the lockfile-scoped pnpm cache`);
+  }
 }
 
 function normalizedRun(step: UnknownRecord): string {
@@ -489,6 +510,10 @@ export function evaluateReleasePrepareWorkflowPolicy(source: string): ReleaseWor
   if (!hasRun(job, run => run.includes('git rev-parse origin/master') && run.includes('SOURCE_SHA'))) {
     add(violations, 'stale-master', 'preparation must reject a stale master before creating a release branch');
   }
+  if (!hasRun(job, run => run === 'pnpm install --frozen-lockfile')) {
+    add(violations, 'frozen-install', 'preparation tooling must use the frozen lockfile');
+  }
+  assertToolchain(job, 'preparation', violations);
   const competing = findStep(job, 'Reject competing release pull requests');
   if (competing === undefined
     || !normalizedRun(competing).includes('gh pr list')
@@ -583,6 +608,7 @@ export function evaluateReleaseCandidateWorkflowPolicy(source: string): ReleaseW
   if (!hasRun(job, run => run === 'pnpm install --frozen-lockfile')) {
     add(violations, 'frozen-install', 'candidate tooling must use the frozen lockfile');
   }
+  assertToolchain(job, 'candidate', violations);
   const download = hasAction(job, CANDIDATE_ACTIONS.download);
   const downloadOptions = asRecord(download?.with);
   if (!exactKeys(downloadOptions, ['github-token', 'name', 'path', 'run-id'])
