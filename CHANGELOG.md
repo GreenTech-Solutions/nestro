@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.0...v1.0.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **tree:** format the held-back date in package rows ([87f51ac](https://github.com/GreenTech-Solutions/nestro/commit/87f51ace507ae94d311aa3d8a37286bf684e15ba))
+
 ## [1.0.0](https://github.com/GreenTech-Solutions/nestro/compare/v0.4.2...v1.0.0) (2026-09-24)
 
 
