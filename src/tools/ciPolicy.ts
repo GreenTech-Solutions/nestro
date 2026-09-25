@@ -14,7 +14,7 @@ const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
-  'pnpm/setup': '84cb39b217b10273981911c288cd62326dc7c6d2',
+  'pnpm/setup': 'fbda4c85fc2e1e08721cd8763afea8f48d60f024',
 };
 const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1': 'v7.0.1',
@@ -27,6 +27,7 @@ const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db': 'v2.0.0',
   'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
   'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
+  'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024': 'v3.0.0',
 };
 const EXPECTED_CODEOWNERS = '/.github/ @GreenTech-Solutions\n';
 const EXPECTED_DEPENDABOT_CONFIG: UnknownRecord = {
@@ -111,10 +112,11 @@ const IDENTITY_STEP: UnknownRecord = {
 };
 const PNPM_STEP: UnknownRecord = {
   name: 'Prepare pnpm',
-  uses: 'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2',
+  uses: 'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024',
   with: {
     cache: false,
     install: false,
+    'node-version-file': false,
   },
 };
 const NODE_STEP: UnknownRecord = {
@@ -559,8 +561,8 @@ function assertSetup(jobId: string, job: UnknownRecord, violations: CiPolicyViol
   const steps = getSteps(job);
   const pnpmSetup = findActionStep(steps, 'pnpm/setup');
   const pnpmOptions = isRecord(pnpmSetup?.with) ? pnpmSetup.with : {};
-  if (pnpmOptions.install !== false || pnpmOptions.cache !== false) {
-    add(violations, 'toolchain', `${jobId} must use pnpm/setup without implicit install or duplicate cache`);
+  if (pnpmOptions.install !== false || pnpmOptions.cache !== false || pnpmOptions['node-version-file'] !== false) {
+    add(violations, 'toolchain', `${jobId} must use pnpm/setup without implicit install, duplicate cache or a second Node.js runtime`);
   }
   const nodeSetup = findActionStep(steps, 'actions/setup-node');
   const nodeOptions = isRecord(nodeSetup?.with) ? nodeSetup.with : {};

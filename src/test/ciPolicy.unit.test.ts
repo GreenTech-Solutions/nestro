@@ -192,6 +192,14 @@ describe('CI workflow policy', () => {
     }), 'step-contract');
   });
 
+  it('rejects pnpm/setup that installs a second Node.js runtime from a version file', () => {
+    expectRejected(mutateWorkflow((workflow) => {
+      const pnpmSetup = steps(workflow, 'quality')
+        .find(step => String(step.uses ?? '').startsWith('pnpm/setup@'));
+      delete (pnpmSetup?.with as Record<string, unknown>)['node-version-file'];
+    }), 'toolchain');
+  });
+
   it('rejects step-scoped EXPECTED_SHA rebinding', () => {
     expectRejected(mutateWorkflow((workflow) => {
       const checkout = steps(workflow, 'quality')[0];
