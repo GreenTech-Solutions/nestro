@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { logger } from '../utils';
+import { formatHeldBackDate, logger } from '../utils';
 import type { ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
@@ -1174,9 +1174,10 @@ describe('updateAllVisibleCommand()', () => {
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
   });
 
-  it('asks for a separate confirmation before a risky bulk update', async () => {
+  it('asks for a separate confirmation before a risky bulk update, with a localized held-back date', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update Risky Packages' as never);
+    const eligibleAt = '2026-06-02T00:00:00.000Z';
     const provider = makeProvider([
       new PackageItem(
         'react',
@@ -1188,7 +1189,7 @@ describe('updateAllVisibleCommand()', () => {
         '/workspace/package.json',
         false,
         '^',
-        { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+        { kind: 'held-back', version: '19.0.0', eligibleAt },
       ),
     ]);
 
@@ -1199,6 +1200,10 @@ describe('updateAllVisibleCommand()', () => {
       { modal: true },
       'Update Risky Packages',
     );
+    const [promptText] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+    const expectedDate = formatHeldBackDate(eligibleAt);
+    expect(promptText).toContain(`held back until ${expectedDate}`);
+    expect(promptText).not.toContain(eligibleAt);
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
   });
 

@@ -10,6 +10,7 @@ import {
 } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
+  formatHeldBackDate,
   formatPackageCount,
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
@@ -343,7 +344,7 @@ async function confirmRiskyUpdates(
 
   const labels = riskyUpdates.map(({ capability, version, releaseAge: selectedReleaseAge }) => {
     const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
-    const eligibleAt = releaseAge?.kind === 'held-back' ? releaseAge.eligibleAt : '';
+    const eligibleAt = releaseAge?.kind === 'held-back' ? formatHeldBackDate(releaseAge.eligibleAt) : '';
     return vscode.l10n.t(
       '{0}@{1} (held back until {2})',
       sanitizePackageText(capability.item.packageName),

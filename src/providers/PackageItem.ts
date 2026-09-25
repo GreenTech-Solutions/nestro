@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {
   AuditSeverity,
   formatAuditSeverityLabel,
+  formatHeldBackDate,
   formatUpdateTypeLabel,
   parseDependencySpec,
   ReleaseAgeState,
@@ -233,7 +234,7 @@ function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
     return vscode.l10n.t(
       'Held back {0} until {1}',
       sanitizePackageText(state.version),
-      sanitizePackageText(state.eligibleAt),
+      sanitizePackageText(formatHeldBackDate(state.eligibleAt)),
     );
   }
   if (state.kind === 'unknown') {
