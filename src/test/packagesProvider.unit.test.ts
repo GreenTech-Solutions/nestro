@@ -30,6 +30,7 @@ import {
   CHECK_CONCURRENCY_CAP,
   fetchAllLatestVersions,
   fetchPackageMetadata,
+  formatHeldBackDate,
   getWorkspacePackageFilePaths,
   logger,
   MUTATION_CONCURRENCY_CAP,
@@ -1053,17 +1054,21 @@ describe('PackagesProvider', () => {
       await provider.loadPackages();
       await provider.checkUpdates();
 
+      const eligibleAt = '2026-06-02T00:00:00.000Z';
       const react = getPackageItems(provider).find(item => item.packageName === 'react');
       expect(react).toMatchObject({
         latest: '1.1.0',
         releaseAge: {
           kind: 'held-back',
           version: '2.0.0',
-          eligibleAt: '2026-06-02T00:00:00.000Z',
+          eligibleAt,
         },
       });
-      expect(react?.description).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
-      expect(react?.tooltip).toContain('Held back 2.0.0 until 2026-06-02T00:00:00.000Z');
+      const expectedDate = formatHeldBackDate(eligibleAt);
+      expect(react?.description).toContain(`Held back 2.0.0 until ${expectedDate}`);
+      expect(react?.tooltip).toContain(`Held back 2.0.0 until ${expectedDate}`);
+      expect(react?.description).not.toContain(eligibleAt);
+      expect(react?.tooltip).not.toContain(eligibleAt);
     }
     finally {
       vi.useRealTimers();

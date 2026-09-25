@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { PackageItem } from '../providers';
+import { formatHeldBackDate } from '../utils';
 
 describe('PackageItem', () => {
   it('starts collapsed so details can be expanded inline', () => {
@@ -179,7 +180,9 @@ describe('PackageItem', () => {
     expect(item.accessibilityInformation?.label).toContain('Workspace owner: unavailable');
   });
 
-  it('renders held-back release age in accessible row text', () => {
+  it('renders held-back release age with a localized date, not the raw ISO instant', () => {
+    const eligibleAt = '2026-06-02T00:00:00.000Z';
+    const expectedDate = formatHeldBackDate(eligibleAt);
     const item = new PackageItem(
       'typescript',
       '^5.0.0',
@@ -190,12 +193,58 @@ describe('PackageItem', () => {
       '/workspace/package.json',
       false,
       '^',
-      { kind: 'held-back', version: '6.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      { kind: 'held-back', version: '6.0.0', eligibleAt },
     );
 
-    expect(item.description).toContain('Held back 6.0.0 until 2026-06-02T00:00:00.000Z');
-    expect(item.tooltip).toContain('Held back 6.0.0 until 2026-06-02T00:00:00.000Z');
-    expect(item.accessibilityInformation?.label).toContain('Held back 6.0.0 until 2026-06-02T00:00:00.000Z');
+    expect(item.description).toContain(`Held back 6.0.0 until ${expectedDate}`);
+    expect(item.tooltip).toContain(`Held back 6.0.0 until ${expectedDate}`);
+    expect(item.accessibilityInformation?.label).toContain(`Held back 6.0.0 until ${expectedDate}`);
+    expect(item.description).not.toContain(eligibleAt);
+    expect(item.tooltip).not.toContain(eligibleAt);
+    expect(item.accessibilityInformation?.label).not.toContain(eligibleAt);
+  });
+
+  it('renders the held-back date on the local calendar day, not the UTC one', () => {
+    vi.stubEnv('TZ', 'America/Los_Angeles');
+    try {
+      const item = new PackageItem(
+        'typescript',
+        '^5.0.0',
+        '5.9.3',
+        'minor',
+        undefined,
+        undefined,
+        '/workspace/package.json',
+        false,
+        '^',
+        { kind: 'held-back', version: '6.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      );
+
+      expect(item.description).toContain('Held back 6.0.0 until Jun 1, 2026');
+      expect(item.accessibilityInformation?.label).toContain('Held back 6.0.0 until Jun 1, 2026');
+    }
+    finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('falls back to the raw value when the held-back instant cannot be parsed', () => {
+    const item = new PackageItem(
+      'typescript',
+      '^5.0.0',
+      '5.9.3',
+      'minor',
+      undefined,
+      undefined,
+      '/workspace/package.json',
+      false,
+      '^',
+      { kind: 'held-back', version: '6.0.0', eligibleAt: 'not-a-date' },
+    );
+
+    expect(item.description).toContain('Held back 6.0.0 until not-a-date');
+    expect(item.tooltip).toContain('Held back 6.0.0 until not-a-date');
+    expect(item.accessibilityInformation?.label).toContain('Held back 6.0.0 until not-a-date');
   });
 
   it('renders unknown release age without blocking the row', () => {
