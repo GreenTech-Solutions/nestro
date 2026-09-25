@@ -109,7 +109,7 @@ const POST_PUBLISH_COMPARE_RUN = [
   '  --fail --silent --show-error --location --compressed',
   '  --proto \'=https\' --proto-redir \'=https\' --max-redirs 3',
   '  --connect-timeout 10 --max-time 120 --max-filesize 2097152',
-  '  --retry 5 --retry-all-errors --retry-max-time 180',
+  '  --retry 45 --retry-delay 20 --retry-all-errors --retry-max-time 900',
   ')',
   'curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix',
   'curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix',
@@ -212,7 +212,7 @@ const FINALIZER_TAG_VERIFY_RUN = [
   'tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"',
   'test "$(jq -r \'.object.type\' <<<"$tag_json")" = commit',
   'test "$(jq -r \'.object.sha\' <<<"$tag_json")" = "$source_sha"',
-  'sha256sum --check --strict "dist/release-candidate/$vsix_file.sha256"',
+  '(cd dist/release-candidate && sha256sum --check --strict "$vsix_file.sha256")',
   'expected_members="$(printf \'%s\\n\' "$vsix_file" "$vsix_file.manifest.txt" "$vsix_file.sha256" sbom.json provenance.json candidate.json | sort)"',
   'actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf \'%f\\n\' | sort)"',
   'test "$actual_members" = "$expected_members"',
@@ -689,7 +689,7 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
     || !executableRun(verify).includes('.sbomSha256')
     || !executableRun(verify).includes('.provenanceSha256')
     || !executableRun(verify).includes('expected_members')
-    || !executableRun(verify).includes('sha256sum --check')) {
+    || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')) {
     add(violations, 'candidate-integrity', 'dispatch must verify source, candidate run, CI run and every provenance member before tagging');
   }
   const tag = findStep(job, 'Create or verify the exact source tag');
@@ -838,7 +838,7 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     || !executableRun(verify).includes('.sbomSha256')
     || !executableRun(verify).includes('.provenanceSha256')
     || !executableRun(verify).includes('expected_members')
-    || !executableRun(verify).includes('sha256sum --check')
+    || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')
     || !executableRun(verify).includes('git/ref/tags/')
     || !executableRun(verify).includes('GITHUB_REF')
     || !executableRun(verify).includes('refs/tags/v')) {
@@ -847,17 +847,21 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   const attestation = findStep(publish, 'Verify protected candidate attestation');
   const expectedAttestationRun = [
     'set -euo pipefail',
+    '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
     'gh attestation verify "$VSIX_PATH" \\',
     '  --repo "$GITHUB_REPOSITORY" \\',
-    '  --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"',
+    '  --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" \\',
+    '  --source-ref refs/heads/master \\',
+    '  --source-digest "$SOURCE_SHA"',
   ].join('\n');
   if (attestation === undefined
     || attestation.shell !== 'bash'
-    || !exactKeys(asRecord(attestation.env), ['GH_TOKEN', 'VSIX_PATH'])
+    || !exactKeys(asRecord(attestation.env), ['GH_TOKEN', 'SOURCE_SHA', 'VSIX_PATH'])
     || asRecord(attestation.env)?.GH_TOKEN !== '${{ github.token }}'
     || asRecord(attestation.env)?.VSIX_PATH !== '${{ steps.manifest.outputs.vsix-path }}'
+    || asRecord(attestation.env)?.SOURCE_SHA !== '${{ steps.manifest.outputs.source-sha }}'
     || executableRun(attestation) !== expectedAttestationRun) {
-    add(violations, 'attestation', 'protected publish must verify the exact VSIX attestation with repository and signer workflow constraints');
+    add(violations, 'attestation', 'protected publish must verify the exact VSIX attestation with repository, signer workflow and source commit constraints');
   }
   const postPublish = findStep(publish, 'Compare post-publish registry copies');
   const postPublishRun = postPublish === undefined ? '' : executableRun(postPublish);

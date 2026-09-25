@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           candidate=dist/release-candidate/candidate.json
-          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunAttempt,ciRunId,digest,digestFile,manifestFile,manifestSha256,notes,provenanceFile,provenanceSha256,schemaVersion,sbomFile,sbomSha256,sourceSha,version,vsixFile'
+          test "$(jq -r 'keys | sort | join(",")' "$candidate")" = 'candidateRunId,ciRunAttempt,ciRunId,digest,digestFile,manifestFile,manifestSha256,notes,provenanceFile,provenanceSha256,sbomFile,sbomSha256,schemaVersion,sourceSha,version,vsixFile'
           test "$(jq -r '.schemaVersion' "$candidate")" = 2
           test "$(jq -r '.candidateRunId' "$candidate")" = "$CANDIDATE_RUN_ID"
           source_sha="$(jq -r '.sourceSha' "$candidate")"
@@ -120,7 +120,7 @@ jobs:
           expected_members="$(printf '%s\n' "$vsix_file" "$manifest_file" "$digest_file" "$sbom_file" "$provenance_file" candidate.json | sort)"
           actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual_members" = "$expected_members"
-          sha256sum --check --strict "dist/release-candidate/$digest_file"
+          (cd dist/release-candidate && sha256sum --check --strict "$digest_file")
           test "$(sha256sum "dist/release-candidate/$manifest_file" | cut -d ' ' -f 1)" = "$manifest_sha"
           test "$(sha256sum "dist/release-candidate/$sbom_file" | cut -d ' ' -f 1)" = "$sbom_sha"
           test "$(sha256sum "dist/release-candidate/$provenance_file" | cut -d ' ' -f 1)" = "$provenance_sha"
@@ -139,18 +139,25 @@ jobs:
             and .attestation.subjectName == $vsix
             and .attestation.subjectDigest == ("sha256:" + $digest)
             and .attestation.signerWorkflow == .signerWorkflow' "dist/release-candidate/$provenance_file" >/dev/null
-          echo "vsix-path=dist/release-candidate/$vsix_file" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "vsix-path=dist/release-candidate/$vsix_file"
+            echo "version=$version"
+            echo "source-sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify protected candidate attestation
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VSIX_PATH: ${{ steps.manifest.outputs.vsix-path }}
+          SOURCE_SHA: ${{ steps.manifest.outputs.source-sha }}
         run: |
           set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           gh attestation verify "$VSIX_PATH" \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" \
+            --source-ref refs/heads/master \
+            --source-digest "$SOURCE_SHA"
       - name: Publish to the Visual Studio Marketplace
         uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2.0.0
         env:
@@ -190,7 +197,7 @@ jobs:
             --fail --silent --show-error --location --compressed
             --proto '=https' --proto-redir '=https' --max-redirs 3
             --connect-timeout 10 --max-time 120 --max-filesize 2097152
-            --retry 5 --retry-all-errors --retry-max-time 180
+            --retry 45 --retry-delay 20 --retry-all-errors --retry-max-time 900
           )
           curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix
           curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix
@@ -313,7 +320,7 @@ jobs:
           tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"
           test "$(jq -r '.object.type' <<<"$tag_json")" = commit
           test "$(jq -r '.object.sha' <<<"$tag_json")" = "$source_sha"
-          sha256sum --check --strict "dist/release-candidate/$vsix_file.sha256"
+          (cd dist/release-candidate && sha256sum --check --strict "$vsix_file.sha256")
           expected_members="$(printf '%s\n' "$vsix_file" "$vsix_file.manifest.txt" "$vsix_file.sha256" sbom.json provenance.json candidate.json | sort)"
           actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual_members" = "$expected_members"
