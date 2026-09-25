@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import {
+  buildReleaseCandidate,
   evaluateCiWorkflowPolicy,
   evaluateReleaseCandidateWorkflowPolicy,
   evaluateReleaseConfigPolicy,
@@ -10,6 +11,7 @@ import {
   evaluateReleasePrepareWorkflowPolicy,
   evaluateReleaseWorkflowPolicy,
 } from '../tools';
+import type { ReleaseCandidateEvidence } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const prepareSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release-prepare.yml'), 'utf8');
@@ -132,6 +134,23 @@ describe('release workflow policies', () => {
       const dispatch = steps(workflow, 'dispatch').find(step => step.name === 'Dispatch protected publish on the tag');
       dispatch!.run = 'gh workflow run release.yml --ref "$OTHER_TAG" -f "candidate_run_id=$OTHER" -f "artifact_id=$OTHER"';
     })), 'dispatch-identity');
+  });
+
+  it('rejects a regression of the sha256sum cwd fix in dispatch and publish', () => {
+    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
+      const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
+      verify!.run = String(verify!.run).replace(
+        '(cd dist/release-candidate && sha256sum --check --strict "$digest_file")',
+        'sha256sum --check --strict "dist/release-candidate/$digest_file"',
+      );
+    })), 'candidate-integrity');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const verify = steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest');
+      verify!.run = String(verify!.run).replace(
+        '(cd dist/release-candidate && sha256sum --check --strict "$digest_file")',
+        'sha256sum --check --strict "dist/release-candidate/$digest_file"',
+      );
+    })), 'candidate-integrity');
   });
 
   it('rejects source, version, digest and secret boundary substitutions in publish', () => {
@@ -317,5 +336,49 @@ describe('release workflow policies', () => {
     expect(evaluateCiWorkflowPolicy(ciSource)).toEqual([]);
     expect(evaluateCiWorkflowPolicy(ciSource.replace('head_sha:\n        required: true', 'head_sha:\n        required: false')))
       .toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'safe-trigger' })]));
+  });
+
+  it('checks the candidate manifest keys against the codepoint-sorted key list release:candidate actually writes', () => {
+    const sourceSha = 'a'.repeat(40);
+    const digest = 'b'.repeat(64);
+    const artifact = {
+      vsixFile: 'nestro-0.5.0.vsix',
+      digestFile: 'nestro-0.5.0.vsix.sha256',
+      digest,
+      manifestFile: 'nestro-0.5.0.vsix.manifest.txt',
+      manifestSha256: 'c'.repeat(64),
+      sbomFile: 'sbom.json',
+      sbomSha256: 'd'.repeat(64),
+      provenanceFile: 'provenance.json',
+      provenanceSha256: 'e'.repeat(64),
+    } as const;
+    const evidence: ReleaseCandidateEvidence = {
+      sourceSha,
+      runId: '42',
+      runAttempt: '7',
+      vsixFile: artifact.vsixFile,
+      vsixSha256: digest,
+      eventName: 'push',
+      pullRequestHeadSha: null,
+      releaseEligible: false,
+    };
+    const outcome = buildReleaseCandidate(
+      evidence,
+      '0.5.0',
+      [],
+      '### Features\n\n* add preview',
+      { expectedSourceSha: sourceSha, expectedCiRunId: '42', candidateRunId: '43', artifact },
+    );
+    if (!outcome.isCandidate) {
+      throw new Error('fixture candidate must build for the key-order comparison');
+    }
+    // jq sorts by codepoint; an explicit codepoint comparator matches that for this all-ASCII key set.
+    const byCodepoint = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+    const expectedKeyOrder = Object.keys(outcome.manifest).sort(byCodepoint).join(',');
+    const literalPattern = /test "\$\(jq -r 'keys \| sort \| join\(","\)' "\$candidate"\)" = '([^']*)'/u;
+    const dispatchLiteral = literalPattern.exec(dispatchSource)?.[1];
+    const releaseLiteral = literalPattern.exec(releaseSource)?.[1];
+    expect(dispatchLiteral).toBe(expectedKeyOrder);
+    expect(releaseLiteral).toBe(expectedKeyOrder);
   });
 });

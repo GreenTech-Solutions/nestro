@@ -101,8 +101,9 @@ shasum -a 256 sbom.json provenance.json      # compare against candidate.json's 
 
 `release.yml`'s "Verify protected candidate attestation" step does the attestation half for you
 on every release (`gh attestation verify <vsix> --repo <repo> --signer-workflow
-<repo>/.github/workflows/ci.yml`); run the same command yourself against a downloaded VSIX if you
-want to re-check it independently.
+<repo>/.github/workflows/ci.yml --source-ref refs/heads/master --source-digest <sourceSha from
+candidate.json>`); run the same command yourself against a downloaded VSIX if you want to re-check
+it independently.
 
 ### Size and file-count budget
 
@@ -195,7 +196,9 @@ Dated facts about the credentials in use, current as of 2026-09-18:
 ## 6. Post-publish verification
 
 `release.yml`'s own "Compare post-publish registry copies" step already runs this automatically,
-seconds after both publishes, in the same job, downloading both copies at the URLs shown below:
+in the same job right after both publishes, downloading both copies at the URLs shown below. Both
+registries scan a new extension/version before serving it, so the step retries each download for
+up to about 15 minutes before giving up:
 
 ```
 Marketplace: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/greentech-solutions/vsextensions/nestro/<version>/vspackage
