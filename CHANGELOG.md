@@ -1,3 +1,11 @@
+## [1.0.2](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.1...v1.0.2) (2026-10-05)
+
+
+### Maintenance
+
+* **deps:** refresh vulnerable transitive dependencies in the lockfile ([7cd625e](https://github.com/GreenTech-Solutions/nestro/commit/7cd625e30ee5b8afe3484070e81a8868984020b9))
+* **deps:** update npm-check-updates and dev tooling within their majors ([ce93d44](https://github.com/GreenTech-Solutions/nestro/commit/ce93d44c3db575aadde857f577e2c2b84ced9a4b))
+
 ## [1.0.1](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.0...v1.0.1) (2026-09-25)
 
 
