@@ -1,9 +1,12 @@
 export { ARTIFACT_PROVENANCE_FILE, ARTIFACT_SBOM_FILE, buildArtifactProvenance, buildArtifactSbom, buildNormalizedManifest, findArtifactProvenanceViolation, findArtifactSbomViolation, findNormalizedManifestViolation, isWellFormedArtifactProvenance, isWellFormedArtifactSbom, parseNormalizedManifest, parsePackagedIdentity, readRuntimeDependencies, selectDeliveredRuntimeFiles } from './artifactProvenance';
 export type { ArtifactProvenance } from './artifactProvenance';
 export { mainArtifactProvenance, parseArtifactProvenanceArgs } from './artifactProvenanceCli';
+export { describeDependencyAdvisory, evaluateDependencyAudit, FULL_AUDIT_ARGS, GRAPH_BLOCKING_SEVERITY, parseDependencyAuditArgs, parseDependencyAuditReport, PRODUCTION_AUDIT_ARGS, PRODUCTION_BLOCKING_SEVERITY, runDependencyAuditCli } from './auditDependencies';
+export type { AuditSeverity, DependencyAdvisory, DependencyAuditCliDependencies, DependencyAuditExecution, ScopedDependencyAdvisory } from './auditDependencies';
+export { createNodeDependencyAuditCliDependencies, mainDependencyAudit } from './auditDependenciesCli';
 export { evaluateSignatureAudit, MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION, parseSignatureAuditArgs, resolvePnpmExecutable, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 export type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
-export { createNodeSignatureAuditCliDependencies, createNodeSignatureAuditRunner, mainSignatureAudit } from './auditSignaturesCli';
+export { createNodePnpmRunner, createNodeSignatureAuditCliDependencies, createNodeSignatureAuditRunner, mainSignatureAudit } from './auditSignaturesCli';
 export { createCiEvidence, writeCiEvidence } from './ciEvidence';
 export { mainCiEvidence, parseCiEvidenceArgs } from './ciEvidenceCli';
 export { CI_WORKFLOW_PATH, CODEOWNERS_PATH, DEPENDABOT_CONFIG_PATH, evaluateCiWorkflowPolicy, evaluateCodeownersPolicy, evaluateDependabotConfigPolicy, evaluateWorkflowActionPolicy } from './ciPolicy';
