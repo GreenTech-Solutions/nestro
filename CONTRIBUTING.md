@@ -52,7 +52,7 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `test:compile` | `tsc -p tsconfig.test.json` | Compile Extension Host tests into `out/test/`. | No |
 | `pretest` | `pnpm run test:compile && pnpm run lint` | Compile integration tests and lint before the default host suite. | No |
 | `check:vsce` | `pnpm run test:compile && node out/tools/verifyVsixCli.js` | Compile the verifier and validate the VSIX package boundary. | No |
-| `audit:dependencies` | `pnpm audit --audit-level high` | Run pnpm's dependency vulnerability audit, failing at high severity. | Yes |
+| `audit:dependencies` | `pnpm run test:compile && node out/tools/auditDependenciesCli.js` | Compile and run pnpm's dependency vulnerability audit: production dependencies fail at moderate, any dependency fails at critical, the rest are warnings. | No |
 | `audit:signatures` | `pnpm run test:compile && node out/tools/auditSignaturesCli.js` | Compile and verify pnpm package signatures. | No |
 | `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence into the directory given as `--out-dir <relative-directory>` (required). | No |
 | `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration, CODEOWNERS, and Dependabot policy. | No |

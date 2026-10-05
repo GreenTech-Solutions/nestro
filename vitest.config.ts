@@ -43,7 +43,9 @@ export default defineConfig({
 				'src/tools/vsixPolicy.ts': { statements: 98, branches: 97, functions: 100, lines: 98 },
 				'src/tools/verifyVsix.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
 				'src/tools/verifyVsixCli.ts': { statements: 100, branches: 94, functions: 100, lines: 100 },
-				// Signature-audit files stay pinned at their measured 100% floors.
+				// Dependency- and signature-audit files stay pinned at their measured 100% floors.
+				'src/tools/auditDependencies.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
+				'src/tools/auditDependenciesCli.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
 				'src/tools/auditSignatures.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
 				'src/tools/auditSignaturesCli.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
 				'src/tools/vsixArchive.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },

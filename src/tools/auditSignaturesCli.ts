@@ -24,16 +24,16 @@ function readString(value: unknown): string {
  * handed to the pure evaluator, which alone decides what they mean. Only a spawn failure
  * leaves the exit code undefined, which the evaluator also rejects.
  */
-export function createNodeSignatureAuditRunner(
+export function createNodePnpmRunner(
   cwd: string,
   platform: string,
-): () => Promise<SignatureAuditExecution> {
+): (args: readonly string[]) => Promise<SignatureAuditExecution> {
   const executable = resolvePnpmExecutable(platform);
-  const command = `${executable} ${SIGNATURE_AUDIT_ARGS.join(' ')}`;
 
-  return async (): Promise<SignatureAuditExecution> => {
+  return async (args: readonly string[]): Promise<SignatureAuditExecution> => {
+    const command = `${executable} ${args.join(' ')}`;
     try {
-      const { stderr, stdout } = await execFileAsync(executable, [...SIGNATURE_AUDIT_ARGS], {
+      const { stderr, stdout } = await execFileAsync(executable, [...args], {
         cwd,
         maxBuffer: MAX_CHILD_OUTPUT_BYTES,
       });
@@ -48,6 +48,14 @@ export function createNodeSignatureAuditRunner(
       return { command, stdout: readString(details.stdout), stderr, exitCode };
     }
   };
+}
+
+export function createNodeSignatureAuditRunner(
+  cwd: string,
+  platform: string,
+): () => Promise<SignatureAuditExecution> {
+  const runPnpm = createNodePnpmRunner(cwd, platform);
+  return () => runPnpm(SIGNATURE_AUDIT_ARGS);
 }
 
 export function createNodeSignatureAuditCliDependencies(
