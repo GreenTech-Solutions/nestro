@@ -24,7 +24,7 @@ const CANDIDATE_ACTIONS = {
   pnpm: 'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024',
   upload: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
 } as const;
-const PUBLISH_ACTION = 'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db';
+const PUBLISH_ACTION = 'HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12';
 const PREPARE_TRIGGER = {
   workflow_run: {
     types: ['completed'],

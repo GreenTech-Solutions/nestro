@@ -26,6 +26,7 @@ const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020': 'v7.0.0',
   'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a': 'v7.0.1',
   'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db': 'v2.0.0',
+  'HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12': 'v2.1.0',
   'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
   'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
   'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024': 'v3.0.0',

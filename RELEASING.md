@@ -163,8 +163,8 @@ What the `publish` job does today, once approved:
 
 1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then runs
    `gh attestation verify` against the GitHub attestation created in `ci.yml`.
-2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension@ca5561d...`
-   (pinned `v2.0.0`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
+2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension@1b8df46...`
+   (pinned `v2.1.0`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
    secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:
    https://marketplace.visualstudio.com`, `skipDuplicate: true`.
 3. Publishes to Open VSX with the same pinned action and the same shape (`env: OVSX_PAT: ${{
