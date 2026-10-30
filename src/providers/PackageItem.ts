@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { sanitizeInlineText } from '../shared';
+import { CONTEXT_VALUE_TOKENS, sanitizeInlineText } from '../shared';
 import {
   AuditSeverity,
   formatAuditSeverityLabel,
@@ -74,14 +74,12 @@ export class PackageItem extends vscode.TreeItem {
         sanitizePackageText(parsedSpec.reason),
       );
     }
-    const contextBase = this.operation === undefined ? hasUpdate ? 'outdated' : 'package' : `installing-${this.operation.kind}`;
-    const pinCapability = this.operation === undefined ? parsedSpec.supported ? '-pinnable' : '-pin-unsupported' : '';
-    this.contextValue = `${contextBase}${pinCapability}`;
+    this.contextValue = buildRowContextValue(this.operation, hasUpdate, parsedSpec.supported);
     if (vulnerabilitySeverity !== undefined) {
       const severityLabel = formatAuditSeverityLabel(vulnerabilitySeverity);
       this.description = vscode.l10n.t('{0} vulnerability: {1}', this.description, severityLabel);
       this.tooltip = vscode.l10n.t('{0}\nVulnerability: {1}', this.tooltip, severityLabel);
-      this.contextValue = `${this.contextValue}-vulnerable-${vulnerabilitySeverity}`;
+      this.contextValue = `${this.contextValue}-${CONTEXT_VALUE_TOKENS.vulnerable}-${vulnerabilitySeverity}`;
     }
     const releaseAgeText = getReleaseAgeText(releaseAge);
     if (releaseAgeText !== undefined) {
@@ -124,6 +122,14 @@ export function normalizeOperation(operation: PackageOperationInput, defaultTarg
     return operation;
   }
   return operation ? { kind: 'update', target: defaultTarget } : undefined;
+}
+
+function buildRowContextValue(operation: PackageOperation | undefined, hasUpdate: boolean, pinSupported: boolean): string {
+  if (operation !== undefined) {
+    return `${CONTEXT_VALUE_TOKENS.installing}-${operation.kind}`;
+  }
+  const base = hasUpdate ? CONTEXT_VALUE_TOKENS.outdated : CONTEXT_VALUE_TOKENS.package;
+  return `${base}-${pinSupported ? CONTEXT_VALUE_TOKENS.pinnable : CONTEXT_VALUE_TOKENS.pinUnsupported}`;
 }
 
 function resolveWorkspaceOwner(packageFilePath: string): string | undefined {

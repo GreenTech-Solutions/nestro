@@ -14,10 +14,7 @@ import {
   formatVulnerablePackageCount,
 } from '../utils';
 import type { StatusReportFailure } from '../utils';
-import { uniqueStrings } from '../shared';
-
-const SHOW_FILTER_PICKER_COMMAND = 'nestro.showFilterPicker';
-const SEARCH_PACKAGES_COMMAND = 'nestro.searchPackages';
+import { COMMAND_IDS, CONTEXT_KEYS, uniqueStrings } from '../shared';
 
 export type CheckState = 'idle' | 'running' | 'done' | 'incomplete';
 export type AuditState = 'idle' | 'running' | 'done' | 'incomplete' | 'failed';
@@ -57,20 +54,7 @@ export interface StatusRowProjection {
   readonly command?: StatusRowCommand;
 }
 
-export const VIEW_CONTEXT_KEYS = {
-  canUpdateVisiblePackages: 'nestro.canUpdateVisiblePackages',
-  hasPackageFiles: 'nestro.hasPackageFiles',
-  hasReadablePackageFiles: 'nestro.hasReadablePackageFiles',
-  hasDependencyEntries: 'nestro.hasDependencyEntries',
-  hasAuditableProjects: 'nestro.hasAuditableProjects',
-  canRunInstall: 'nestro.canRunInstall',
-  canRunAudit: 'nestro.canRunAudit',
-  canSearchPackages: 'nestro.canSearchPackages',
-  canFilterPackages: 'nestro.canFilterPackages',
-  canPinAllVersions: 'nestro.canPinAllVersions',
-  noWorkspace: 'nestro.noWorkspace',
-  hasSearchQuery: 'nestro.hasSearchQuery',
-} as const;
+export const VIEW_CONTEXT_KEYS = CONTEXT_KEYS;
 
 export type ViewContextKey = keyof typeof VIEW_CONTEXT_KEYS;
 export type ViewContextMap = Readonly<Record<ViewContextKey, boolean>>;
@@ -297,7 +281,7 @@ export function projectStatusRows(
         ),
         icon: 'filter',
         actionable: false,
-        command: { command: SHOW_FILTER_PICKER_COMMAND, title: vscode.l10n.t('Change filter') },
+        command: { command: COMMAND_IDS.showFilterPicker, title: vscode.l10n.t('Change filter') },
       });
     }
     if (snapshot.search !== '') {
@@ -306,7 +290,7 @@ export function projectStatusRows(
         description: formatPackageCount(filteredProjection.filterCounts.all),
         icon: 'search',
         actionable: false,
-        command: { command: SEARCH_PACKAGES_COMMAND, title: vscode.l10n.t('Edit search') },
+        command: { command: COMMAND_IDS.searchPackages, title: vscode.l10n.t('Edit search') },
       });
     }
   }

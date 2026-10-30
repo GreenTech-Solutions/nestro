@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
+import { COMMAND_IDS } from '../shared';
 import {
   formatDependencySectionLabel,
   formatShellTaskCommandForLog,
@@ -21,7 +22,7 @@ const clientManager = new ClientManager();
 
 export async function removePackageCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
-    logger.warn('nestro.removePackage invoked without a valid package item; ignoring.');
+    logger.warn(`${COMMAND_IDS.removePackage} invoked without a valid package item; ignoring.`);
     return;
   }
 

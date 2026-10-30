@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { getIncludePreReleases, getMinimumReleaseAgeDays } from '../config';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
+import { COMMAND_IDS } from '../shared';
 import {
   classifyVersionReleaseAge,
   fetchPackageMetadata,
@@ -21,7 +22,7 @@ interface VersionQuickPickItem extends vscode.QuickPickItem {
 
 export async function pickVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
-    logger.warn('nestro.pickVersion invoked without a valid package item; ignoring.');
+    logger.warn(`${COMMAND_IDS.pickVersion} invoked without a valid package item; ignoring.`);
     return;
   }
 

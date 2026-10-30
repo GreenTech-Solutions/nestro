@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import { validatePackageName } from '../clients';
 import { isPackageItem } from '../providers';
+import { COMMAND_IDS } from '../shared';
 import { logger, showError } from '../utils';
 
 const NPM_PACKAGE_URL = 'https://www.npmjs.com/package/';
 
 export function openOnNpmCommand(item: unknown): void {
   if (!isPackageItem(item)) {
-    logger.warn('nestro.openOnNpm invoked without a valid package item; ignoring.');
+    logger.warn(`${COMMAND_IDS.openOnNpm} invoked without a valid package item; ignoring.`);
     return;
   }
 

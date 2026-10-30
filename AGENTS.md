@@ -47,7 +47,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 
 **Per-click debounce** — `checkUpdates()` enforces a debounce via `nestro.checkUpdatesDebounce` (seconds), but only when the update cache is still valid for the current `updateTarget` / `includePreReleases` / package-file set; a config or package-set change bypasses the debounce. Set `nestro.checkUpdatesForceAlways` to `true` to bypass the debounce and always run immediately. `invalidateUpdateCache()` clears both the cache and the last-check timestamp. `checkUpdates()` also no-ops if a check is already `running`, preventing concurrent update checks from overlapping. `runAudit()` follows the same pattern, no-oping if `auditState` is already `running`. Applying a fetched result is gated separately by a content fingerprint over every dependency's canonical path, section, name and on-disk spec plus the update policy: the fingerprint is recomputed from disk immediately before the cache write, and a mismatch discards the whole fetch instead of caching it.
 
-**Context variables** — `emitTreeChanged()` publishes every key in `VIEW_CONTEXT_KEYS` (`src/providers/viewProjectionService.ts`) for `when`/`enablement` clauses in `package.json`; the non-obvious ones:
+**Context variables** — `emitTreeChanged()` publishes every key in `CONTEXT_KEYS` (`src/shared/ids.ts`, aliased `VIEW_CONTEXT_KEYS` in `src/providers/viewProjectionService.ts`) for `when`/`enablement` clauses in `package.json`; the non-obvious ones:
 - `nestro.canUpdateVisiblePackages` — true when filtered list has outdated packages (controls "Update All" button)
 - `nestro.noWorkspace` — true only after loading settles with no discovered package files and no package-file read failures (shows welcome content; an empty manifest still counts as a workspace)
 - `nestro.hasSearchQuery` — true when the active search query is non-empty (controls the Clear Search Query overflow entry); reset to `false` on `dispose()`
@@ -152,7 +152,7 @@ Release/CI/VSIX tooling, isolated from `providers`/`utils`/`clients`/`commands` 
 `tsdown` bundles `src/extension.ts` → `out/extension.cjs`; `vscode` is never bundled (external). Integration tests compiled separately via `tsc -p tsconfig.test.json` → `out/test/`. `tsconfig.json` uses `"module": "esnext"` + `"moduleResolution": "bundler"` for tsdown; `tsconfig.test.json` uses `"module": "Node16"`.
 
 ## Conventions
-- Command IDs: `nestro.<camelCase>` — declare in `package.json` `contributes.commands` **and** register in `activate()`
+- Command IDs: `nestro.<camelCase>` — add to `COMMAND_IDS` (`src/shared/ids.ts`, with `VIEW_IDS`, `CONTEXT_KEYS`, `CONTEXT_VALUE_TOKENS`), declare in `package.json` `contributes.commands` with a `commandPalette` override (or list it palette-visible in `src/test/idsManifest.unit.test.ts`) **and** register in `activate()`; that test fails on any drift between the registry and the manifest
 - TypeScript: strict mode — no `any`, explicit return types on exported functions
 - Code comments: one line by default, three at most; English, present tense; they say what the code is, not how it came to be. No task/audit ids (`AUD-09`, `ARC-01`), no benchmark tables, no rationale essays — that context belongs in the commit message. Rules and examples: **[CODESTYLE.md](CODESTYLE.md)** → Code Comments
 - Disposables: always `context.subscriptions.push(...)` — never leak event listeners or providers

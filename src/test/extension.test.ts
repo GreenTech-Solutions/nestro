@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { ClientManager } from '../clients';
 import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider, StatusItem } from '../providers';
+import { COMMAND_IDS, CONTEXT_KEYS, VIEW_IDS } from '../shared';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   assertTaskExitCode,
@@ -971,41 +972,28 @@ suite('Manifest Contracts', () => {
     }
   });
 
-  // Row-only and contextual commands have no meaningful effect when triggered outside their
-  // row/context, so they are excluded from the Command Palette entirely via a `when: false` menu entry.
-  const PALETTE_HIDDEN_COMMAND_IDS = [
-    'nestro.setFilter',
-    'nestro.showFilterPicker',
-    'nestro.installUpdate',
-    'nestro.pickVersion',
-    'nestro.switchDepType',
-    'nestro.pinVersion',
-    'nestro.removePackage',
-    'nestro.openOnNpm',
-    'nestro.copyPackageName',
-    'nestro.clearSearchQuery',
-  ] as const;
-
+  // Row-only and contextual commands have no meaningful effect outside their row/context, so
+  // the manifest hides them from the Command Palette with a `when: false` menu entry.
   const PALETTE_GATED_COMMANDS: Readonly<Record<string, string>> = {
-    'nestro.updateAllVisible': 'nestro.canUpdateVisiblePackages',
-    'nestro.runInstall': 'nestro.canRunInstall',
-    'nestro.searchPackages': 'nestro.canSearchPackages',
-    'nestro.runAudit': 'nestro.canRunAudit',
-    'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+    [COMMAND_IDS.updateAllVisible]: CONTEXT_KEYS.canUpdateVisiblePackages,
+    [COMMAND_IDS.runInstall]: CONTEXT_KEYS.canRunInstall,
+    [COMMAND_IDS.searchPackages]: CONTEXT_KEYS.canSearchPackages,
+    [COMMAND_IDS.runAudit]: CONTEXT_KEYS.canRunAudit,
+    [COMMAND_IDS.pinAllVersions]: CONTEXT_KEYS.canPinAllVersions,
   };
 
-  test('row-only and contextual commands are hidden from the Command Palette', () => {
+  const getPaletteHiddenCommandIds = (): string[] => getManifest().contributes.menus.commandPalette
+    .filter(entry => entry.when === 'false')
+    .map(entry => entry.command);
+
+  test('every commandPalette override hides its command or gates it by capability', () => {
     const paletteEntries = getManifest().contributes.menus.commandPalette;
-    for (const commandId of PALETTE_HIDDEN_COMMAND_IDS) {
-      const entry = paletteEntries.find(candidate => candidate.command === commandId);
-      assert.ok(entry, `${commandId} should have a commandPalette menu entry`);
-      assert.strictEqual(entry.when, 'false', `${commandId} should be hidden from the Command Palette`);
+    for (const entry of paletteEntries) {
+      assert.ok(
+        entry.when === 'false' || entry.when === PALETTE_GATED_COMMANDS[entry.command],
+        `${entry.command} commandPalette override should be hidden or capability-gated`,
+      );
     }
-    assert.strictEqual(
-      paletteEntries.length,
-      PALETTE_HIDDEN_COMMAND_IDS.length + Object.keys(PALETTE_GATED_COMMANDS).length,
-      'every commandPalette override should be a hidden or capability-gated command',
-    );
     for (const [commandId, context] of Object.entries(PALETTE_GATED_COMMANDS)) {
       const entry = paletteEntries.find(candidate => candidate.command === commandId);
       assert.ok(entry, `${commandId} should have a capability-gated commandPalette entry`);
@@ -1014,7 +1002,7 @@ suite('Manifest Contracts', () => {
   });
 
   test('every command still visible in the Command Palette carries the Nestro category', () => {
-    const hiddenIds = new Set<string>(PALETTE_HIDDEN_COMMAND_IDS);
+    const hiddenIds = new Set<string>(getPaletteHiddenCommandIds());
     const visibleCommands = getManifest().contributes.commands.filter(entry => !hiddenIds.has(entry.command));
     assert.ok(visibleCommands.length > 0, 'at least one command should remain visible in the Command Palette');
     for (const command of visibleCommands) {
@@ -1033,9 +1021,9 @@ suite('Manifest Contracts', () => {
     // nestro.searchPackages carries no command enablement — its row binds it through
     // TreeItem.command (viewProjectionService.ts), and visibility is when-gated below instead.
     for (const [commandId, context] of Object.entries({
-      'nestro.runInstall': 'nestro.canRunInstall',
-      'nestro.runAudit': 'nestro.canRunAudit',
-      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+      [COMMAND_IDS.runInstall]: CONTEXT_KEYS.canRunInstall,
+      [COMMAND_IDS.runAudit]: CONTEXT_KEYS.canRunAudit,
+      [COMMAND_IDS.pinAllVersions]: CONTEXT_KEYS.canPinAllVersions,
     })) {
       const command = commands.find(entry => entry.command === commandId);
       assert.ok(command, `${commandId} should be a contributed command`);
@@ -1049,14 +1037,14 @@ suite('Manifest Contracts', () => {
 
     const toolbarEntries = getManifest().contributes.menus['view/title'];
     for (const [commandId, context] of Object.entries({
-      'nestro.runInstall': 'nestro.canRunInstall',
-      'nestro.runAudit': 'nestro.canRunAudit',
-      'nestro.searchPackages': 'nestro.canSearchPackages',
-      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
+      [COMMAND_IDS.runInstall]: CONTEXT_KEYS.canRunInstall,
+      [COMMAND_IDS.runAudit]: CONTEXT_KEYS.canRunAudit,
+      [COMMAND_IDS.searchPackages]: CONTEXT_KEYS.canSearchPackages,
+      [COMMAND_IDS.pinAllVersions]: CONTEXT_KEYS.canPinAllVersions,
     })) {
       const entry = toolbarEntries.find(candidate => candidate.command === commandId);
       assert.ok(entry, `${commandId} should have a toolbar menu entry`);
-      assert.strictEqual(entry.when, `view == nestro.packagesView && ${context}`);
+      assert.strictEqual(entry.when, `view == ${VIEW_IDS.packages} && ${context}`);
     }
   });
 
@@ -1082,28 +1070,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
    * invoked with no argument — even though hidden from the Palette, `executeCommand()` still
    * reaches the real handler directly through the API regardless of Palette visibility.
    */
-  const COMMAND_IDS_UNDER_TEST: readonly string[] = [
-    'nestro.refresh',
-    'nestro.checkUpdates',
-    'nestro.runAudit',
-    'nestro.openAuditReport',
-    'nestro.openStatusReport',
-    'nestro.installUpdate',
-    'nestro.pickVersion',
-    'nestro.switchDepType',
-    'nestro.pinVersion',
-    'nestro.removePackage',
-    'nestro.updateAllVisible',
-    'nestro.runInstall',
-    'nestro.openOnNpm',
-    'nestro.copyPackageName',
-    'nestro.setFilter',
-    'nestro.showFilterPicker',
-    'nestro.searchPackages',
-    'nestro.clearSearchQuery',
-    'nestro.openSettings',
-    'nestro.pinAllVersions',
-  ];
+  const COMMAND_IDS_UNDER_TEST: readonly string[] = Object.values(COMMAND_IDS);
 
   let commandIds: string[];
   let unhandledRejections: unknown[];
@@ -1129,8 +1096,8 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
   });
 
-  test('contributes.commands still has exactly the 20 entries this suite enumerates', () => {
-    assert.strictEqual(commandIds.length, 20, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
+  test('contributes.commands still has exactly the entries of COMMAND_IDS', () => {
+    assert.strictEqual(commandIds.length, COMMAND_IDS_UNDER_TEST.length, 'A manifest command count drift means COMMAND_IDS in src/shared/ids.ts is stale');
     const localeCompare = (left: string, right: string): number => left.localeCompare(right);
     assert.deepStrictEqual([...commandIds].sort(localeCompare), [...COMMAND_IDS_UNDER_TEST].sort(localeCompare));
   });
@@ -1150,7 +1117,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
       // is never awaited by executeCommand() and would otherwise sit open in the background for
       // the rest of this loop, so it is closed explicitly here.
       await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
-      if (commandId === 'nestro.openSettings') {
+      if (commandId === COMMAND_IDS.openSettings) {
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
       }
 
@@ -1165,7 +1132,7 @@ suite('Contributed Command Surface: invocation without arguments', function () {
     });
   }
 
-  test('the Extension Host is still fully responsive after invoking all 20 commands with no arguments', async () => {
+  test('the Extension Host is still fully responsive after invoking every command with no arguments', async () => {
     const registered = await vscode.commands.getCommands(true);
     for (const commandId of commandIds) {
       assert.ok(registered.includes(commandId), `${commandId} should still be registered`);

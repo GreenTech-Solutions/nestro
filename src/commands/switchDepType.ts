@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PackagesProvider } from '../providers';
+import { COMMAND_IDS } from '../shared';
 import {
   DependencyTypeConflictError,
   logger,
@@ -12,7 +13,7 @@ import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packa
 
 export async function switchDepTypeCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
-    logger.warn('nestro.switchDepType invoked without a valid package item; ignoring.');
+    logger.warn(`${COMMAND_IDS.switchDepType} invoked without a valid package item; ignoring.`);
     return;
   }
 

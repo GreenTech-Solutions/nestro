@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { resolveMutationCoordinatorKey } from '../clients';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider } from '../providers';
+import { COMMAND_IDS } from '../shared';
 import {
   logger,
   mutationCoordinator,
@@ -13,7 +14,7 @@ import { resolveCommandPackageItem, resolvePinManifestEntry } from './packageIde
 
 export async function pinVersionCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   if (!isPackageItem(item)) {
-    logger.warn('nestro.pinVersion invoked without a valid package item; ignoring.');
+    logger.warn(`${COMMAND_IDS.pinVersion} invoked without a valid package item; ignoring.`);
     return;
   }
 

@@ -9,7 +9,21 @@ const path = require('node:path');
 const MARKERS_DIR = process.env.NESTRO_CAPTURE_MARKERS_DIR;
 const STATES = (process.env.NESTRO_CAPTURE_STATES || '').split(',').filter(Boolean);
 const PARAMS = require('./config.json').params;
+const MANIFEST = require('../../package.json');
 const LOG_FILE = path.join(MARKERS_DIR, 'driver.log');
+
+// Resolves a contributed command by its short name so the driver never spells an id the manifest owns.
+function commandId(shortName) {
+  const matches = MANIFEST.contributes.commands.map(entry => entry.command).filter(id => id.split('.').pop() === shortName);
+  if (matches.length !== 1) {
+    throw new Error(`expected exactly one contributed command named "${shortName}", found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+const EXTENSION_ID = `${MANIFEST.publisher}.${MANIFEST.name}`;
+const [CONTAINER] = MANIFEST.contributes.viewsContainers.activitybar;
+const [VIEW] = MANIFEST.contributes.views[CONTAINER.id];
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -53,7 +67,7 @@ function fireCommand(id, ...args) {
 
 exports.run = async function run() {
   log(`driver start; states=${STATES.join(',')}`);
-  const extension = vscode.extensions.getExtension('greentech-solutions.nestro');
+  const extension = vscode.extensions.getExtension(EXTENSION_ID);
   log(`extension found: ${!!extension}, active: ${extension && extension.isActive}`);
   if (extension && !extension.isActive) {
     await extension.activate();
@@ -62,13 +76,13 @@ exports.run = async function run() {
   await runCommand('workbench.action.closeAuxiliaryBar');
   await runCommand('workbench.action.closePanel');
   await runCommand('workbench.action.closeAllEditors');
-  await runCommand('workbench.view.extension.nestro');
+  await runCommand(`workbench.view.extension.${CONTAINER.id}`);
   await sleep(1500);
   await runCommand('notifications.clearAll');
   await sleep(500);
 
   if (STATES.some(state => state !== 'audit')) {
-    fireCommand('nestro.checkUpdates');
+    fireCommand(commandId('checkUpdates'));
     await sleep(PARAMS.updateWaitMs);
     await runCommand('notifications.clearAll');
   }
@@ -79,15 +93,15 @@ exports.run = async function run() {
   }
 
   if (STATES.includes('filters')) {
-    await runCommand('nestro.setFilter', PARAMS.filter);
+    await runCommand(commandId('setFilter'), PARAMS.filter);
     await sleep(800);
-    fireCommand('nestro.showFilterPicker');
+    fireCommand(commandId('showFilterPicker'));
     await sleep(1500);
     markReady('filters');
     await waitForDone('filters');
     await runCommand('workbench.action.closeQuickOpen');
     await sleep(500);
-    await runCommand('nestro.setFilter', 'all');
+    await runCommand(commandId('setFilter'), 'all');
     await sleep(800);
   }
 
@@ -101,7 +115,7 @@ exports.run = async function run() {
     if (!registry || !Array.isArray(registry.items)) {
       throw new Error('globalThis.__nestroShots is missing; the instrumented bundle hook (capture.mjs buildInstrumentedExtension()) did not install.');
     }
-    await runCommand('nestro.packagesView.focus');
+    await runCommand(`${VIEW.id}.focus`);
     await sleep(500);
     if (typeof PARAMS.rowDown === 'number') {
       await runCommand('list.focusFirst');
@@ -117,13 +131,13 @@ exports.run = async function run() {
     if (!item) {
       throw new Error(`no PackageItem named "${targetName}" was recorded by the hook (registry has ${registry.items.length} item(s)); check the fixture dependencies and --states.`);
     }
-    fireCommand('nestro.pickVersion', item);
+    fireCommand(commandId('pickVersion'), item);
     await sleep(PARAMS.pickWaitMs);
     markReady('pickVersion');
     await waitForDone('pickVersion');
     await runCommand('workbench.action.closeQuickOpen');
     await sleep(500);
-    await runCommand('nestro.packagesView.focus');
+    await runCommand(`${VIEW.id}.focus`);
     await runCommand('list.clear');
     await sleep(200);
     await runCommand('workbench.action.focusFirstEditorGroup');
@@ -131,7 +145,7 @@ exports.run = async function run() {
   }
 
   if (STATES.includes('audit')) {
-    fireCommand('nestro.runAudit');
+    fireCommand(commandId('runAudit'));
     await sleep(PARAMS.auditWaitMs);
     await runCommand('notifications.clearAll');
     await sleep(300);
