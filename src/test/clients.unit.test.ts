@@ -121,6 +121,29 @@ describe('package manager clients', () => {
     ]), 'bun', ['add', '--dev', '--', quoted('vitest@4.0.0')]);
   });
 
+  it('places the workspace-root flag between the section flag and the operand separator', () => {
+    const targets = [{ name: 'vitest', version: '4.0.0', section: 'devDependencies' as const }];
+    expectCommand(
+      new PnpmClient('/workspace', true).buildUpdateCommand(targets),
+      'pnpm',
+      ['add', '--save-dev', '--ignore-workspace-root-check', '--', quoted('vitest@4.0.0')],
+    );
+    expectCommand(
+      new YarnClient('/workspace', true).buildUpdateCommand(targets),
+      'yarn',
+      ['add', '--dev', '--ignore-workspace-root-check', '--', quoted('vitest@4.0.0')],
+    );
+  });
+
+  it.each([
+    ['npm', NpmClient, 'install'],
+    ['bun', BunClient, 'add'],
+  ] as const)('never adds a workspace-root flag to %s update commands', (packageManager, ClientCtor, verb) => {
+    expectCommand(new ClientCtor('/workspace', true).buildUpdateCommand([
+      { name: 'react', version: '18.0.0', section: 'dependencies' },
+    ]), packageManager, [verb, '--', quoted('react@18.0.0')]);
+  });
+
   it('builds npm remove commands', () => {
     expectCommand(
       new NpmClient('/workspace').buildRemoveCommand(['lodash', 'moment']),
@@ -349,6 +372,119 @@ describe('ClientManager', () => {
     );
 
     await expect(new ClientManager().getClient('/workspace')).resolves.toBeInstanceOf(expectedClient);
+  });
+
+  describe('workspace-root flag', () => {
+    const react = [{ name: 'react', version: '18.0.0', section: 'dependencies' as const }];
+
+    async function updateArgs(cwd: string): Promise<unknown[]> {
+      return (await new ClientManager().getClient(cwd)).buildUpdateCommand(react).args;
+    }
+
+    const PNPM_MANIFEST = JSON.stringify({ packageManager: 'pnpm@11.20.0' });
+    const withFlag = ['add', '--ignore-workspace-root-check', '--', quoted('react@18.0.0')];
+    const withoutFlag = ['add', '--', quoted('react@18.0.0')];
+
+    it.each([
+      ['a block list', 'packages:\n  - packages/*\n  - apps/*\n'],
+      ['an unindented block list', 'packages:\n- packages/*\n- apps/*\n'],
+      ['a quoted block list with a negation', 'packages:\n  - "packages/*"\n  - "!**/test/**"\nminimumReleaseAge: 0\n'],
+      ['a flow list', 'packages: ["packages/*", "apps/*"]\n'],
+      ['a multi-line flow list', 'packages: [\n  packages/*,\n  apps/*\n]\n'],
+    ] as const)('adds the flag for pnpm at a root whose workspace file holds two patterns as %s', async (_label, yaml) => {
+      mockWorkspaceFiles({ '/workspace/package.json': PNPM_MANIFEST, '/workspace/pnpm-workspace.yaml': yaml });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(withFlag);
+    });
+
+    it.each([
+      ['a single pattern', 'packages:\n  - packages/*\n'],
+      ['a single flow pattern', 'packages: [packages/*]\n'],
+      ['a single flow pattern with braces', 'packages: ["{packages,apps}/*"]\n'],
+      ['patterns commented out', 'packages:\n  - packages/*\n  # - apps/*\n'],
+      ['a following key that lists items', 'packages:\n  - packages/*\ncatalogs:\n  - a\n  - b\n'],
+      ['no packages key', 'minimumReleaseAge: 0\n'],
+      ['an empty file', ''],
+    ] as const)('omits the flag for pnpm when the workspace file holds %s', async (_label, yaml) => {
+      mockWorkspaceFiles({ '/workspace/package.json': PNPM_MANIFEST, '/workspace/pnpm-workspace.yaml': yaml });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(withoutFlag);
+    });
+
+    it('omits the flag for a pnpm workspace package below the root', async () => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': PNPM_MANIFEST,
+        '/workspace/pnpm-workspace.yaml': 'packages:\n  - packages/*\n  - apps/*\n',
+        '/workspace/packages/app/package.json': '{}',
+      });
+
+      await expect(updateArgs('/workspace/packages/app')).resolves.toEqual(withoutFlag);
+    });
+
+    it('omits the flag for a pnpm project without a workspace file', async () => {
+      mockWorkspaceFiles({ '/workspace/package.json': PNPM_MANIFEST });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(withoutFlag);
+    });
+
+    it.each([
+      ['an array', ['packages/*']],
+      ['a packages object', { packages: ['packages/*'] }],
+    ] as const)('adds the flag for Yarn Classic at a root declaring workspaces as %s', async (_label, workspaces) => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@1.22.22', workspaces }),
+      });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(['add', '--ignore-workspace-root-check', '--', quoted('react@18.0.0')]);
+    });
+
+    it('omits the flag for Yarn Modern, which rejects it', async () => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@4.6.0', workspaces: ['packages/*'] }),
+      });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(['add', '--', quoted('react@18.0.0')]);
+    });
+
+    it('omits the flag for a Yarn Classic workspace package below the root', async () => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@1.22.22', workspaces: ['packages/*'] }),
+        '/workspace/packages/app/package.json': '{}',
+      });
+
+      await expect(updateArgs('/workspace/packages/app')).resolves.toEqual(['add', '--', quoted('react@18.0.0')]);
+    });
+
+    it.each([
+      ['no package.json', undefined],
+      ['an unparsable package.json', '{'],
+      ['a non-object package.json', '[]'],
+      ['a workspaces field that is neither an array nor a packages object', JSON.stringify({ workspaces: 'packages/*' })],
+    ] as const)('omits the flag for a Yarn Classic lock file with %s', async (_label, manifest) => {
+      mockWorkspaceFiles({
+        '/workspace/yarn.lock': '# yarn lockfile v1\n',
+        ...(manifest === undefined ? {} : { '/workspace/package.json': manifest }),
+      });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(['add', '--', quoted('react@18.0.0')]);
+    });
+
+    it.each(['npm', 'bun'] as const)('never probes for a workspace root under %s', async (packageManager) => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': JSON.stringify({ packageManager: `${packageManager}@1.0.0`, workspaces: ['packages/*'] }),
+      });
+
+      expect((await updateArgs('/workspace')).filter(arg => arg === '--ignore-workspace-root-check')).toEqual([]);
+      expect(vscode.workspace.fs.readFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ fsPath: '/workspace/pnpm-workspace.yaml' }),
+      );
+    });
+
+    it('omits the flag for a Yarn Classic project that declares no workspaces', async () => {
+      mockWorkspaceFiles({ '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@1.22.22' }) });
+
+      await expect(updateArgs('/workspace')).resolves.toEqual(['add', '--', quoted('react@18.0.0')]);
+    });
   });
 
   it('detects a root pnpm lockfile from a nested workspace package', async () => {

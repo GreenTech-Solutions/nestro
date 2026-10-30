@@ -8,7 +8,13 @@ export class PnpmClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
       command: spec.bin,
-      args: [spec.addVerb, ...this.getSectionArgs(packages, spec.devFlag), '--', ...this.formatPackageTargets(packages)],
+      args: [
+        spec.addVerb,
+        ...this.getSectionArgs(packages, spec.devFlag),
+        ...this.getWorkspaceRootArgs(spec.workspaceRootFlag),
+        '--',
+        ...this.formatPackageTargets(packages),
+      ],
     };
   }
 

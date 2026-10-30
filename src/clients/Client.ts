@@ -23,7 +23,7 @@ export interface RemoveOptions {
 }
 
 export abstract class Client {
-  constructor(protected readonly cwd: string) {}
+  constructor(protected readonly cwd: string, protected readonly atWorkspaceRoot = false) {}
 
   abstract buildUpdateCommand(packages: readonly PackageTarget[]): ShellTaskCommand;
   abstract buildInstallCommand(): ShellTaskCommand;
@@ -54,6 +54,10 @@ export abstract class Client {
   protected getSectionArgs(packages: readonly PackageTarget[], devFlag: string): string[] {
     const hasDevDependencies = packages.some(packageTarget => packageTarget.section === 'devDependencies');
     return hasDevDependencies ? [devFlag] : [];
+  }
+
+  protected getWorkspaceRootArgs(workspaceRootFlag: string | undefined): string[] {
+    return this.atWorkspaceRoot && workspaceRootFlag !== undefined ? [workspaceRootFlag] : [];
   }
 
   private quoteShellArg(value: string): vscode.ShellQuotedString {

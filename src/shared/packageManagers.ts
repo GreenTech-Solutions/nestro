@@ -44,6 +44,7 @@ export const PACKAGE_MANAGERS = {
     addVerb: 'add',
     removeVerb: 'remove',
     devFlag: '--save-dev',
+    workspaceRootFlag: '--ignore-workspace-root-check',
     dialect: { audit: ['audit', '--json'], metadata: ['view', '--json', '--'], configFile: '.npmrc' },
   },
   yarn: {
@@ -53,6 +54,7 @@ export const PACKAGE_MANAGERS = {
     addVerb: 'add',
     removeVerb: 'remove',
     devFlag: '--dev',
+    workspaceRootFlag: '--ignore-workspace-root-check',
     dialect: YARN_DIALECTS.classic,
   },
   bun: {
@@ -71,6 +73,8 @@ export const PACKAGE_MANAGERS = {
   readonly addVerb: string;
   readonly removeVerb: string;
   readonly devFlag: string;
+  /** Lets `add` target a workspace root, where the manager otherwise refuses; absent when it never refuses. Yarn Modern rejects it. */
+  readonly workspaceRootFlag?: string;
   readonly dialect: CommandDialect;
 }>;
 

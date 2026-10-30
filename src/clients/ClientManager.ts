@@ -9,6 +9,7 @@ import {
   detectPackageManagerSignalFromAncestors,
 } from './projectResolver';
 import { YarnClient } from './YarnClient';
+import { isWorkspaceRoot } from './workspaceRoot';
 import { logger } from '../utils/logger';
 import { DEFAULT_PACKAGE_MANAGER } from '../shared';
 import type { PackageManager } from '../shared';
@@ -22,7 +23,7 @@ export class ClientManager {
       const signal = await detectPackageManagerSignalFromAncestors(cwd, workspaceFolder?.uri.fsPath);
       const packageManager = signal?.packageManager ?? DEFAULT_PACKAGE_MANAGER;
       const clientCwd = signal?.packageManager === 'yarn' ? signal.signalRoot : cwd;
-      return this.createClient(packageManager, clientCwd);
+      return this.createClient(packageManager, clientCwd, await isWorkspaceRoot(packageManager, cwd));
     }
     catch (err) {
       logger.error('Failed to detect package manager.', err);
@@ -30,16 +31,16 @@ export class ClientManager {
     }
   }
 
-  createClient(packageManager: PackageManager, cwd: string): Client {
+  createClient(packageManager: PackageManager, cwd: string, atWorkspaceRoot = false): Client {
     switch (packageManager) {
       case 'pnpm':
-        return new PnpmClient(cwd);
+        return new PnpmClient(cwd, atWorkspaceRoot);
       case 'yarn':
-        return new YarnClient(cwd);
+        return new YarnClient(cwd, atWorkspaceRoot);
       case 'bun':
-        return new BunClient(cwd);
+        return new BunClient(cwd, atWorkspaceRoot);
       case 'npm':
-        return new NpmClient(cwd);
+        return new NpmClient(cwd, atWorkspaceRoot);
     }
   }
 
