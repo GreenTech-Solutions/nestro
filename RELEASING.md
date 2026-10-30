@@ -165,8 +165,10 @@ mid-publish and cannot cancel one in flight.
 
 What the `publish` job does today, once approved:
 
-1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then runs
-   `gh attestation verify` against the GitHub attestation created in `ci.yml`.
+1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then checks out only
+   `.github/scripts` (sparse, non-cone) into `reviewed-source/` at the verified `sourceSha` with
+   `persist-credentials: false` — the only checkout in the job, before any credential step — and
+   runs `gh attestation verify` against the GitHub attestation created in `ci.yml`.
 2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension`
    (SHA and tag pinned in `.github/reviewed-actions.json`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
    secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:

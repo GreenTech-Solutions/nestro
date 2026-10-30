@@ -32,7 +32,7 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 70 },
   'src/tools/releaseCandidateCli.ts': { maxLines: 319, maxFunctionLines: 80 },
   'src/tools/releasePrepareCli.ts': { maxFunctionLines: 65 },
-  'src/tools/releaseWorkflowPolicy.ts': { maxLines: 943, maxFunctionLines: 212 },
+  'src/tools/releaseWorkflowPolicy.ts': { maxLines: 894, maxFunctionLines: 203 },
   'src/tools/verifyVsix.ts': { maxLines: 441 },
   'src/tools/verifyVsixCli.ts': { maxFunctionLines: 150 },
   'src/tools/vsixArchive.ts': { maxFunctionLines: 96 },

@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
-import { reviewedActionReference } from './reviewedActions';
 import { validatePrepareReleaseConfig } from './releaseAnalyzer';
+import { assertNoBuildOrCheckout, assertPublishSourceBoundary, SCRIPT_CHECKOUT_STEP_NAME } from './releasePublishSource';
+import { add, asRecord, asString, exactKeys, executableRun, findStep, hasAction, hasRun, isRecord, keys, normalizedRun, steps } from './releaseWorkflowSteps';
+import type { ReleaseWorkflowPolicyViolation, UnknownRecord } from './releaseWorkflowSteps';
+import { reviewedActionReference } from './reviewedActions';
 
 export const RELEASE_PREPARE_WORKFLOW_PATH = '.github/workflows/release-prepare.yml';
 export const RELEASE_CANDIDATE_WORKFLOW_PATH = '.github/workflows/release-candidate.yml';
@@ -9,12 +12,7 @@ export const RELEASE_DISPATCH_WORKFLOW_PATH = '.github/workflows/release-dispatc
 export const RELEASE_WORKFLOW_PATH = '.github/workflows/release.yml';
 export const RELEASE_CONFIG_PATH = '.releaserc.json';
 
-export interface ReleaseWorkflowPolicyViolation {
-  readonly rule: string;
-  readonly message: string;
-}
-
-type UnknownRecord = Record<string, unknown>;
+export type { ReleaseWorkflowPolicyViolation };
 
 const SOURCE_SHA_EXPRESSION = '${{ github.event.workflow_run.head_sha }}';
 const SOURCE_RUN_ID_EXPRESSION = '${{ github.event.workflow_run.id }}';
@@ -57,31 +55,18 @@ const PUBLISH_TRIGGER = {
 const PREPARE_RUN_FILTER = 'github.event.workflow_run.event == \'push\' && github.event.workflow_run.head_branch == \'master\' && github.event.workflow_run.conclusion == \'success\'';
 const CANDIDATE_RUN_FILTER = PREPARE_RUN_FILTER;
 const DISPATCH_RUN_FILTER = 'github.event.workflow_run.conclusion == \'success\' && github.event.workflow_run.head_branch == \'master\'';
+const PUBLISH_STEP_NAMES = [
+  'Verify the candidate workflow run',
+  'Resolve the exact candidate artifact',
+  'Download the exact candidate artifact',
+  'Verify the candidate manifest, tag and digest',
+  SCRIPT_CHECKOUT_STEP_NAME,
+  'Verify protected candidate attestation',
+  'Publish to the Visual Studio Marketplace',
+  'Publish to Open VSX',
+  'Compare post-publish registry copies',
+] as const;
 const PUBLISH_RUN_FILTER = 'startsWith(github.ref, \'refs/tags/v\')';
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asRecord(value: unknown): UnknownRecord | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function add(violations: ReleaseWorkflowPolicyViolation[], rule: string, message: string): void {
-  violations.push({ rule, message });
-}
-
-function keys(value: UnknownRecord | undefined): string[] {
-  return value === undefined ? [] : Object.keys(value).sort((left, right) => left.localeCompare(right));
-}
-
-function exactKeys(value: UnknownRecord | undefined, expected: readonly string[]): boolean {
-  return JSON.stringify(keys(value)) === JSON.stringify([...expected].sort((left, right) => left.localeCompare(right)));
-}
 
 function assertToolchain(job: UnknownRecord | undefined, label: string, violations: ReleaseWorkflowPolicyViolation[]): void {
   const pnpmSetup = findStep(job, 'Prepare pnpm');
@@ -102,17 +87,6 @@ function assertToolchain(job: UnknownRecord | undefined, label: string, violatio
     || nodeOptions['node-version-file'] !== '.nvmrc') {
     add(violations, 'toolchain', `${label} must use the reviewed setup-node with .nvmrc and the lockfile-scoped pnpm cache`);
   }
-}
-
-function normalizedRun(step: UnknownRecord): string {
-  return asString(step.run)?.trim().replaceAll('\r\n', '\n') ?? '';
-}
-
-function executableRun(step: UnknownRecord): string {
-  return normalizedRun(step)
-    .split('\n')
-    .filter(line => !/^\s*#/u.test(line))
-    .join('\n');
 }
 
 const POST_PUBLISH_COMPARE_RUN = [
@@ -306,14 +280,6 @@ function assertFailClosedShellSteps(
   }
 }
 
-function steps(job: UnknownRecord | undefined): UnknownRecord[] {
-  return Array.isArray(job?.steps) ? job.steps.filter(isRecord) : [];
-}
-
-function findStep(job: UnknownRecord | undefined, name: string): UnknownRecord | undefined {
-  return steps(job).find(step => step.name === name);
-}
-
 function assertStepNames(
   job: UnknownRecord | undefined,
   expected: readonly string[],
@@ -324,14 +290,6 @@ function assertStepNames(
   if (!isDeepStrictEqual(actual, expected)) {
     add(violations, rule, 'release jobs must contain only the reviewed executable steps in order');
   }
-}
-
-function hasRun(job: UnknownRecord | undefined, predicate: (run: string, step: UnknownRecord) => boolean): boolean {
-  return steps(job).some(step => predicate(executableRun(step), step));
-}
-
-function hasAction(job: UnknownRecord | undefined, reference: string): UnknownRecord | undefined {
-  return steps(job).find(step => step.uses === reference);
 }
 
 function hasSecretReference(value: unknown): boolean {
@@ -743,18 +701,6 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
   return violations;
 }
 
-function assertNoBuildOrCheckout(job: UnknownRecord | undefined, violations: ReleaseWorkflowPolicyViolation[]): void {
-  const hasForbiddenOperation = (run: string): boolean => run.includes('actions/checkout')
-    || /\b(?:pnpm|npm|yarn|bun)\s+(?:ci|install|exec|dlx)\b/u.test(run)
-    || /\bnpx\b/u.test(run)
-    || /\b(?:pnpm|npm|yarn|bun)\s+run\s+build\b/u.test(run)
-    || run.includes('tsdown')
-    || /\b(?:git\s+checkout|git\s+clone)\b/u.test(run);
-  if (hasAction(job, CANDIDATE_ACTIONS.checkout) !== undefined || hasRun(job, hasForbiddenOperation)) {
-    add(violations, 'publish-boundary', 'protected publish and finalizer jobs must not checkout, install or build');
-  }
-}
-
 export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPolicyViolation[] {
   const parsed = parseWorkflow(source);
   const violations = [...parsed.violations];
@@ -808,23 +754,14 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   })) {
     add(violations, 'artifact-outputs', 'publish must expose only the resolved artifact ID and candidate decision');
   }
-  assertStepNames(publish, [
-    'Verify the candidate workflow run',
-    'Resolve the exact candidate artifact',
-    'Download the exact candidate artifact',
-    'Verify the candidate manifest, tag and digest',
-    'Verify protected candidate attestation',
-    'Publish to the Visual Studio Marketplace',
-    'Publish to Open VSX',
-    'Compare post-publish registry copies',
-  ], 'step-allowlist', violations);
+  assertStepNames(publish, PUBLISH_STEP_NAMES, 'step-allowlist', violations);
   assertStepNames(finalize, [
     'Download the exact published candidate',
     'Verify the exact source tag',
     'Create the GitHub release if absent',
     'Verify an existing GitHub release safely',
   ], 'step-allowlist', violations);
-  assertNoBuildOrCheckout(publish, violations);
+  assertPublishSourceBoundary(publish, violations);
   assertNoBuildOrCheckout(finalize, violations);
   assertFailClosedShellSteps(publish, 'fail-closed-shell', violations);
   assertFailClosedShellSteps(finalize, 'finalizer-boundary', violations);

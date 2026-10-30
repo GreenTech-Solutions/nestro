@@ -183,6 +183,67 @@ describe('release workflow policies', () => {
     })), 'exact-artifact');
   });
 
+  it('requires the publish job to check out only the reviewed scripts at the verified source SHA', () => {
+    const scriptCheckout = (workflow: Record<string, unknown>): Record<string, unknown> =>
+      steps(workflow, 'publish').find(step => step.name === 'Check out the reviewed scripts')!;
+    const withOptions = (workflow: Record<string, unknown>): Record<string, unknown> =>
+      scriptCheckout(workflow).with as Record<string, unknown>;
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      delete withOptions(workflow)['persist-credentials'];
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      withOptions(workflow)['persist-credentials'] = true;
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      withOptions(workflow).ref = '${{ github.sha }}';
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      delete withOptions(workflow).ref;
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      withOptions(workflow)['sparse-checkout'] = '.';
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      delete withOptions(workflow)['sparse-checkout'];
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      withOptions(workflow)['sparse-checkout-cone-mode'] = true;
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      scriptCheckout(workflow).uses = 'actions/checkout@v7';
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      jobs(workflow).publish.steps = steps(workflow, 'publish').filter(step => step.name !== 'Check out the reviewed scripts');
+    })), 'script-checkout');
+  });
+
+  it('rejects a script checkout that precedes the manifest check or follows a credential step', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const publishSteps = steps(workflow, 'publish');
+      const index = publishSteps.findIndex(step => step.name === 'Check out the reviewed scripts');
+      const [checkout] = publishSteps.splice(index, 1);
+      publishSteps.unshift(checkout);
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      const publishSteps = steps(workflow, 'publish');
+      const index = publishSteps.findIndex(step => step.name === 'Check out the reviewed scripts');
+      const [checkout] = publishSteps.splice(index, 1);
+      publishSteps.splice(publishSteps.findIndex(step => step.name === 'Publish to Open VSX'), 0, checkout);
+    })), 'script-checkout');
+  });
+
+  it('rejects a second checkout, or a checkout with a shell body, in the publish job', () => {
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      steps(workflow, 'publish').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
+    })), 'publish-boundary');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      steps(workflow, 'publish').find(step => step.name === 'Check out the reviewed scripts')!.run = 'pnpm install';
+    })), 'script-checkout');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      steps(workflow, 'finalize').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
+    })), 'publish-boundary');
+  });
+
   it('rejects finalizer checkout/build, tag substitution, missing retry and malformed YAML', () => {
     const source = releaseSource;
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
