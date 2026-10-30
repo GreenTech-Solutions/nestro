@@ -25,6 +25,7 @@ vi.mock('../utils/processRunner', () => ({
 }));
 vi.mock('../utils/yarnFamily', () => ({
   resolveYarnFamily: resolveYarnFamilyMock,
+  runWithYarnFamilyMemo: <T>(operation: () => Promise<T>): Promise<T> => operation(),
 }));
 
 const success: PackageMetadataOutcome = {

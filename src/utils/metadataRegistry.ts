@@ -3,6 +3,7 @@ import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
+import { runWithYarnFamilyMemo } from './yarnFamily';
 import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMetadataClient';
 import { PACKAGE_MANAGER_NAMES } from '../shared';
 import type { PackageManager } from '../shared';
@@ -77,7 +78,11 @@ export class MetadataAdapterRegistry {
     return this.adapters.filter(adapter => adapter.packageManagers.includes(packageManager));
   }
 
-  async fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome> {
+  fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome> {
+    return runWithYarnFamilyMemo(() => this.fetchMetadataInMemo(request));
+  }
+
+  private async fetchMetadataInMemo(request: MetadataRequest): Promise<PackageMetadataOutcome> {
     let packageManager: PackageManager;
     try {
       packageManager = await detectPackageManager(

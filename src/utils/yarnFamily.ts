@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
@@ -21,12 +22,35 @@ export interface YarnFamilyResolution {
   source: YarnFamilySource;
 }
 
+const operationMemo = new AsyncLocalStorage<Map<string, Promise<YarnFamilyResolution>>>();
+
+/** Runs one operation with a Yarn family memo per project root; a nested call joins the enclosing memo. */
+export function runWithYarnFamilyMemo<T>(operation: () => Promise<T>): Promise<T> {
+  return operationMemo.getStore() === undefined
+    ? operationMemo.run(new Map(), operation)
+    : operation();
+}
+
 /**
  * Resolves the Yarn command family for one already-selected project root. Explicit
  * packageManager metadata wins, same-root markers are considered as a set, and PATH
- * probing is the bounded last resort. Nothing defaults to Yarn Classic.
+ * probing is the bounded last resort. Nothing defaults to Yarn Classic. Inside
+ * runWithYarnFamilyMemo() each root resolves once; outside it every call resolves afresh.
  */
-export async function resolveYarnFamily(projectRoot: string): Promise<YarnFamilyResolution> {
+export function resolveYarnFamily(projectRoot: string): Promise<YarnFamilyResolution> {
+  const memo = operationMemo.getStore();
+  if (memo === undefined) {
+    return resolveYarnFamilyUncached(projectRoot);
+  }
+  let resolution = memo.get(projectRoot);
+  if (resolution === undefined) {
+    resolution = resolveYarnFamilyUncached(projectRoot);
+    memo.set(projectRoot, resolution);
+  }
+  return resolution;
+}
+
+async function resolveYarnFamilyUncached(projectRoot: string): Promise<YarnFamilyResolution> {
   const packageManager = await readPackageManager(projectRoot);
   const metadataFamily = parsePackageManagerFamily(packageManager);
   if (metadataFamily !== 'unknown') {

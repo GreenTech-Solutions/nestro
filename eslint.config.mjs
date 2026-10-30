@@ -20,7 +20,7 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/test/extension.test.ts': { maxLines: 1041 },
   'src/test/installUpdate.unit.test.ts': { maxLines: 1555 },
   'src/test/packagesProvider.unit.test.ts': { maxLines: 4191 },
-  'src/test/registryClient.unit.test.ts': { maxLines: 1362 },
+  'src/test/registryClient.unit.test.ts': { maxLines: 1360 },
   'src/test/verifyVsix.unit.test.ts': { maxLines: 885 },
   'src/tools/auditSignatures.ts': { maxFunctionLines: 77 },
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },

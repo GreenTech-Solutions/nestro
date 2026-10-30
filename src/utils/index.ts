@@ -41,6 +41,6 @@ export type { StatusReportFailure, StatusReportFileLabel, StatusReportSnapshot }
 export { compareRawVersions, getGreatestVersion, getUpdateType, isPreReleaseVersion, isVersionOutdated } from './versionUtils';
 export type { UpdateType } from './versionUtils';
 export { parseYarnAuditOutcome, runYarnAudit, runYarnAuditOutcome } from './yarnAuditClient';
-export { resolveYarnFamily } from './yarnFamily';
+export { resolveYarnFamily, runWithYarnFamilyMemo } from './yarnFamily';
 export type { YarnFamily } from './yarnFamily';
 export { fetchPackageMetadataFromYarnClassic, fetchPackageMetadataFromYarnModern, parseYarnClassicMetadata, parseYarnModernMetadata, yarnClassicMetadataAdapter } from './yarnMetadataClient';

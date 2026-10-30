@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
 import { resolveSpawnTarget } from '../shared';
-import { resolveYarnFamily } from '../utils';
+import { MetadataAdapterRegistry, resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
+import type { MetadataAdapter } from '../utils';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -214,5 +215,97 @@ describe('resolveYarnFamily()', () => {
       family: 'modern',
       source: 'project-markers',
     });
+  });
+});
+
+describe('Yarn family probe count', () => {
+  const markerless = { [`${root}/package.json`]: '{}', [`${root}/yarn.lock`]: '' };
+
+  function mockPersistentProbe(stdout: string): void {
+    vi.mocked(execFile).mockImplementation((
+      _file: string,
+      _args: readonly string[] | null | undefined,
+      _options: ExecFileOptions | null | undefined,
+      callback: ExecFileCallback | null | undefined,
+    ) => {
+      if (callback === undefined || callback === null) {
+        throw new Error('Expected execFile callback.');
+      }
+      callback(null, stdout, '');
+      return {} as ChildProcess;
+    });
+  }
+
+  function adapterResolvingFamily(outcome: 'unrecognized' | 'success'): MetadataAdapter {
+    return {
+      tier: 'native-cli',
+      packageManagers: ['yarn'],
+      fetchMetadata: async (request) => {
+        await resolveYarnFamily(root);
+        return outcome === 'success'
+          ? { kind: 'success', result: { versions: ['1.0.0'], distTags: {}, publishTimes: { kind: 'not-provided' } } }
+          : { kind: 'unrecognized' };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(execFile).mockReset();
+    mockWorkspaceFiles(markerless);
+    mockPersistentProbe('4.6.0\n');
+  });
+
+  it('probes once per root while one metadata fetch cascades through several adapters', async () => {
+    const registry = new MetadataAdapterRegistry([
+      adapterResolvingFamily('unrecognized'),
+      adapterResolvingFamily('unrecognized'),
+      adapterResolvingFamily('success'),
+    ]);
+
+    const outcome = await registry.fetchMetadata({
+      packageName: 'left-pad',
+      packageFilePath: `${root}/package.json`,
+    });
+
+    expect(outcome.kind).toBe('success');
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes once per root inside a memo scope and per call outside it', async () => {
+    await runWithYarnFamilyMemo(async () => {
+      await Promise.all([resolveYarnFamily(root), resolveYarnFamily(root)]);
+      await resolveYarnFamily(root);
+    });
+    expect(execFile).toHaveBeenCalledTimes(1);
+
+    await resolveYarnFamily(root);
+    await resolveYarnFamily(root);
+    expect(execFile).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps roots separate and carries no resolution into the next scope', async () => {
+    const otherRoot = '/workspace/other';
+    mockWorkspaceFiles({ ...markerless, [`${otherRoot}/package.json`]: '{}' });
+
+    await runWithYarnFamilyMemo(async () => {
+      await resolveYarnFamily(root);
+      await resolveYarnFamily(otherRoot);
+    });
+    expect(execFile).toHaveBeenCalledTimes(2);
+
+    mockWorkspaceFiles({ [`${root}/package.json`]: JSON.stringify({ packageManager: 'yarn@1.22.19' }) });
+    await runWithYarnFamilyMemo(async () => {
+      await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'classic', source: 'package-manager' });
+    });
+    expect(execFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('joins the enclosing memo when scopes nest', async () => {
+    await runWithYarnFamilyMemo(async () => {
+      await resolveYarnFamily(root);
+      await runWithYarnFamilyMemo(() => resolveYarnFamily(root));
+    });
+    expect(execFile).toHaveBeenCalledTimes(1);
   });
 });

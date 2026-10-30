@@ -31,9 +31,7 @@ const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
 vi.mock('../utils/packageManager', () => ({
   detectPackageManager: detectPackageManagerMock,
 }));
-vi.mock('../utils/yarnFamily', () => ({
-  resolveYarnFamily: resolveYarnFamilyMock,
-}));
+vi.mock('../utils/yarnFamily', () => ({ resolveYarnFamily: resolveYarnFamilyMock, runWithYarnFamilyMemo: <T>(operation: () => Promise<T>) => operation() }));
 
 interface MockClientRequest extends EventEmitter {
   destroy: ReturnType<typeof vi.fn>;
