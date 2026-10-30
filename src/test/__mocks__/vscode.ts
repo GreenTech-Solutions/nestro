@@ -102,6 +102,13 @@ export const ProgressLocation = {
   Notification: 15,
 } as const;
 
+export const FileType = {
+  Unknown: 0,
+  File: 1,
+  Directory: 2,
+  SymbolicLink: 64,
+} as const;
+
 export const tasks = {
   executeTask: vi.fn().mockResolvedValue({ id: 'task-execution' }),
   onDidEndTaskProcess: vi.fn(() => ({ dispose: vi.fn() })),
@@ -139,6 +146,11 @@ export const workspace = {
   fs: {
     readFile: vi.fn().mockResolvedValue(Buffer.from('{}')),
     writeFile: vi.fn().mockResolvedValue(undefined),
+    // A file exists when `readFile` resolves, so a test that stages files through `readFile` stages them for `stat` too.
+    stat: vi.fn(async (uri: { fsPath: string }) => {
+      const contents = await workspace.fs.readFile(uri);
+      return { type: FileType.File, ctime: 0, mtime: 0, size: contents.length };
+    }),
   },
 };
 

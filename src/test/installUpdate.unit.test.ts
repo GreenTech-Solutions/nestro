@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { formatHeldBackDate, logger } from '../utils';
-import type { ReleaseAgeState } from '../utils';
+import { formatHeldBackDate, logger, type ReleaseAgeState } from '../utils';
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -55,6 +54,8 @@ const identityMocks = vi.hoisted(() => {
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
 });
+
+vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), realpath: (value: string) => Promise.resolve(value) }));
 
 vi.mock('../commands/packageIdentity', () => identityMocks);
 

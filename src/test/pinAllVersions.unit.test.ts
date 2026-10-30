@@ -4,6 +4,8 @@ import { pinAllVersionsCommand } from '../commands/pinAllVersions';
 import { PackagesProvider } from '../providers';
 import { pinAllWorkspaceDependencyVersions, showError } from '../utils';
 
+vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), realpath: (value: string) => Promise.resolve(value) }));
+
 vi.mock('../utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils')>();
   return {

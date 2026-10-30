@@ -6,7 +6,6 @@ import typescriptEslint from 'typescript-eslint';
 // Files that predate the size limits, each at its current measured size; a ceiling only goes down.
 // maxLines caps the file, maxFunctionLines caps its longest function; delete a key once the file fits the default.
 const SIZE_LIMIT_EXCEPTIONS = {
-  'src/clients/projectResolver.ts': { maxLines: 309 },
   'src/commands/installUpdate.ts': { maxLines: 588, maxFunctionLines: 96 },
   'src/commands/pickVersion.ts': { maxFunctionLines: 110 },
   'src/commands/removePackage.ts': { maxFunctionLines: 62 },

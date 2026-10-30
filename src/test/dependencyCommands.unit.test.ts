@@ -44,6 +44,8 @@ const identityMocks = vi.hoisted(() => {
   };
 });
 
+vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), realpath: (value: string) => Promise.resolve(value) }));
+
 vi.mock('../commands/packageIdentity', () => identityMocks);
 
 const executeTaskMock = vi.mocked(vscode.tasks.executeTask);
