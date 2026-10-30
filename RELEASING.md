@@ -111,8 +111,12 @@ it independently.
 measured baseline plus headroom: compressed size budget `1126757` bytes (baseline `901406` bytes
 + 25%), packaged file count budget `26` files (baseline `16` files + 10). It also runs the
 allowlist/forbidden-class/secret-pattern checks described in `src/tools/vsixPolicy.ts` over the
-exact package `vsce` produced. Changing either budget number is a separate, reviewed commit, not
-something to adjust ad hoc during a release.
+exact package `vsce` produced. The post-publish comparison in §6 applies these same two budgets
+the same way: the file count is the entries under `extension/` (the two `vsce` metadata entries do
+not count) and the byte budget is the size of the `.vsix` file itself. Changing either budget
+number is a separate, reviewed commit that updates `src/tools/vsixPolicy.ts`, the `release.yml`
+comparison step and its copy in `src/tools/releaseWorkflowPolicy.ts` together, not something to
+adjust ad hoc during a release.
 
 ## 3. Audits and signatures
 
@@ -205,8 +209,8 @@ Marketplace: https://marketplace.visualstudio.com/_apis/public/gallery/publisher
 Open VSX:    https://open-vsx.org/api/greentech-solutions/nestro/<version>/file/greentech-solutions.nestro-<version>.vsix
 ```
 
-The automated step downloads both (capped at 2 MiB, HTTPS-only, bounded redirects/retries), parses each as a real
-ZIP (entry count/size caps, no unsafe paths, no symlinks), checks the packaged `package.json`
+The automated step downloads both (capped at the §2 size budget, HTTPS-only, bounded redirects/retries), parses each as a real
+ZIP (§2 file-count budget, size caps, no unsafe paths, no symlinks), checks the packaged `package.json`
 identity against the outer `extension.vsixmanifest` identity, and accepts the copy only if it is
 either byte-identical to the candidate or an "accepted explicit registry re-pack" — same identity
 and the same normalized per-entry SHA-256 manifest, even if the registry re-zipped the container.

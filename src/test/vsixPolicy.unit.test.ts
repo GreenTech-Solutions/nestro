@@ -576,6 +576,20 @@ describe('evaluateVsixPolicy() — budgets', () => {
     });
   });
 
+  it('counts only extension content against the file budget, not the archive metadata entries', () => {
+    const baseCount = cleanVsixArchiveEntries().filter(entry => entry.path.startsWith('extension/')).length;
+    const extras = Array.from(
+      { length: PACKAGED_FILE_COUNT_BUDGET - baseCount },
+      (_unused, index) => archiveEntry(`extension/images/shot-${index}.png`, 'png'),
+    );
+    const entries = [...cleanVsixArchiveEntries(), ...extras];
+
+    expect(evaluate({ entries }).packagedFileCount).toBe(PACKAGED_FILE_COUNT_BUDGET);
+    expect(kinds(evaluate({ entries }))).not.toContain('file-count-budget');
+    expect(kinds(evaluate({ entries: [...entries, archiveEntry('extension/images/one-more.png', 'png')] })))
+      .toContain('file-count-budget');
+  });
+
   it('rejects a package that carries more files than the budget allows', () => {
     const extras = Array.from(
       { length: PACKAGED_FILE_COUNT_BUDGET },

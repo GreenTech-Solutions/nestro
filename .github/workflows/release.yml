@@ -196,23 +196,25 @@ jobs:
           curl_args=(
             --fail --silent --show-error --location --compressed
             --proto '=https' --proto-redir '=https' --max-redirs 3
-            --connect-timeout 10 --max-time 120 --max-filesize 2097152
+            --connect-timeout 10 --max-time 120 --max-filesize 1126757
             --retry 45 --retry-delay 20 --retry-all-errors --retry-max-time 900
           )
           curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix
           curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix
-          test "$(wc -c < dist/published/marketplace.vsix)" -le 2097152
-          test "$(wc -c < dist/published/openvsx.vsix)" -le 2097152
+          test "$(wc -c < dist/published/marketplace.vsix)" -le 1126757
+          test "$(wc -c < dist/published/openvsx.vsix)" -le 1126757
           python3 - "$CANDIDATE_VSIX" dist/published/marketplace.vsix dist/published/openvsx.vsix <<'PY'
           import hashlib
           import json
+          import os
           import stat
           import sys
           import xml.etree.ElementTree as ET
           import zipfile
 
-          MAX_ENTRIES = 26
-          MAX_COMPRESSED_BYTES = 2097152
+          EXTENSION_PREFIX = "extension/"
+          MAX_PACKAGED_FILES = 26
+          MAX_COMPRESSED_BYTES = 1126757
           MAX_ENTRY_BYTES = 5242880
           MAX_UNCOMPRESSED_BYTES = 10485760
 
@@ -225,11 +227,11 @@ jobs:
                       entries = []
                       seen = set()
                       infos = archive.infolist()
-                      if len(infos) > MAX_ENTRIES:
-                          fail(f"published VSIX has too many entries: {len(infos)}")
-                      compressed_total = sum(info.compress_size for info in infos)
+                      packaged_files = [info for info in infos if info.filename.startswith(EXTENSION_PREFIX)]
+                      if len(packaged_files) > MAX_PACKAGED_FILES:
+                          fail(f"published VSIX has too many packaged files: {len(packaged_files)}")
                       uncompressed_total = sum(info.file_size for info in infos)
-                      if compressed_total > MAX_COMPRESSED_BYTES:
+                      if os.path.getsize(path) > MAX_COMPRESSED_BYTES:
                           fail(f"published VSIX compressed payload exceeds {MAX_COMPRESSED_BYTES} bytes")
                       if uncompressed_total > MAX_UNCOMPRESSED_BYTES:
                           fail(f"published VSIX expanded payload exceeds {MAX_UNCOMPRESSED_BYTES} bytes")
