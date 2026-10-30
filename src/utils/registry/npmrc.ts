@@ -1,7 +1,9 @@
+import path from 'node:path';
 import { PACKAGE_MANAGERS } from '../../shared';
-import { getConfigFilePaths, readConfigFile } from './configFiles';
+import { getConfigFilePaths, getPackageRoot, readConfigFile } from './configFiles';
 import { substituteEnvironmentVariables, unwrapQuotes } from './configValues';
 import { getPackageScope } from './packageScope';
+import { resolveCaFilePath } from './tls';
 
 const NPM_CONFIG_ENV_PREFIX = 'npm_config_';
 const SIMPLE_CONFIG_KEYS = new Set([
@@ -30,9 +32,9 @@ export interface AuthScope {
 export async function readNpmrcConfig(packageFilePath: string | undefined): Promise<Map<string, string>> {
   const config = new Map<string, string>();
   for (const npmrcPath of getConfigFilePaths(packageFilePath, PACKAGE_MANAGERS.npm.dialect.configFile)) {
-    mergeNpmrcConfig(config, await readConfigFile(npmrcPath) ?? '');
+    mergeNpmrcConfig(config, await readConfigFile(npmrcPath) ?? '', path.dirname(npmrcPath));
   }
-  applyEnvironmentOverrides(config);
+  applyEnvironmentOverrides(config, getPackageRoot(packageFilePath) ?? process.cwd());
   return config;
 }
 
@@ -83,7 +85,7 @@ export function parseAuthConfigKey(key: string): (AuthScope & { property: string
   };
 }
 
-function mergeNpmrcConfig(config: Map<string, string>, npmrc: string): void {
+function mergeNpmrcConfig(config: Map<string, string>, npmrc: string, baseDirectory: string): void {
   for (const rawLine of npmrc.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line === '' || line.startsWith('#') || line.startsWith(';')) {
@@ -100,20 +102,24 @@ function mergeNpmrcConfig(config: Map<string, string>, npmrc: string): void {
       continue;
     }
     const value = line.slice(separatorIndex + 1).trim();
-    config.set(key, substituteEnvironmentVariables(unwrapQuotes(value) ?? value));
+    config.set(key, normalizeConfigValue(key, substituteEnvironmentVariables(unwrapQuotes(value) ?? value), baseDirectory));
   }
 }
 
-function applyEnvironmentOverrides(config: Map<string, string>): void {
+function applyEnvironmentOverrides(config: Map<string, string>, baseDirectory: string): void {
   for (const [environmentKey, environmentValue] of Object.entries(process.env)) {
     if (!environmentKey.toLowerCase().startsWith(NPM_CONFIG_ENV_PREFIX) || environmentValue === undefined) {
       continue;
     }
     const key = normalizeConfigKey(environmentKey.slice(NPM_CONFIG_ENV_PREFIX.length));
     if (key !== undefined) {
-      config.set(key, substituteEnvironmentVariables(environmentValue));
+      config.set(key, normalizeConfigValue(key, substituteEnvironmentVariables(environmentValue), baseDirectory));
     }
   }
+}
+
+function normalizeConfigValue(key: string, value: string, baseDirectory: string): string {
+  return key === 'cafile' ? resolveCaFilePath(value, baseDirectory) : value;
 }
 
 function normalizeConfigKey(key: string): string | undefined {

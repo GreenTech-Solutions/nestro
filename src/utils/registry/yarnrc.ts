@@ -1,7 +1,9 @@
+import path from 'node:path';
 import { YARN_DIALECTS } from '../../shared';
 import { getConfigFilePaths, readConfigFile } from './configFiles';
 import { substituteEnvironmentVariables, unwrapQuotes } from './configValues';
 import { normalizeSimpleConfigKey } from './npmrc';
+import { resolveCaFilePath } from './tls';
 
 export interface ClassicYarnConfiguration {
   values: Map<string, string>;
@@ -18,7 +20,7 @@ export async function readClassicYarnConfiguration(
     const contents = await readConfigFile(configPath);
     if (contents !== undefined) {
       sourceFound = true;
-      values = new Map([...values, ...parseClassicYarnConfig(contents)]);
+      values = new Map([...values, ...resolveClassicCaFile(parseClassicYarnConfig(contents), path.dirname(configPath))]);
     }
   }
   return { values, sourceFound };
@@ -51,6 +53,11 @@ export function parseClassicYarnConfig(contents: string): Map<string, string> {
     config.set(key, substituteEnvironmentVariables(value));
   }
   return config;
+}
+
+function resolveClassicCaFile(config: Map<string, string>, baseDirectory: string): Map<string, string> {
+  const cafile = config.get('cafile');
+  return cafile === undefined ? config : config.set('cafile', resolveCaFilePath(cafile, baseDirectory));
 }
 
 function parseClassicYarnValue(value: string): string | undefined {

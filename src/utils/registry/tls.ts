@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 /** The certificate authorities from npm's `ca` setting, else the contents of its `cafile`. */
@@ -12,7 +13,18 @@ export async function resolveCa(config: ReadonlyMap<string, string>): Promise<st
   if (cafile === undefined || cafile === '') {
     return undefined;
   }
-  return normalizeCa(await readFile(path.resolve(cafile), 'utf8'));
+  return normalizeCa(await readFile(cafile, 'utf8'));
+}
+
+/** A `cafile` setting as an absolute path: `~/` against the home directory, anything else against `baseDirectory`. */
+export function resolveCaFilePath(cafile: string, baseDirectory: string): string {
+  if (cafile === '') {
+    return cafile;
+  }
+  const homePattern = process.platform === 'win32' ? /^~[/\\]/ : /^~\//;
+  return homePattern.test(cafile)
+    ? path.resolve(homedir(), cafile.slice(2))
+    : path.resolve(baseDirectory, cafile);
 }
 
 /** The certificate authorities in the `caFilePath` of a Yarn Modern config, resolved against the file's directory. */
