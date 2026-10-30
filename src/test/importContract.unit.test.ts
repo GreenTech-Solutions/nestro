@@ -54,6 +54,16 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
   },
   {
     file: 'src/clients/PackageManagerClient.ts',
+    target: '../utils/audit/outcome',
+    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
+  },
+  {
+    file: 'src/clients/PackageManagerClient.ts',
+    target: '../utils/audit/types',
+    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
+  },
+  {
+    file: 'src/clients/PackageManagerClient.ts',
     target: '../utils/bunAuditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },

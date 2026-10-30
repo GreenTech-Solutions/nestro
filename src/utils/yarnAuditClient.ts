@@ -1,29 +1,23 @@
+import { isAdvisoryId, parseFixAvailable } from './audit/fields';
+import {
+  buildRecognizedOutcome,
+  incompleteOutcome,
+  runAuditCommand,
+  toAuditResult,
+} from './audit/outcome';
+import type { AuditErrorOutcome, AuditExecution, AuditOutcome, AuditResult } from './audit/outcome';
 import {
   emptySeverityCounts,
-  mergeSeverity,
   parseSeverity,
   YARN_CLASSIC_SEVERITY_BITS,
 } from './audit/types';
 import type { AuditSeverity } from './audit/types';
-import {
-  describeBoundedProcessFailure,
-  toAuditResult,
-} from './auditClient';
-import type {
-  AuditExecution,
-  AuditIncompleteOutcome,
-  AuditIncompleteReason,
-  AuditOutcome,
-  AuditResult,
-} from './auditClient';
 import { createAuditAdvisory, inferPathAttribution, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
 import { logger } from './logger';
-import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
-import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
-import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequiredString, YARN_DIALECTS } from '../shared';
+import { describeError, isRecord, PACKAGE_MANAGERS, readRequiredString, YARN_DIALECTS } from '../shared';
 
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
@@ -36,10 +30,6 @@ interface ClassicSummary {
 interface ParsedLineFailure {
   reason: 'malformed-json' | 'unrecognized-schema';
   detail: string;
-}
-
-interface YarnAuditExecution extends AuditExecution {
-  stderr?: string;
 }
 
 /** Resolves the Yarn family lazily, runs its exact command, and returns only recognized results. */
@@ -61,36 +51,22 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
     );
   }
 
-  const args = YARN_DIALECTS[family].audit;
   logger.info(`Running Yarn ${family} audit.`);
-  const outcome = await runBoundedProcess(PACKAGE_MANAGERS.yarn.bin, args, {
-    cwd,
-    timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
-    maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
-    signal,
-  });
-  if (outcome.kind === 'spawn-error') {
-    // describeBoundedProcessFailure() is family-agnostic and can only produce a generic "yarn
-    // could not run…" message; this reports the explicit Classic/Berry family instead, truncated
-    // to its first line, and is this event's one log call.
-    const familyLabel = family === 'classic' ? 'classic' : 'berry';
-    const detail = `yarn ${familyLabel} audit could not run: ${firstErrorLine(outcome.message)}`;
-    logger.error('Yarn audit process could not start; see the security audit report for redacted details.');
-    return { kind: 'error', reason: outcome.reason, detail };
-  }
-  if (outcome.kind !== 'exit') {
-    return describeBoundedProcessFailure('yarn', outcome);
-  }
-  return parseYarnAuditOutcome(family, {
-    command: 'yarn',
-    stderr: outcome.stderr,
-    stdout: outcome.stdout,
-    exitCode: outcome.exitCode,
-  });
+  return runAuditCommand(
+    { command: PACKAGE_MANAGERS.yarn.bin, args: YARN_DIALECTS[family].audit, cwd, signal },
+    execution => parseYarnAuditOutcome(family, execution),
+    // The family-agnostic message can only say "yarn could not run…"; this names the family
+    // and keeps the first line, and is this event's one log call.
+    (outcome): AuditErrorOutcome => {
+      const detail = `yarn ${family === 'classic' ? 'classic' : 'berry'} audit could not run: ${firstErrorLine(outcome.message)}`;
+      logger.error('Yarn audit process could not start; see the security audit report for redacted details.');
+      return { kind: 'error', reason: outcome.reason, detail };
+    },
+  );
 }
 
 /** Parses only the schema documented for the family selected before command execution. */
-export function parseYarnAuditOutcome(family: YarnFamily, execution: YarnAuditExecution): AuditOutcome {
+export function parseYarnAuditOutcome(family: YarnFamily, execution: AuditExecution): AuditOutcome {
   logger.debug(`Yarn ${family} audit output received (${execution.stdout.length} bytes).`);
   if (family === 'classic') {
     return parseClassicOutcome(execution);
@@ -163,10 +139,10 @@ function parseClassicOutcome(execution: AuditExecution): AuditOutcome {
       `Yarn Classic audit severity mask requires exit ${summary.mask} but received ${execution.exitCode ?? 'none'}.`,
     );
   }
-  return recognizedOutcome(classicSchema, execution.exitCode, advisories);
+  return buildRecognizedOutcome(classicSchema, 'yarn', execution.exitCode, advisories.values());
 }
 
-function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
+function parseModernOutcome(execution: AuditExecution): AuditOutcome {
   if ((execution.stderr ?? '').trim() !== '') {
     return incompleteOutcome(
       'unrecognized-schema',
@@ -177,7 +153,7 @@ function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
     if (execution.exitCode !== 0) {
       return incompleteOutcome('empty-output', 'Yarn Modern audit produced no advisory output.');
     }
-    return recognizedOutcome(modernSchema, 0, new Map());
+    return buildRecognizedOutcome(modernSchema, 'yarn', 0, []);
   }
 
   if (execution.stdout.trim() === '') {
@@ -211,7 +187,7 @@ function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
     mergeAuditAdvisory(advisories, advisory);
   }
 
-  return recognizedOutcome(modernSchema, 1, advisories);
+  return buildRecognizedOutcome(modernSchema, 'yarn', 1, advisories.values());
 }
 
 function parseClassicAdvisory(record: Record<string, unknown>): AuditAdvisory | undefined {
@@ -344,33 +320,6 @@ function parseJsonLine(line: string, familyLabel: string): unknown | ParsedLineF
   }
 }
 
-function recognizedOutcome(
-  schema: typeof classicSchema | typeof modernSchema,
-  exitCode: number,
-  advisories: Map<string, AuditAdvisory>,
-): AuditOutcome {
-  const normalizedAdvisories = [...advisories.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
-  const vulnerabilities = new Map<string, AuditSeverity>();
-  for (const advisory of normalizedAdvisories) {
-    const current = vulnerabilities.get(advisory.packageName);
-    vulnerabilities.set(advisory.packageName, current === undefined ? advisory.severity : mergeSeverity(current, advisory.severity));
-  }
-  if (vulnerabilities.size === 0) {
-    logger.info('Audit complete: 0 vulnerable package(s).');
-    return { kind: 'clean', schema, manager: 'yarn', exitCode, vulnerabilities, advisories: normalizedAdvisories, total: 0 };
-  }
-  logger.info(`Audit complete: ${vulnerabilities.size} vulnerable package(s).`);
-  return {
-    kind: 'advisories',
-    schema,
-    manager: 'yarn',
-    exitCode,
-    vulnerabilities,
-    advisories: normalizedAdvisories,
-    total: vulnerabilities.size,
-  };
-}
-
 function sameSeverityCounts(
   left: Record<AuditSeverity, number>,
   right: Record<AuditSeverity, number>,
@@ -389,18 +338,6 @@ function isLineFailure(value: unknown | ParsedLineFailure): value is ParsedLineF
     && typeof value.detail === 'string';
 }
 
-function incompleteOutcome(
-  reason: AuditIncompleteReason,
-  detail: string,
-): AuditIncompleteOutcome {
-  logger.warn(detail);
-  return { kind: 'incomplete', reason, detail };
-}
-
-function isAdvisoryId(value: unknown): boolean {
-  return typeof value === 'number' ? Number.isFinite(value) : readRequiredString(value) !== undefined;
-}
-
 function isNonEmptyStringArray(value: unknown): boolean {
   return Array.isArray(value)
     && value.length > 0
@@ -411,21 +348,6 @@ function readNonEmptyStringArray(value: unknown): string[] | undefined {
   return isNonEmptyStringArray(value)
     ? (value as unknown[]).map(entry => String(entry))
     : undefined;
-}
-
-function parseFixAvailable(value: unknown): boolean | { name?: string; version?: string; isSemVerMajor?: boolean } | undefined {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const name = readRequiredString(value.name);
-  const version = readRequiredString(value.version);
-  const isSemVerMajor = typeof value.isSemVerMajor === 'boolean' ? value.isSemVerMajor : undefined;
-  return name === undefined && version === undefined && isSemVerMajor === undefined
-    ? undefined
-    : { name, version, isSemVerMajor };
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

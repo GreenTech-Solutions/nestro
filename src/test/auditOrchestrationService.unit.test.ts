@@ -12,7 +12,7 @@ import type {
 } from '../providers';
 // Not part of the providers barrel's public surface (internal helpers used only as the
 // default `readPackageJsonVersion`/node-path parser), so imported from their implementation file.
-import { parseDirectNodeModulesNode, readNodePackageJsonVersion } from '../providers/auditOrchestrationService';
+import { parseDirectNodeModulesNode, readNodePackageJsonVersion } from '../providers/auditInstalledVersion';
 import type { AuditProject, PackageManager } from '../clients';
 import { OperationCoordinator } from '../utils';
 import type {

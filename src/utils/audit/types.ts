@@ -3,10 +3,7 @@ import type { PackageManager } from '../../shared';
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 export type AuditPackageManager = PackageManager;
 
-/**
- * Audit JSON schemas recognized by the manager-specific adapters. The shared parser in
- * `auditClient.ts` still recognizes only npm/pnpm shapes; Bun owns its bulk-advisory adapter.
- */
+/** Audit JSON schemas recognized by the manager-specific adapters. */
 export type AuditSchemaId
   = | 'npm-v2-vulnerabilities'
     | 'npm-v1-advisories'

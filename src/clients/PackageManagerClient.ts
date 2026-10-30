@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { runNpmAudit, runPackageAudit } from '../utils/auditClient';
-import type { AuditResult, AuditSeverity } from '../utils/auditClient';
+import type { AuditResult } from '../utils/audit/outcome';
+import type { AuditSeverity } from '../utils/audit/types';
 import { runBunAudit } from '../utils/bunAuditClient';
 import type { ShellTaskCommand } from '../utils/shellTask';
 import { runYarnAudit } from '../utils/yarnAuditClient';

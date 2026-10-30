@@ -1,5 +1,8 @@
-export { describeBoundedProcessFailure, mergeSeverity, parseAuditOutcome, parseSeverity, runAuditOutcome, runNpmAudit, runPackageAudit, toAuditResult, UnrecognizedAuditResultError } from './auditClient';
-export type { AuditAdvisoriesOutcome, AuditCleanOutcome, AuditErrorOutcome, AuditIncompleteOutcome, AuditIncompleteReason, AuditOutcome, AuditPackageManager, AuditResult, AuditSchemaId, AuditSeverity } from './auditClient';
+export { describeBoundedProcessFailure, toAuditResult, UnrecognizedAuditResultError } from './audit/outcome';
+export type { AuditAdvisoriesOutcome, AuditCleanOutcome, AuditErrorOutcome, AuditIncompleteOutcome, AuditIncompleteReason, AuditOutcome, AuditResult } from './audit/outcome';
+export { mergeSeverity, parseSeverity } from './audit/types';
+export type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
+export { parseAuditOutcome, runAuditOutcome, runNpmAudit, runPackageAudit } from './auditClient';
 export { cloneAuditAdvisory, createAuditAdvisory, inferPathAttribution, mergeAttribution, mergeAuditAdvisories, mergePathAttributions } from './auditReport';
 export type { AuditAdvisory } from './auditReport';
 export { formatAuditReport, validateAdvisoryUrl } from './auditReportFormatter';
@@ -30,6 +33,7 @@ export { selectVersionsForPicker } from './registryClient';
 export { classifyVersionReleaseAge, resolveUpdateReleaseAge } from './releaseAge';
 export type { ReleaseAgeState } from './releaseAge';
 export { runRootOperations, startRootOperations } from './rootOperation';
+export type { RootOperationResult } from './rootOperation';
 export { formatShellTaskCommandForLog, formatShellTaskFailureMessage, runShellTaskAndWait } from './shellTask';
 export type { ShellTaskCommand } from './shellTask';
 export { formatStatusReport } from './statusReport';

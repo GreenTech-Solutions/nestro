@@ -12,7 +12,6 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/extension.ts': { maxFunctionLines: 64 },
   'src/providers/PackageItem.ts': { maxFunctionLines: 88 },
   'src/providers/PackagesProvider.ts': { maxLines: 1603, maxFunctionLines: 168 },
-  'src/providers/auditOrchestrationService.ts': { maxLines: 613, maxFunctionLines: 132 },
   'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
   'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },
   'src/providers/treeBuilder.ts': { maxLines: 626 },
@@ -25,13 +24,12 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/test/verifyVsix.unit.test.ts': { maxLines: 885 },
   'src/tools/auditSignatures.ts': { maxFunctionLines: 77 },
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },
-  'src/utils/auditClient.ts': { maxLines: 432, maxFunctionLines: 88 },
-  'src/utils/bunAuditClient.ts': { maxFunctionLines: 66 },
+  'src/utils/auditClient.ts': { maxFunctionLines: 88 },
   'src/utils/bunConfig.ts': { maxLines: 301, maxFunctionLines: 61 },
   'src/utils/metadataRunner.ts': { maxFunctionLines: 138 },
   'src/utils/processRunner.ts': { maxFunctionLines: 162 },
   'src/utils/shellTask.ts': { maxFunctionLines: 77 },
-  'src/utils/yarnAuditClient.ts': { maxLines: 387 },
+  'src/utils/yarnAuditClient.ts': { maxLines: 315 },
 };
 
 const PRODUCT_LIMITS = { maxLines: 300, maxFunctionLines: 60 };
