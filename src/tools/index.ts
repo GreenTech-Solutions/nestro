@@ -1,4 +1,4 @@
-export { ARTIFACT_PROVENANCE_FILE, ARTIFACT_SBOM_FILE, buildArtifactProvenance, buildArtifactSbom, buildNormalizedManifest, findArtifactProvenanceViolation, findArtifactSbomViolation, findNormalizedManifestViolation, isWellFormedArtifactProvenance, isWellFormedArtifactSbom, parseNormalizedManifest, parsePackagedIdentity, readRuntimeDependencies, selectDeliveredRuntimeFiles } from './artifactProvenance';
+export { ARTIFACT_PROVENANCE_FILE, ARTIFACT_SBOM_FILE, buildArtifactProvenance, buildArtifactSbom, findArtifactProvenanceViolation, findArtifactSbomViolation, isWellFormedArtifactProvenance, isWellFormedArtifactSbom, parsePackagedIdentity, readRuntimeDependencies, selectDeliveredRuntimeFiles } from './artifactProvenance';
 export type { ArtifactProvenance } from './artifactProvenance';
 export { mainArtifactProvenance, parseArtifactProvenanceArgs } from './artifactProvenanceCli';
 export { describeDependencyAdvisory, evaluateDependencyAudit, FULL_AUDIT_ARGS, GRAPH_BLOCKING_SEVERITY, parseDependencyAuditArgs, parseDependencyAuditReport, PRODUCTION_AUDIT_ARGS, PRODUCTION_BLOCKING_SEVERITY, runDependencyAuditCli } from './auditDependencies';
@@ -8,6 +8,10 @@ export { evaluateSignatureAudit, MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION, parseSign
 export type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
 export { createNodePnpmRunner, createNodeSignatureAuditCliDependencies, createNodeSignatureAuditRunner, mainSignatureAudit } from './auditSignaturesCli';
 export { createCiEvidence, writeCiEvidence } from './ciEvidence';
+export { formatDigestSidecar, parseDigestSidecar, parseEvidence, parseEvidenceBytes, readDigestSidecar, readEvidenceFile } from './evidenceFiles';
+export type { CiEvidence } from './evidenceFiles';
+export { buildNormalizedManifest, findNormalizedManifestViolation, parseNormalizedManifest } from './normalizedManifest';
+export type { NormalizedManifestEntry } from './normalizedManifest';
 export { mainCiEvidence, parseCiEvidenceArgs } from './ciEvidenceCli';
 export { CI_WORKFLOW_PATH, CODEOWNERS_PATH, DEPENDABOT_CONFIG_PATH, evaluateCiWorkflowPolicy, evaluateCodeownersPolicy, evaluateDependabotConfigPolicy } from './ciPolicy';
 export { createNodeCiPolicyCliDependencies, runCiPolicyCli } from './ciPolicyCli';

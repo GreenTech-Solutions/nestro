@@ -168,19 +168,19 @@ describe('packaged smoke evidence verifier', () => {
   it('rejects a push identity that carries a head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'push', pullRequestHeadSha: 'a'.repeat(40) });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('push identity without a head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('rejects a pull request identity without a head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'pull_request', pullRequestHeadSha: null });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('rejects a workflow dispatch identity with a short head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'workflow_dispatch', pullRequestHeadSha: 'abc123' });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('requires explicit artifact directory and a full expected SHA', () => {

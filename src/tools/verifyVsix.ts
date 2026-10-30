@@ -1,4 +1,6 @@
 import * as path from 'node:path';
+import { formatDigestSidecar } from './evidenceFiles';
+import { buildNormalizedManifest } from './normalizedManifest';
 import { bundleFileName, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET } from './releaseContract';
 import {
   collectSymlinkCandidates,
@@ -8,7 +10,7 @@ import {
 import type { PolicyViolation, VsixPolicyReport } from './vsixPolicy';
 import { readVsixArchive } from './vsixArchive';
 import { parseVsixManifestIdentity } from './vsixManifest';
-import { compareCodeUnits, sha256Hex } from '../shared';
+import { sha256Hex } from '../shared';
 
 /**
  * `check:vsce` entrypoint: packages the extension, verifies the produced bytes against the
@@ -253,13 +255,6 @@ export function parseVerifyVsixArgs(argv: readonly string[]): VerifyVsixOptions 
   return { outDir, requireCleanWorktree };
 }
 
-/** `<sha256>  <archive path>`, ordered by path so the manifest is comparable across builds. */
-function buildManifestLines(entries: readonly { path: string; bytes: Uint8Array }[]): string[] {
-  return [...entries]
-    .sort((left, right) => compareCodeUnits(left.path, right.path))
-    .map(entry => `${sha256Hex(entry.bytes)}  ${entry.path}`);
-}
-
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -378,11 +373,12 @@ async function verifyVsixPackageWhileLocked(
     });
 
     const digest = sha256Hex(archiveBytes);
-    const manifestLines = buildManifestLines(entries);
+    const manifest = buildNormalizedManifest(entries);
+    const manifestLines = manifest.slice(0, -1).split('\n');
     const artifactsWritten = report.violations.length === 0;
     if (artifactsWritten) {
-      await io.writeTextFile(manifestPath, `${manifestLines.join('\n')}\n`);
-      await io.writeTextFile(digestPath, `${digest}  ${path.posix.basename(vsixPath)}\n`);
+      await io.writeTextFile(manifestPath, manifest);
+      await io.writeTextFile(digestPath, formatDigestSidecar(digest, path.posix.basename(vsixPath)));
     }
     else {
       await removeArtifactsOrThrow(io, artifactPaths, 'after policy rejection');

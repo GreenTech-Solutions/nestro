@@ -144,7 +144,7 @@ describe('artifact provenance CLI', () => {
     ['invalid schema', (path: string) => mutateEvidence(path, (evidence) => { evidence.schemaVersion = 2; }), 'schemaVersion 1'],
     ['unsupported event', (path: string) => mutateEvidence(path, (evidence) => { evidence.eventName = 'release'; }), 'unsupported eventName'],
     ['non-string identity', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 42; }), 'non-empty string'],
-    ['malformed source SHA', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 'short'; }), 'identity fields are malformed'],
+    ['malformed source SHA', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 'short'; }), 'full lowercase 40-character commit SHA'],
     ['push pull-request head', (path: string) => mutateEvidence(path, (evidence) => { evidence.pullRequestHeadSha = SOURCE_SHA; }), 'does not match eventName'],
     ['workflow dispatch without head', (path: string) => mutateEvidence(path, (evidence) => {
       evidence.eventName = 'workflow_dispatch';

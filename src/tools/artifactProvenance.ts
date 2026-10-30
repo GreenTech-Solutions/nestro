@@ -1,5 +1,5 @@
 import { RELEASE_CONTRACT } from './releaseContract';
-import { compareCodeUnits, describeError, hasExactKeys, isRecord, sha256Hex } from '../shared';
+import { compareCodeUnits, hasExactKeys, isRecord, sha256Hex } from '../shared';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -7,7 +7,6 @@ const RUN_ID_PATTERN = /^[1-9]\d*$/u;
 const SAFE_FILE_PATTERN = /^[A-Za-z0-9._-]+$/u;
 const SAFE_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_WORKFLOW_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/u;
-const MANIFEST_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)$/u;
 const RUNTIME_FILE_PATTERN = /^extension\/(?:package\.json|out\/[A-Za-z0-9._$@-]+\.cjs)$/u;
 
 export const ARTIFACT_SBOM_FILE = RELEASE_CONTRACT.bundle.sbom;
@@ -114,11 +113,6 @@ export interface ArtifactProvenanceInput {
 }
 
 export interface ArtifactProvenanceExpectation extends ArtifactProvenanceInput {}
-
-export interface NormalizedManifestEntry {
-  readonly path: string;
-  readonly sha256: string;
-}
 
 function sortedStrings(values: readonly string[]): string[] {
   return [...values].sort(compareCodeUnits);
@@ -446,55 +440,6 @@ function buildArtifactProvenanceWithoutValidation(input: ArtifactProvenanceInput
 
 export function isWellFormedArtifactProvenance(value: unknown, expectation?: ArtifactProvenanceExpectation): value is ArtifactProvenance {
   return findArtifactProvenanceViolation(value, expectation) === undefined;
-}
-
-export function buildNormalizedManifest(entries: readonly { path: string; bytes: Uint8Array }[]): string {
-  return [...entries]
-    .sort((left, right) => compareCodeUnits(left.path, right.path))
-    .map(entry => `${sha256Hex(entry.bytes)}  ${entry.path}`)
-    .join('\n') + '\n';
-}
-
-export function parseNormalizedManifest(contents: string): NormalizedManifestEntry[] {
-  if (!contents.endsWith('\n') || contents.includes('\r')) {
-    throw new Error('normalized manifest must use LF lines and end with one newline');
-  }
-  const lines = contents.slice(0, -1).split('\n');
-  if (lines.length === 0 || lines.some(line => line.length === 0)) {
-    throw new Error('normalized manifest must contain at least one non-empty entry');
-  }
-  const entries = lines.map((line) => {
-    const match = MANIFEST_LINE_PATTERN.exec(line);
-    if (match === null || match[2].length === 0 || match[2].startsWith('/') || match[2].includes('..')) {
-      throw new Error(`normalized manifest contains an unsafe entry: ${line}`);
-    }
-    return { sha256: match[1], path: match[2] };
-  });
-  const sorted = [...entries].sort((left, right) => compareCodeUnits(left.path, right.path));
-  if (JSON.stringify(entries) !== JSON.stringify(sorted)) {
-    throw new Error('normalized manifest entries must be sorted by archive path');
-  }
-  if (new Set(entries.map(entry => entry.path)).size !== entries.length) {
-    throw new Error('normalized manifest must not contain duplicate paths');
-  }
-  return entries;
-}
-
-export function findNormalizedManifestViolation(
-  contents: string,
-  entries: readonly { path: string; bytes: Uint8Array }[],
-): string | undefined {
-  let parsed: NormalizedManifestEntry[];
-  try {
-    parsed = parseNormalizedManifest(contents);
-  }
-  catch (error) {
-    return describeError(error);
-  }
-  const expected = parseNormalizedManifest(buildNormalizedManifest(entries));
-  return JSON.stringify(parsed) === JSON.stringify(expected)
-    ? undefined
-    : 'normalized manifest does not match the candidate archive contents';
 }
 
 export function selectDeliveredRuntimeFiles(entries: readonly { path: string; bytes: Uint8Array }[]): ArtifactRuntimeFile[] {

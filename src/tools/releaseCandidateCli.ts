@@ -7,23 +7,22 @@ import {
   ARTIFACT_SBOM_FILE,
   findArtifactProvenanceViolation,
   findArtifactSbomViolation,
-  findNormalizedManifestViolation,
   parsePackagedIdentity,
   readRuntimeDependencies,
   selectDeliveredRuntimeFiles,
 } from './artifactProvenance';
+import { COMMIT_SHA_PATTERN, POSITIVE_INTEGER_PATTERN, readDigestSidecar, readEvidenceFile } from './evidenceFiles';
+import { findNormalizedManifestViolation } from './normalizedManifest';
 import { buildReleaseCandidate } from './releaseCandidate';
-import { bundleFileName, bundleMemberNames, CANDIDATE_FILE, EVIDENCE_FILE, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
-import type { ReleaseCandidateArtifact, ReleaseCandidateEvidence } from './releaseCandidate';
+import { bundleFileName, bundleMemberNames, CANDIDATE_FILE, EVIDENCE_FILE, RELEASE_CONTRACT } from './releaseContract';
+import type { CiEvidence } from './evidenceFiles';
+import type { ReleaseCandidateArtifact } from './releaseCandidate';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
 import { runCliAsEntry } from './cliBootstrap';
-import { compareCodeUnits, describeError, hasExactKeys, isRecord, sha256Hex } from '../shared';
+import { compareCodeUnits, describeError, isRecord, sha256Hex } from '../shared';
 
 const execFileAsync = promisify(execFile);
-const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
-const RUN_ID_PATTERN = /^[1-9]\d*$/u;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 export interface ReleaseCandidateArgs {
@@ -36,79 +35,6 @@ export function parseReleaseCandidateArgs(argv: readonly string[]): ReleaseCandi
     throw new Error('usage: release:candidate --artifact-dir <dir> --out-dir <dir>');
   }
   return { artifactDir: normalizeArtifactOutDir(argv[1]), outDir: normalizeArtifactOutDir(argv[3]) };
-}
-
-function requireExactKeys(record: Record<string, unknown>, expected: readonly string[], label: string): void {
-  if (!hasExactKeys(record, expected)) {
-    throw new Error(`${label} contains unexpected or missing fields`);
-  }
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`${EVIDENCE_FILE} must carry ${label} as a non-empty string`);
-  }
-  return value;
-}
-
-function readRequiredEvidence(source: unknown): ReleaseCandidateEvidence {
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) {
-    throw new Error(`${EVIDENCE_FILE} must be an object`);
-  }
-  const record = source as Record<string, unknown>;
-  requireExactKeys(record, [
-    'eventName',
-    'pullRequestHeadSha',
-    'releaseEligible',
-    'runAttempt',
-    'runId',
-    'schemaVersion',
-    'sourceSha',
-    'vsixFile',
-    'vsixSha256',
-  ], EVIDENCE_FILE);
-  if (record.schemaVersion !== RELEASE_CONTRACT.schemaVersions.evidence) {
-    throw new Error(`${EVIDENCE_FILE} must use schemaVersion ${RELEASE_CONTRACT.schemaVersions.evidence}`);
-  }
-  if (record.eventName !== 'push') {
-    throw new Error(`${EVIDENCE_FILE} must come from a push run`);
-  }
-  if (record.pullRequestHeadSha !== null) {
-    throw new Error(`${EVIDENCE_FILE} must have a null pull request head for a push run`);
-  }
-  if (record.releaseEligible !== false) {
-    throw new Error(`${EVIDENCE_FILE} must set releaseEligible=false`);
-  }
-  const sourceSha = requireString(record.sourceSha, 'sourceSha');
-  const runId = requireString(record.runId, 'runId');
-  const runAttempt = requireString(record.runAttempt, 'runAttempt');
-  const vsixFile = requireString(record.vsixFile, 'vsixFile');
-  const vsixSha256 = requireString(record.vsixSha256, 'vsixSha256');
-  if (!COMMIT_SHA_PATTERN.test(sourceSha)) {
-    throw new Error(`${EVIDENCE_FILE} sourceSha must be a full lowercase 40-character commit SHA`);
-  }
-  if (!RUN_ID_PATTERN.test(runId)) {
-    throw new Error(`${EVIDENCE_FILE} runId must be a positive integer`);
-  }
-  if (!RUN_ID_PATTERN.test(runAttempt)) {
-    throw new Error(`${EVIDENCE_FILE} runAttempt must be a positive integer`);
-  }
-  if (!VSIX_FILE_PATTERN.test(vsixFile)) {
-    throw new Error(`${EVIDENCE_FILE} vsixFile must be a safe .vsix filename`);
-  }
-  if (!/^[0-9a-f]{64}$/u.test(vsixSha256)) {
-    throw new Error(`${EVIDENCE_FILE} vsixSha256 must be a lowercase SHA-256 digest`);
-  }
-  return {
-    sourceSha,
-    runId,
-    runAttempt,
-    vsixFile,
-    vsixSha256,
-    eventName: record.eventName,
-    pullRequestHeadSha: null,
-    releaseEligible: false,
-  };
 }
 
 async function listExistingTags(cwd: string): Promise<string[]> {
@@ -166,7 +92,7 @@ function parseJson(bytes: Uint8Array, label: string): unknown {
 
 async function verifyEvidenceFiles(
   artifactDir: string,
-  evidence: ReleaseCandidateEvidence,
+  evidence: CiEvidence,
   environment: NodeJS.ProcessEnv,
 ): Promise<ReleaseCandidateArtifact> {
   const entries = (await readdir(artifactDir)).sort(compareCodeUnits);
@@ -180,8 +106,7 @@ async function verifyEvidenceFiles(
     throw new Error(`candidate VSIX digest does not match ${EVIDENCE_FILE}`);
   }
   const digestFile = bundleFileName('digest', evidence.vsixFile);
-  const digestMatch = SHA256_LINE_PATTERN.exec(await readFile(resolve(artifactDir, digestFile), 'utf8'));
-  if (digestMatch === null || digestMatch[2] !== evidence.vsixFile || digestMatch[1] !== evidence.vsixSha256) {
+  if (await readDigestSidecar(artifactDir, evidence.vsixFile) !== evidence.vsixSha256) {
     throw new Error(`candidate evidence digest sidecar does not match ${EVIDENCE_FILE}`);
   }
   const archiveEntries = readVsixArchive(vsixBytes);
@@ -257,21 +182,20 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
     const { artifactDir, outDir } = parseReleaseCandidateArgs(argv);
     const resolvedArtifactDir = resolve(cwd, artifactDir);
     const resolvedOutDir = resolve(cwd, outDir);
-    const evidenceSource = JSON.parse(await readFile(resolve(resolvedArtifactDir, EVIDENCE_FILE), 'utf8')) as unknown;
-    const evidence = readRequiredEvidence(evidenceSource);
-    if (evidence.eventName !== 'push' || evidence.pullRequestHeadSha !== null || evidence.releaseEligible !== false) {
-      throw new Error('candidate input must be successful push evidence with releaseEligible=false');
+    const evidence = await readEvidenceFile(resolvedArtifactDir);
+    if (evidence.eventName !== 'push') {
+      throw new Error(`${EVIDENCE_FILE} must come from a push run`);
     }
     const expectedSourceSha = env.RELEASE_SOURCE_SHA;
     if (expectedSourceSha !== undefined && (!COMMIT_SHA_PATTERN.test(expectedSourceSha) || evidence.sourceSha !== expectedSourceSha)) {
       throw new Error('candidate evidence source SHA does not match the upstream workflow run');
     }
     const expectedCiRunId = env.RELEASE_CI_RUN_ID;
-    if (expectedCiRunId !== undefined && (!RUN_ID_PATTERN.test(expectedCiRunId) || evidence.runId !== expectedCiRunId)) {
+    if (expectedCiRunId !== undefined && (!POSITIVE_INTEGER_PATTERN.test(expectedCiRunId) || evidence.runId !== expectedCiRunId)) {
       throw new Error('candidate evidence run ID does not match the upstream workflow run');
     }
     const candidateRunId = env.RELEASE_CANDIDATE_RUN_ID;
-    if (candidateRunId === undefined || !RUN_ID_PATTERN.test(candidateRunId)) {
+    if (candidateRunId === undefined || !POSITIVE_INTEGER_PATTERN.test(candidateRunId)) {
       throw new Error('RELEASE_CANDIDATE_RUN_ID must be a positive integer');
     }
     const artifact = await verifyEvidenceFiles(resolvedArtifactDir, evidence, env);

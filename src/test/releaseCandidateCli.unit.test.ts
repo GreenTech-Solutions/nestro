@@ -273,13 +273,14 @@ describe('release candidate CLI', () => {
     ['a non-push event', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.eventName = 'workflow_dispatch';
+      evidence.pullRequestHeadSha = SOURCE_SHA;
       await writeFile(path, `${JSON.stringify(evidence)}\n`, 'utf8');
     }, 'push run'],
     ['a pull request head', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.pullRequestHeadSha = SOURCE_SHA;
       await writeFile(path, `${JSON.stringify(evidence)}\n`, 'utf8');
-    }, 'null pull request head'],
+    }, 'does not match eventName'],
     ['release eligibility', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.releaseEligible = true;
