@@ -32,16 +32,9 @@ const EXPECTED_DEPENDABOT_CONFIG: UnknownRecord = {
   }],
   version: 2,
 };
-const ACTIONLINT_ARCHIVE = `actionlint_${REVIEWED_REGISTRY.actionlint.version}_linux_amd64.tar.gz`;
-const ACTIONLINT_COMMAND = `set -euo pipefail
-archive="$RUNNER_TEMP/${ACTIONLINT_ARCHIVE}"
-curl --fail --silent --show-error --location \\
-  https://github.com/rhysd/actionlint/releases/download/v${REVIEWED_REGISTRY.actionlint.version}/${ACTIONLINT_ARCHIVE} \\
-  --output "$archive"
-printf '%s  %s\\n' ${REVIEWED_REGISTRY.actionlint.sha256} "$archive" \\
-  | sha256sum --check --strict
-tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-"$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml`;
+const CI_SCRIPT_DIRECTORY = '.github/scripts/ci';
+const ACTIONLINT_RUN = `bash ${CI_SCRIPT_DIRECTORY}/install-actionlint.sh`;
+const VSIX_SUBJECT_RUN = `bash ${CI_SCRIPT_DIRECTORY}/resolve-vsix-subject.sh`;
 
 export interface CiPolicyViolation {
   readonly rule: string;
@@ -134,7 +127,8 @@ const DISPATCH_RESOLUTION_STEP: UnknownRecord = {
     DISPATCH_PR_NUMBER: '${{ inputs.pr_number }}',
     DISPATCH_HEAD_SHA: '${{ inputs.head_sha }}',
   },
-  run: 'set -euo pipefail\n[[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]\npr="$(gh api "repos/${{ github.repository }}/pulls/$DISPATCH_PR_NUMBER")"\ntest "$(echo "$pr" | jq -r \'.head.sha\')" = "$DISPATCH_HEAD_SHA"\ntest "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"\ntest "$(echo "$pr" | jq -r \'.state\')" = "open"\ntest "$(echo "$pr" | jq -r \'.base.ref\')" = "master"',
+  // Stays inline: it must validate the dispatched head before any code from that commit is checked out.
+  run: 'set -euo pipefail\n[[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]\npr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$DISPATCH_PR_NUMBER")"\ntest "$(echo "$pr" | jq -r \'.head.sha\')" = "$DISPATCH_HEAD_SHA"\ntest "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"\ntest "$(echo "$pr" | jq -r \'.state\')" = "open"\ntest "$(echo "$pr" | jq -r \'.base.ref\')" = "master"',
 };
 const QUALITY_STEPS: readonly UnknownRecord[] = [
   DISPATCH_RESOLUTION_STEP,
@@ -144,7 +138,7 @@ const QUALITY_STEPS: readonly UnknownRecord[] = [
   { name: 'Strict lint', run: 'pnpm run lint' },
   { name: 'Production typecheck', run: 'pnpm run typecheck' },
   { name: 'Test typecheck', run: 'pnpm exec tsc -p tsconfig.test.json --noEmit' },
-  { name: 'Validate workflow syntax', run: ACTIONLINT_COMMAND, shell: 'bash' },
+  { name: 'Validate workflow syntax', run: ACTIONLINT_RUN, shell: 'bash' },
   { name: 'Workflow policy', run: 'pnpm run ci:policy' },
   { name: 'Unit coverage', run: 'pnpm run test:unit:coverage' },
   { name: 'Build', run: 'pnpm run build' },
@@ -198,14 +192,7 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
     name: 'Resolve the exact VSIX attestation subject',
     id: 'subject',
     shell: 'bash',
-    run: `set -euo pipefail
-mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
-test "\${#subjects[@]}" = 1
-case "\${subjects[0]}" in
-  "$CI_ARTIFACT_DIR"/*.vsix) ;;
-  *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
-esac
-printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`,
+    run: VSIX_SUBJECT_RUN,
   },
   {
     if: '${{ github.event_name == \'push\' && github.ref == \'refs/heads/master\' }}',
@@ -587,7 +574,7 @@ function assertQuality(job: UnknownRecord, violations: CiPolicyViolation[]): voi
       add(violations, 'quality-gate', `quality must run ${command}`);
     }
   }
-  const actionlint = steps.find(step => normalizedRun(step) === ACTIONLINT_COMMAND);
+  const actionlint = steps.find(step => normalizedRun(step) === ACTIONLINT_RUN);
   if (actionlint?.shell !== 'bash' || actionlint.if !== undefined || actionlint['continue-on-error'] !== undefined) {
     add(violations, 'quality-gate', 'quality must download, authenticate and run actionlint with bash');
   }
@@ -644,15 +631,7 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
     add(violations, 'provenance', 'package must write the deterministic provenance bundle before attestation');
   }
   const subject = steps.find(step => step.name === 'Resolve the exact VSIX attestation subject');
-  const expectedSubjectRun = `set -euo pipefail
-mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
-test "\${#subjects[@]}" = 1
-case "\${subjects[0]}" in
-  "$CI_ARTIFACT_DIR"/*.vsix) ;;
-  *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
-esac
-printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`;
-  if (subject?.id !== 'subject' || subject.shell !== 'bash' || normalizedRun(subject) !== expectedSubjectRun) {
+  if (subject?.id !== 'subject' || subject.shell !== 'bash' || normalizedRun(subject) !== VSIX_SUBJECT_RUN) {
     add(violations, 'attestation-subject', 'package must resolve exactly one VSIX as the attestation subject');
   }
   const attestation = findActionStep(steps, 'actions/attest-build-provenance');

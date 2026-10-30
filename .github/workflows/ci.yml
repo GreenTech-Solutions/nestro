@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$DISPATCH_PR_NUMBER" =~ ^[0-9]+$ ]]
-          pr="$(gh api "repos/${{ github.repository }}/pulls/$DISPATCH_PR_NUMBER")"
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$DISPATCH_PR_NUMBER")"
           test "$(echo "$pr" | jq -r '.head.sha')" = "$DISPATCH_HEAD_SHA"
           test "$DISPATCH_HEAD_SHA" = "$EXPECTED_SHA"
           test "$(echo "$pr" | jq -r '.state')" = "open"
@@ -75,16 +75,7 @@ jobs:
         run: pnpm exec tsc -p tsconfig.test.json --noEmit
       - name: Validate workflow syntax
         shell: bash
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            --output "$archive"
-          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \
-            | sha256sum --check --strict
-          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml
+        run: bash .github/scripts/ci/install-actionlint.sh
       - name: Workflow policy
         run: pnpm run ci:policy
       - name: Unit coverage
@@ -195,15 +186,7 @@ jobs:
       - name: Resolve the exact VSIX attestation subject
         id: subject
         shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t subjects < <(find "$CI_ARTIFACT_DIR" -maxdepth 1 -type f -name '*.vsix' -print)
-          test "${#subjects[@]}" = 1
-          case "${subjects[0]}" in
-            "$CI_ARTIFACT_DIR"/*.vsix) ;;
-            *) echo 'VSIX subject escaped the artifact directory' >&2; exit 1 ;;
-          esac
-          printf 'path=%s\n' "${subjects[0]}" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/ci/resolve-vsix-subject.sh
       - name: Attest the exact VSIX subject
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

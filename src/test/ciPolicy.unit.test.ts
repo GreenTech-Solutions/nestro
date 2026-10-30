@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -377,6 +377,85 @@ describe('CI workflow policy', () => {
 
   it('rejects malformed or duplicate-key YAML before evaluating semantics', () => {
     expectRejected('name: Verify\nname: Forged\njobs: {}\n', 'yaml');
+  });
+});
+
+describe('CI workflow shell scripts', () => {
+  const scriptRuns = [
+    ['Validate workflow syntax', 'quality', 'install-actionlint.sh'],
+    ['Resolve the exact VSIX attestation subject', 'package', 'resolve-vsix-subject.sh'],
+  ] as const;
+
+  function scriptSource(name: string): string {
+    return readFileSync(resolve(repositoryRoot, '.github/scripts/ci', name), 'utf8');
+  }
+
+  it('keeps every run block at five lines or fewer, except the pre-checkout dispatch check', () => {
+    const workflow = parse(canonicalSource) as Record<string, unknown>;
+    for (const jobId of Object.keys(jobs(workflow))) {
+      for (const step of steps(workflow, jobId)) {
+        if (typeof step.run === 'string' && step.name !== 'Resolve the dispatched pull request') {
+          expect(step.run.trim().split('\n').length, `${jobId}: ${String(step.name)}`).toBeLessThanOrEqual(5);
+        }
+      }
+    }
+  });
+
+  it.each(scriptRuns)('runs %s as a one-line call to a script in .github/scripts/ci', (name, job, script) => {
+    const workflow = parse(canonicalSource) as Record<string, unknown>;
+    const step = steps(workflow, job).find(candidate => candidate.name === name);
+    expect(step?.run).toBe(`bash .github/scripts/ci/${script}`);
+    expect(existsSync(resolve(repositoryRoot, '.github/scripts/ci', script))).toBe(true);
+  });
+
+  it.each(scriptRuns)('keeps %s strict and free of workflow expressions', (_name, _job, script) => {
+    const source = scriptSource(script);
+    expect(source.startsWith('#!/usr/bin/env bash\n')).toBe(true);
+    expect(source).toMatch(/^set -euo pipefail$/mu);
+    expect(source).not.toContain('${{');
+  });
+
+  it('takes the actionlint pin from the registry only', () => {
+    const script = scriptSource('install-actionlint.sh');
+    expect(script).toContain('.github/reviewed-actions.json');
+    for (const literal of [registry.actionlint.version, registry.actionlint.sha256]) {
+      expect(script).not.toContain(literal);
+      expect(canonicalSource).not.toContain(literal);
+    }
+  });
+
+  it.each(scriptRuns)('rejects %s once its script call is inlined or replaced', (name, job) => {
+    const rule = job === 'package' ? 'attestation-subject' : 'step-contract';
+    expectRejected(mutateWorkflow((workflow) => {
+      const step = steps(workflow, job).find(candidate => candidate.name === name);
+      if (step !== undefined) {
+        step.run = 'echo skipped';
+      }
+    }), rule);
+  });
+
+  it('rejects an actionlint call that no longer goes through the reviewed script', () => {
+    expectRejected(mutateWorkflow((workflow) => {
+      const step = steps(workflow, 'quality').find(candidate => candidate.name === 'Validate workflow syntax');
+      if (step !== undefined) {
+        step.run = 'bash .github/scripts/ci/other.sh';
+      }
+    }), 'quality-gate');
+  });
+
+  it('keeps the dispatch resolution inline and ahead of the checkout', () => {
+    const workflow = parse(canonicalSource) as Record<string, unknown>;
+    const [first] = steps(workflow, 'quality');
+    expect(first.name).toBe('Resolve the dispatched pull request');
+    expect(String(first.run)).not.toContain('.github/scripts');
+  });
+
+  it('rejects the dispatch resolution once it runs after the checkout', () => {
+    expectRejected(mutateWorkflow((workflow) => {
+      const quality = steps(workflow, 'quality');
+      const [dispatch, ...rest] = quality;
+      jobs(workflow).quality.steps = [rest[0], dispatch, ...rest.slice(1)];
+    }), 'dispatch-identity');
   });
 });
 
