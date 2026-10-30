@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { resolvePnpmLauncher, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 import type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
 import { createStreamLineWriter } from './verifyVsixCli';
+import { asString, describeError } from '../shared';
 
 /**
  * Node bindings for the signature audit guard: everything touching the process lives here, so
@@ -14,10 +15,6 @@ import { createStreamLineWriter } from './verifyVsixCli';
 const MAX_CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const execFileAsync = promisify(execFile);
-
-function readString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
 
 /**
  * A failing audit is a normal result here, not an exception: the exit code and stdout are
@@ -44,9 +41,9 @@ export function createNodePnpmRunner(
       const details = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
       const exitCode = typeof details.code === 'number' ? details.code : undefined;
       const stderr = exitCode === undefined
-        ? `${executable} could not run: ${error instanceof Error ? error.message : String(error)}`
-        : readString(details.stderr);
-      return { command, stdout: readString(details.stdout), stderr, exitCode };
+        ? `${executable} could not run: ${describeError(error)}`
+        : (asString(details.stderr) ?? '');
+      return { command, stdout: (asString(details.stdout) ?? ''), stderr, exitCode };
     }
   };
 }

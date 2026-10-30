@@ -5,6 +5,8 @@
  * silently (unpublished packages, registries with no signing keys); only auditing zero packages is rejected.
  */
 
+import { describeError, describeStderr, isRecord } from '../shared';
+
 /** Subcommand and flags the guard runs. `--json` is what makes the contract checkable. */
 export const SIGNATURE_AUDIT_ARGS = ['audit', 'signatures', '--json'] as const;
 
@@ -84,21 +86,8 @@ export function parseSignatureAuditArgs(argv: readonly string[]): void {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function describeStderr(stderr: string): string {
-  const trimmed = stderr.trim();
-  return trimmed === '' ? '' : `; stderr: ${trimmed}`;
 }
 
 /**
@@ -107,16 +96,16 @@ function describeStderr(stderr: string): string {
  * instead of a generic "unknown schema".
  */
 function isAdvisoryReport(json: unknown): boolean {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return false;
   }
-  const hasSummary = isPlainObject(json.metadata);
-  return (isPlainObject(json.advisories) && hasSummary)
-    || (isPlainObject(json.vulnerabilities) && (hasSummary || typeof json.auditReportVersion === 'number'));
+  const hasSummary = isRecord(json.metadata);
+  return (isRecord(json.advisories) && hasSummary)
+    || (isRecord(json.vulnerabilities) && (hasSummary || typeof json.auditReportVersion === 'number'));
 }
 
 function recognizeSignatureReport(json: unknown): SignatureAuditReport | undefined {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return undefined;
   }
   const { audited, invalid, missing, verified } = json;
@@ -128,7 +117,7 @@ function recognizeSignatureReport(json: unknown): SignatureAuditReport | undefin
 
 /** Best-effort one-line description of a finding; a malformed entry is still reported, never dropped. */
 function describeFinding(entry: unknown): string {
-  if (!isPlainObject(entry)) {
+  if (!isRecord(entry)) {
     return JSON.stringify(entry);
   }
   const name = typeof entry.name === 'string' ? entry.name : '<unknown>';

@@ -20,6 +20,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
+import { describeError, isRecord, readRequiredString } from '../shared';
 
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
@@ -80,7 +81,7 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
     // could not run…" message; this reports the explicit Classic/Berry family instead, truncated
     // to its first line, and is this event's one log call.
     const familyLabel = family === 'classic' ? 'classic' : 'berry';
-    const detail = `yarn ${familyLabel} audit could not run: ${describeError(outcome.message)}`;
+    const detail = `yarn ${familyLabel} audit could not run: ${firstErrorLine(outcome.message)}`;
     logger.error('Yarn audit process could not start; see the security audit report for redacted details.');
     return { kind: 'error', reason: outcome.reason, detail };
   }
@@ -125,7 +126,7 @@ function parseClassicOutcome(execution: AuditExecution): AuditOutcome {
     if (isLineFailure(parsed)) {
       return incompleteOutcome(parsed.reason, parsed.detail);
     }
-    if (!isPlainObject(parsed) || typeof parsed.type !== 'string') {
+    if (!isRecord(parsed) || typeof parsed.type !== 'string') {
       return incompleteOutcome('unrecognized-schema', 'Yarn Classic audit contains an unknown record.');
     }
 
@@ -221,9 +222,9 @@ function parseModernOutcome(execution: YarnAuditExecution): AuditOutcome {
 }
 
 function parseClassicAdvisory(record: Record<string, unknown>): AuditAdvisory | undefined {
-  if (!isPlainObject(record.data)
-    || !isPlainObject(record.data.resolution)
-    || !isPlainObject(record.data.advisory)) {
+  if (!isRecord(record.data)
+    || !isRecord(record.data.resolution)
+    || !isRecord(record.data.advisory)) {
     return undefined;
   }
 
@@ -267,11 +268,11 @@ function parseClassicAdvisory(record: Record<string, unknown>): AuditAdvisory | 
 
 function parseClassicSummary(record: Record<string, unknown>): ClassicSummary | undefined {
   const data = record.data;
-  if (!isPlainObject(data)) {
+  if (!isRecord(data)) {
     return undefined;
   }
   const vulnerabilitySummary = data.vulnerabilities;
-  if (!isPlainObject(vulnerabilitySummary)) {
+  if (!isRecord(vulnerabilitySummary)) {
     return undefined;
   }
 
@@ -296,8 +297,8 @@ function parseClassicSummary(record: Record<string, unknown>): ClassicSummary | 
 }
 
 function parseModernAdvisory(value: unknown): AuditAdvisory | undefined {
-  if (!isPlainObject(value)
-    || !isPlainObject(value.children)) {
+  if (!isRecord(value)
+    || !isRecord(value.children)) {
     return undefined;
   }
   const packageName = readRequiredString(value.value);
@@ -345,7 +346,7 @@ function parseJsonLine(line: string, familyLabel: string): unknown | ParsedLineF
   catch (err) {
     return {
       reason: 'malformed-json',
-      detail: `${familyLabel} audit contains malformed JSON: ${describeError(err)}`,
+      detail: `${familyLabel} audit contains malformed JSON: ${firstErrorLine(err)}`,
     };
   }
 }
@@ -394,7 +395,7 @@ function nonEmptyLines(output: string): string[] {
 }
 
 function isLineFailure(value: unknown | ParsedLineFailure): value is ParsedLineFailure {
-  return isPlainObject(value)
+  return isRecord(value)
     && (value.reason === 'malformed-json' || value.reason === 'unrecognized-schema')
     && typeof value.detail === 'string';
 }
@@ -405,14 +406,6 @@ function incompleteOutcome(
 ): AuditIncompleteOutcome {
   logger.warn(detail);
   return { kind: 'incomplete', reason, detail };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readRequiredString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function isAdvisoryId(value: unknown): boolean {
@@ -435,7 +428,7 @@ function parseFixAvailable(value: unknown): boolean | { name?: string; version?:
   if (typeof value === 'boolean') {
     return value;
   }
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   const name = readRequiredString(value.name);
@@ -450,7 +443,6 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
-function describeError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.split(/\r?\n/, 1)[0];
+function firstErrorLine(err: unknown): string {
+  return describeError(err).split(/\r?\n/, 1)[0];
 }

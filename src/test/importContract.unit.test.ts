@@ -7,15 +7,17 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const srcRoot = path.join(repoRoot, 'src');
 
 /** Subsystem directories under `src/` that own a barrel. */
-const SUBSYSTEMS = ['providers', 'utils', 'clients', 'commands', 'tools'] as const;
+const SUBSYSTEMS = ['shared', 'providers', 'utils', 'clients', 'commands', 'tools'] as const;
 type Subsystem = typeof SUBSYSTEMS[number];
 
 /**
  * Layer order: a subsystem may freely import a lower-ranked subsystem's barrel.
- * `tools` has no rank — it is fully isolated and checked separately (rule d).
+ * `shared` is the bottom layer and imports no subsystem (checked separately).
+ * `tools` has no rank — it may import only the `shared` barrel and is checked separately.
  * `commands` and `extension.ts` sit above every ranked subsystem.
  */
 const LAYER_RANK: Record<Exclude<Subsystem, 'tools'>, number> = {
+  shared: 0,
   utils: 1,
   clients: 2,
   providers: 3,
@@ -185,7 +187,7 @@ describe('import contract', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('keeps `tools` isolated from every other subsystem', () => {
+  it('keeps `tools` isolated from every subsystem except the `shared` barrel', () => {
     const offenders: string[] = [];
     for (const file of allProductionFiles.filter(f => subsystemOf(f) === 'tools')) {
       const source = readFileSync(path.join(repoRoot, file), 'utf8');
@@ -193,10 +195,29 @@ describe('import contract', () => {
         if (!specifier.startsWith('.')) {
           continue;
         }
-        const target = subsystemOf(resolveSpecifier(file, specifier));
-        if (target !== undefined && target !== 'tools') {
+        const resolved = resolveSpecifier(file, specifier);
+        const target = subsystemOf(resolved);
+        const isSharedBarrel = target === 'shared' && resolved === 'src/shared';
+        if (target !== undefined && target !== 'tools' && !isSharedBarrel) {
           offenders.push(`${file} -> ${specifier}`);
         }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps `shared` free of vscode, other subsystems and non-Node packages', () => {
+    const offenders: string[] = [];
+    for (const file of allProductionFiles.filter(f => subsystemOf(f) === 'shared')) {
+      const source = readFileSync(path.join(repoRoot, file), 'utf8');
+      for (const specifier of importSpecifiers(source)) {
+        if (specifier.startsWith('node:')) {
+          continue;
+        }
+        if (specifier.startsWith('.') && subsystemOf(resolveSpecifier(file, specifier)) === 'shared') {
+          continue;
+        }
+        offenders.push(`${file} -> ${specifier}`);
       }
     }
     expect(offenders).toEqual([]);

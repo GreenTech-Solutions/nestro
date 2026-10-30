@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { RELEASE_CONTRACT } from './releaseContract';
+import { describeError, hasExactKeys, isRecord } from '../shared';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -120,16 +121,8 @@ export interface NormalizedManifestEntry {
   readonly sha256: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function sortedStrings(values: readonly string[]): string[] {
   return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  return JSON.stringify(sortedStrings(Object.keys(value))) === JSON.stringify(sortedStrings(expected));
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -268,7 +261,7 @@ export function findArtifactSbomViolation(value: unknown, expectation: ArtifactS
   if (!isRecord(value)) {
     return 'SBOM must be an object';
   }
-  if (!exactKeys(value, ['bomFormat', 'components', 'dependencies', 'metadata', 'properties', 'serialNumber', 'specVersion', 'version'])) {
+  if (!hasExactKeys(value, ['bomFormat', 'components', 'dependencies', 'metadata', 'properties', 'serialNumber', 'specVersion', 'version'])) {
     return 'SBOM contains unexpected or missing fields';
   }
   if (value.bomFormat !== 'CycloneDX' || value.specVersion !== '1.5' || value.version !== 1) {
@@ -278,8 +271,8 @@ export function findArtifactSbomViolation(value: unknown, expectation: ArtifactS
     return 'SBOM serialNumber must be a UUID URN';
   }
   const metadata = value.metadata;
-  if (!isRecord(metadata) || !exactKeys(metadata, ['component']) || !isRecord(metadata.component)
-    || !exactKeys(metadata.component, ['name', 'publisher', 'type', 'version'])
+  if (!isRecord(metadata) || !hasExactKeys(metadata, ['component']) || !isRecord(metadata.component)
+    || !hasExactKeys(metadata.component, ['name', 'publisher', 'type', 'version'])
     || metadata.component.type !== 'application'
     || metadata.component.name !== expectation.identity.name
     || metadata.component.version !== expectation.identity.version
@@ -395,7 +388,7 @@ export function findArtifactProvenanceViolation(value: unknown, expectation?: Ar
   if (!isRecord(value)) {
     return 'provenance must be an object';
   }
-  if (!exactKeys(value, ['artifact', 'attestation', 'ciRunAttempt', 'ciRunId', 'eventName', 'repository', 'schemaVersion', 'signerWorkflow', 'sourceSha'])) {
+  if (!hasExactKeys(value, ['artifact', 'attestation', 'ciRunAttempt', 'ciRunId', 'eventName', 'repository', 'schemaVersion', 'signerWorkflow', 'sourceSha'])) {
     return 'provenance contains unexpected or missing fields';
   }
   if (value.schemaVersion !== ARTIFACT_PROVENANCE_SCHEMA_VERSION
@@ -408,7 +401,7 @@ export function findArtifactProvenanceViolation(value: unknown, expectation?: Ar
     return 'provenance identity fields are malformed';
   }
   const artifact = value.artifact;
-  if (!isRecord(artifact) || !exactKeys(artifact, ['file', 'manifestFile', 'manifestSha256', 'sbomFile', 'sbomSha256', 'sha256'])
+  if (!isRecord(artifact) || !hasExactKeys(artifact, ['file', 'manifestFile', 'manifestSha256', 'sbomFile', 'sbomSha256', 'sha256'])
     || typeof artifact.file !== 'string' || typeof artifact.manifestFile !== 'string' || typeof artifact.sbomFile !== 'string'
     || typeof artifact.sha256 !== 'string' || typeof artifact.manifestSha256 !== 'string' || typeof artifact.sbomSha256 !== 'string'
     || !SAFE_FILE_PATTERN.test(artifact.file) || !SAFE_FILE_PATTERN.test(artifact.manifestFile) || !SAFE_FILE_PATTERN.test(artifact.sbomFile)
@@ -416,7 +409,7 @@ export function findArtifactProvenanceViolation(value: unknown, expectation?: Ar
     return 'provenance artifact linkage is malformed';
   }
   const attestation = value.attestation;
-  if (!isRecord(attestation) || !exactKeys(attestation, ['signerWorkflow', 'subjectDigest', 'subjectName'])
+  if (!isRecord(attestation) || !hasExactKeys(attestation, ['signerWorkflow', 'subjectDigest', 'subjectName'])
     || attestation.subjectName !== artifact.file
     || attestation.subjectDigest !== `sha256:${artifact.sha256}`
     || attestation.signerWorkflow !== value.signerWorkflow) {
@@ -501,7 +494,7 @@ export function findNormalizedManifestViolation(
     parsed = parseNormalizedManifest(contents);
   }
   catch (error) {
-    return error instanceof Error ? error.message : String(error);
+    return describeError(error);
   }
   const expected = parseNormalizedManifest(buildNormalizedManifest(entries));
   return JSON.stringify(parsed) === JSON.stringify(expected)

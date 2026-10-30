@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import { isRecord } from '../shared';
 import {
   METADATA_REQUEST_TIMEOUT_MS,
   METADATA_RESPONSE_MAX_BYTES,
@@ -223,8 +224,4 @@ function createMockResponse(statusCode: number, contentLength?: string): Incomin
 
 function toClientRequest(request: MockClientRequest): ClientRequest {
   return request as unknown as ClientRequest;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

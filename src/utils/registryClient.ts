@@ -19,6 +19,7 @@ import type {
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
+import { isRecord } from '../shared';
 
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 const MAX_REGISTRY_REDIRECTS = 3;
@@ -322,10 +323,6 @@ function readStringMap(value: unknown): Record<string, string> | undefined {
   }
 
   return Object.fromEntries(entries) as Record<string, string>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function withoutTransportMessage<T>(outcome: BoundedMetadataOutcome<T>): MetadataOutcome<T> {

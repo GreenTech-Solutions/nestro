@@ -1,3 +1,5 @@
+
+import { isRecord } from '../shared';
 export type ReleaseBump = 'major' | 'minor' | 'patch';
 
 export interface RawCommit {
@@ -84,10 +86,6 @@ const RELEASE_BUMPS: readonly ReleaseBump[] = ['major', 'minor', 'patch'];
 const NOOP_LOGGER: SemanticReleaseLogger = {
   log: () => undefined,
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function findPrepareReleaseConfigViolations(value: unknown): string[] {
   if (!isRecord(value)) {

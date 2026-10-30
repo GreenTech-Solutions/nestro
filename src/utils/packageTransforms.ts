@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
+import { isRecord } from '../shared';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
 
@@ -310,10 +311,6 @@ function readOwnDependencySpec(section: unknown, packageName: string): OwnDepend
     present,
     value: present ? dependencySection[packageName] : undefined,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function detectJsonIndent(raw: string): string {

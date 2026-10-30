@@ -1,7 +1,8 @@
 import type { Document } from 'yaml';
 import { FULL_SHA_PATTERN, parseReviewedActionsRegistry, REVIEWED_ACTIONS_PATH } from './reviewedActions';
 import type { ReviewedActionsRegistry } from './reviewedActions';
-import { asString, isRecord, loadStrictYaml } from './workflowYaml';
+import { asString, describeError, isRecord } from '../shared';
+import { loadStrictYaml } from './workflowYaml';
 import type { UnknownRecord, WorkflowViolation } from './workflowYaml';
 
 export interface ReviewedRegistryLoad {
@@ -178,7 +179,7 @@ export function loadReviewedRegistryForPolicy(source: string): ReviewedRegistryL
   }
   catch (error) {
     const prefix = `${REVIEWED_ACTIONS_PATH}: `;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     return {
       registry: undefined,
       violations: [{ rule: 'reviewed-registry', message: message.startsWith(prefix) ? message.slice(prefix.length) : message }],

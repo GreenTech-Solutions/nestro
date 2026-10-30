@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { describeError, isRecord } from '../shared';
 
 export const RELEASE_CONTRACT_PATH = '.github/release-contract.json';
 
@@ -48,10 +49,6 @@ export interface ReleaseContract {
 }
 
 type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function contractError(detail: string): Error {
   return new Error(`${RELEASE_CONTRACT_PATH}: ${detail}`);
@@ -148,7 +145,7 @@ export function parseReleaseContract(source: string): ReleaseContract {
     value = JSON.parse(source);
   }
   catch (error) {
-    throw contractError(`invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw contractError(`invalid JSON: ${describeError(error)}`);
   }
   const root = exactRecord(value, ['artifactPrefixes', 'bundle', 'candidateKeys', 'registries', 'schemaVersions', 'secrets', 'vsixBudget', 'workflows'], 'contract');
   const prefixes = section(root, 'artifactPrefixes', ['releaseCandidate', 'verifyEvidence']);

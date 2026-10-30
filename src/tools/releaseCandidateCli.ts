@@ -18,6 +18,7 @@ import { bundleFileName, bundleMemberNames, CANDIDATE_FILE, EVIDENCE_FILE, RELEA
 import type { ReleaseCandidateArtifact, ReleaseCandidateEvidence } from './releaseCandidate';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
+import { describeError, isRecord } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
@@ -141,21 +142,19 @@ async function readPackageVersion(cwd: string): Promise<string> {
     source = await readFile(resolve(cwd, 'package.json'), 'utf8');
   }
   catch (error) {
-    throw new Error(`package.json could not be read: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`package.json could not be read: ${describeError(error)}`, { cause: error });
   }
   let value: unknown;
   try {
     value = JSON.parse(source) as unknown;
   }
   catch (error) {
-    throw new Error(`package.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`package.json is not valid JSON: ${describeError(error)}`, { cause: error });
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)
-    || typeof (value as Record<string, unknown>).version !== 'string'
-    || !VERSION_PATTERN.test((value as Record<string, unknown>).version as string)) {
+  if (!isRecord(value) || typeof value.version !== 'string' || !VERSION_PATTERN.test(value.version)) {
     throw new Error('package.json must declare a plain major.minor.patch version');
   }
-  return (value as Record<string, unknown>).version as string;
+  return value.version;
 }
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -312,7 +311,7 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
     return 0;
   }
   catch (error) {
-    process.stderr.write(`Release candidate failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`Release candidate failed: ${describeError(error)}\n`);
     return 1;
   }
 }

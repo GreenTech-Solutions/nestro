@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { logger } from './logger';
+import { describeError } from '../shared';
 
 export interface RawPackageFile {
   readonly uri: vscode.Uri;
@@ -52,7 +53,7 @@ export async function writeManyPreparedPackageFilesAtomically(
   catch (err) {
     const rollbackFailures = await rollbackPreparedPackageFiles(written);
     if (rollbackFailures.length > 0) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
       throw new Error(`${message}; failed to roll back: ${rollbackFailures.join(', ')}`);
     }
     throw err;

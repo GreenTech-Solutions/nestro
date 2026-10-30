@@ -1,5 +1,6 @@
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { writeCiEvidence } from './ciEvidence';
+import { describeError } from '../shared';
 
 export function parseCiEvidenceArgs(argv: readonly string[]): string {
   if (argv.length !== 2 || argv[0] !== '--out-dir') {
@@ -21,7 +22,7 @@ export async function mainCiEvidence(argv: readonly string[], cwd: string, env: 
     return 0;
   }
   catch (error) {
-    process.stderr.write(`CI evidence failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`CI evidence failed: ${describeError(error)}\n`);
     return 1;
   }
 }

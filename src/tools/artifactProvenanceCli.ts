@@ -14,6 +14,7 @@ import {
 import { bundleFileName, EVIDENCE_FILE, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
+import { describeError, hasExactKeys, isRecord } from '../shared';
 
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -47,24 +48,12 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function parseJson(bytes: Uint8Array, label: string): unknown {
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
   }
   catch (error) {
-    throw new Error(`${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-  }
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-  const required = [...expected].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-  if (JSON.stringify(actual) !== JSON.stringify(required)) {
-    throw new Error(`${label} contains unexpected or missing fields`);
+    throw new Error(`${label} is not valid JSON: ${describeError(error)}`, { cause: error });
   }
 }
 
@@ -79,7 +68,7 @@ function parseEvidence(value: unknown): CiEvidence {
   if (!isRecord(value)) {
     throw new Error(`${EVIDENCE_FILE} must be an object`);
   }
-  exactKeys(value, [
+  if (!hasExactKeys(value, [
     'eventName',
     'pullRequestHeadSha',
     'releaseEligible',
@@ -89,7 +78,9 @@ function parseEvidence(value: unknown): CiEvidence {
     'sourceSha',
     'vsixFile',
     'vsixSha256',
-  ], EVIDENCE_FILE);
+  ])) {
+    throw new Error(`${EVIDENCE_FILE} contains unexpected or missing fields`);
+  }
   if (value.schemaVersion !== RELEASE_CONTRACT.schemaVersions.evidence || value.releaseEligible !== false) {
     throw new Error(`${EVIDENCE_FILE} must use schemaVersion ${RELEASE_CONTRACT.schemaVersions.evidence} and releaseEligible=false`);
   }
@@ -264,7 +255,7 @@ export async function mainArtifactProvenance(
     return 0;
   }
   catch (error) {
-    process.stderr.write(`Artifact provenance failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`Artifact provenance failed: ${describeError(error)}\n`);
     return 1;
   }
 }

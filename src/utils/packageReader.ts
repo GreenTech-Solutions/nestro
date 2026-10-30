@@ -18,6 +18,7 @@ import {
   writePreparedPackageFile,
 } from './packageRepository';
 import type { PreparedPackageFile } from './packageRepository';
+import { describeError } from '../shared';
 
 export interface PackageEntry {
   name: string;
@@ -190,7 +191,7 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
     catch (err) {
       skippedFiles.push({
         packageFilePath: uri.fsPath,
-        error: err instanceof Error ? err.message : String(err),
+        error: describeError(err),
       });
       logger.error(`Failed to read workspace package.json at ${uri.toString()}; skipping.`, err);
     }

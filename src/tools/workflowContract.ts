@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ReviewedActionsRegistry } from './reviewedActions';
-import { isRecord } from './workflowYaml';
+import { isRecord } from '../shared';
 import type { UnknownRecord, WorkflowViolation } from './workflowYaml';
 
 /** One reviewed step; `uses` names a registry locator and is checked against the registry commit. */

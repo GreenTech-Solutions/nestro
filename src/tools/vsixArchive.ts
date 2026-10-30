@@ -1,4 +1,5 @@
 import { crc32, inflateRawSync } from 'node:zlib';
+import { describeError } from '../shared';
 
 /**
  * Minimal ZIP reader for a `.vsix`, hand-written rather than using an unzip dependency: the
@@ -141,7 +142,7 @@ function readEntryContent(
       content = inflateRawSync(rawBytes, { maxOutputLength: Math.max(1, uncompressedSize) });
     }
     catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = describeError(error);
       throw new Error(`Corrupt archive: failed to inflate "${path}": ${reason}`, { cause: error });
     }
   }

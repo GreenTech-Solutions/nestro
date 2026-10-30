@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
 import { resolveSpawnTarget } from './processRunner';
+import { describeError, isRecord } from '../shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,7 +52,7 @@ async function readPackageManager(projectRoot: string): Promise<string | undefin
 
   try {
     const manifest = JSON.parse(contents) as unknown;
-    if (!isPlainObject(manifest)) {
+    if (!isRecord(manifest)) {
       return undefined;
     }
     return typeof manifest.packageManager === 'string' ? manifest.packageManager : undefined;
@@ -150,12 +151,4 @@ async function readOptionalFile(filePath: string): Promise<string | undefined> {
   catch {
     return undefined;
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

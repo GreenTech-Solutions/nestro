@@ -7,6 +7,7 @@ import type { RawCommit } from './releaseAnalyzer';
 import { runReleasePrepare } from './releasePrepare';
 import type { ReleasePrepareIo } from './releasePrepare';
 import { normalizeArtifactOutDir } from './verifyVsix';
+import { describeError } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const RECORD_SEPARATOR = '';
@@ -21,7 +22,7 @@ function parsePackageJson(source: string): Record<string, unknown> {
   catch (error) {
     throw new Error(
       'package.json is not valid JSON: '
-      + (error instanceof Error ? error.message : String(error)),
+      + (describeError(error)),
       { cause: error },
     );
   }
@@ -164,7 +165,7 @@ export async function mainReleasePrepare(argv: readonly string[], cwd: string, e
     return 0;
   }
   catch (error) {
-    process.stderr.write(`Release preparation failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`Release preparation failed: ${describeError(error)}\n`);
     return 1;
   }
 }

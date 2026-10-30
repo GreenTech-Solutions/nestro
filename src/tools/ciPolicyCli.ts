@@ -25,6 +25,7 @@ import { REVIEWED_ACTIONS_PATH } from './reviewedActions';
 import type { ReviewedActionsRegistry } from './reviewedActions';
 import { evaluateWorkflowActionPolicy, findUnusedReviewedActions, loadReviewedRegistryForPolicy } from './workflowActionPolicy';
 import type { WorkflowViolation } from './workflowYaml';
+import { describeError } from '../shared';
 
 export interface WorkflowPolicySource {
   readonly path: string;
@@ -142,7 +143,7 @@ export async function runCiPolicyCli(dependencies: CiPolicyCliDependencies): Pro
     inputs = await readPolicyInputs(dependencies);
   }
   catch (error) {
-    dependencies.writeError(`CI workflow policy failed: ${error instanceof Error ? error.message : String(error)}`);
+    dependencies.writeError(`CI workflow policy failed: ${describeError(error)}`);
     return 1;
   }
   const violations = evaluateRepositoryPolicy(inputs);

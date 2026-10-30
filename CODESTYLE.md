@@ -77,7 +77,7 @@ function isGroupItem(item: vscode.TreeItem): item is GroupItem {
 
 ## Module Structure & Barrels
 
-Every subsystem directory (`providers/`, `utils/`, `clients/`, `commands/`, `tools/`) has an
+Every subsystem directory (`shared/`, `providers/`, `utils/`, `clients/`, `commands/`, `tools/`) has an
 `index.ts` barrel. Barrels re-export by name, never with `export *`:
 
 ```typescript
@@ -95,8 +95,9 @@ public-surface declaration, not a re-statement of every file in the directory.
 ### Layer order
 
 ```
-tools        (isolated — imports nothing from providers/utils/clients/commands)
-utils        (foundation)
+tools        (isolated — imports nothing from providers/utils/clients/commands, only the shared barrel)
+shared       (bottom — imports only Node built-ins: no vscode, no other subsystem)
+utils        (above shared)
 clients      (above utils)
 providers    (above utils and clients)
 commands, extension.ts   (above everything)
@@ -199,7 +200,9 @@ Nestro has no "Swiss-army" files. A module that grows a second job is split befo
   keep the callers separate.
 - Code shared across subsystems lives in `src/shared/`, grouped by meaning (`guards.ts`, `text.ts`,
   `packageManagers.ts`, `ids.ts`). `src/shared/` imports only Node built-ins — never `vscode` and never
-  another subsystem. Code shared inside one subsystem stays in that subsystem.
+  another subsystem — and every other subsystem, `tools` included, imports it through its barrel
+  (`src/test/importContract.unit.test.ts` enforces both directions). Code shared inside one subsystem
+  stays in that subsystem.
 
 ### Data and scripts are not code
 - Commit SHAs, VSIX budgets, release file lists, command and context ids, setting defaults, timeouts and

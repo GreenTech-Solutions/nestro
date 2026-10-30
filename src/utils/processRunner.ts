@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { win32 as winPath } from 'node:path';
+import { describeError } from '../shared';
 
 export interface BoundedProcessOptions {
   cwd: string;
@@ -467,8 +468,4 @@ function isCanonicalLocalWindowsRoot(systemRoot: string | undefined): systemRoot
 
 function isCommandNotFound(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT';
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

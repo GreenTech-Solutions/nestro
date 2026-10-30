@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { describeError, hasExactKeys, isRecord } from '../shared';
 
 export const REVIEWED_ACTIONS_PATH = '.github/reviewed-actions.json';
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -22,15 +23,6 @@ export interface ReviewedActionsRegistry {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: UnknownRecord, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort((left, right) => left.localeCompare(right));
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
 function registryError(detail: string): Error {
   return new Error(`${REVIEWED_ACTIONS_PATH}: ${detail}`);
 }
@@ -41,7 +33,7 @@ export function parseReviewedActionsRegistry(source: string): ReviewedActionsReg
     value = JSON.parse(source);
   }
   catch (error) {
-    throw registryError(`invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw registryError(`invalid JSON: ${describeError(error)}`);
   }
   if (!isRecord(value) || !hasExactKeys(value, ['actionlint', 'actions'])) {
     throw registryError('must contain exactly the actionlint and actions entries');

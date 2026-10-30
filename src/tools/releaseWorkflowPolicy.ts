@@ -7,8 +7,9 @@ import { RELEASE_PUBLISH_CONTRACT, RELEASE_SECRET_STEPS } from './releasePublish
 import type { ReviewedActionsRegistry } from './reviewedActions';
 import { checkWorkflowContract } from './workflowContract';
 import type { WorkflowContract } from './workflowContract';
-import { isRecord, loadStrictYaml } from './workflowYaml';
+import { loadStrictYaml } from './workflowYaml';
 import type { WorkflowViolation } from './workflowYaml';
+import { describeError, isRecord } from '../shared';
 
 export const RELEASE_PREPARE_WORKFLOW_PATH = '.github/workflows/release-prepare.yml';
 export const RELEASE_CANDIDATE_WORKFLOW_PATH = '.github/workflows/release-candidate.yml';
@@ -99,7 +100,7 @@ export function evaluateReleaseConfigPolicy(source: string): WorkflowViolation[]
     value = JSON.parse(source) as unknown;
   }
   catch (error) {
-    return [{ rule: 'release-config', message: `release config is not valid JSON: ${error instanceof Error ? error.message : String(error)}` }];
+    return [{ rule: 'release-config', message: `release config is not valid JSON: ${describeError(error)}` }];
   }
   const configViolations = validatePrepareReleaseConfig(value);
   return configViolations.map(message => ({ rule: 'release-config', message }));

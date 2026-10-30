@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readFile, realpath, rm, unlink, writeFile } from 'n
 import { promisify } from 'node:util';
 import { runVerifyVsixCli, VSCE_BIN_RELATIVE_PATH } from './verifyVsix';
 import type { VerifyVsixCliDependencies, VsixVerifierIo } from './verifyVsix';
+import { describeError } from '../shared';
 
 /**
  * Node bindings for the VSIX verifier. Everything that touches the process or
@@ -184,7 +185,7 @@ export function createNodeVsixVerifierIo(cwd: string): VsixVerifierIo {
             { cause: error },
           );
         }
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = describeError(error);
         throw new Error(`Failed to acquire VSIX artifact lock ${lockPath}: ${reason}`, { cause: error });
       }
 
@@ -194,14 +195,14 @@ export function createNodeVsixVerifierIo(cwd: string): VsixVerifierIo {
             await handle.close();
           }
           catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
+            const reason = describeError(error);
             throw new Error(`Failed to close VSIX artifact lock ${lockPath}: ${reason}`, { cause: error });
           }
           try {
             await unlink(resolvedLockPath);
           }
           catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
+            const reason = describeError(error);
             throw new Error(
               `Failed to remove VSIX artifact lock ${lockPath}: ${reason}; remove the stale lock manually`,
               { cause: error },
@@ -265,7 +266,7 @@ export function createNodeVsixVerifierIo(cwd: string): VsixVerifierIo {
             // required files are reported by the policy, not here.
             continue;
           }
-          const reason = error instanceof Error ? error.message : String(error);
+          const reason = describeError(error);
           throw new Error(`lstat ${candidate} failed: ${reason}`, { cause: error });
         }
       }

@@ -18,6 +18,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { createAuditAdvisory, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
+import { describeError, isRecord, readRequiredString } from '../shared';
 
 const bunSchema = 'bun-bulk-advisory' as const;
 const compatibleExitCodes: readonly number[] = [0, 1];
@@ -125,7 +126,7 @@ export function parseBunAuditOutcome(execution: AuditExecution): AuditOutcome {
 }
 
 function parseBulkAdvisories(json: unknown): Map<string, AuditAdvisory> | undefined {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return undefined;
   }
 
@@ -150,7 +151,7 @@ function parseBulkAdvisories(json: unknown): Map<string, AuditAdvisory> | undefi
 }
 
 function parseBulkAdvisory(packageName: string, value: unknown): AuditAdvisory | undefined {
-  if (!isPlainObject(value)
+  if (!isRecord(value)
     || !isAdvisoryId(value.id)
     || readRequiredString(value.url) === undefined
     || readRequiredString(value.title) === undefined
@@ -190,7 +191,7 @@ function parseFixAvailable(value: unknown): boolean | { name?: string; version?:
   if (typeof value === 'boolean') {
     return value;
   }
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   const name = readRequiredString(value.name);
@@ -216,7 +217,7 @@ function isOptionalCvss(value: unknown): boolean {
   if (value === undefined) {
     return true;
   }
-  if (!isPlainObject(value) || typeof value.score !== 'number' || !Number.isFinite(value.score)) {
+  if (!isRecord(value) || typeof value.score !== 'number' || !Number.isFinite(value.score)) {
     return false;
   }
   return value.vectorString === null || readRequiredString(value.vectorString) !== undefined;
@@ -228,16 +229,4 @@ function incompleteOutcome(
 ): AuditIncompleteOutcome {
   logger.warn(detail);
   return { kind: 'incomplete', reason, detail };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readRequiredString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

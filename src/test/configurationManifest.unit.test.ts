@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { isRecord } from '../shared';
 
 interface ConfigurationSetting {
   readonly default: boolean | number | string;
@@ -35,10 +36,6 @@ type ManifestValue = null | boolean | number | string | ManifestValue[] | { read
 type MessageCatalog = Readonly<Record<string, string>>;
 
 const LOCALIZATION_TOKEN = /%([A-Za-z0-9_.-]+)%/g;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function validateMessageCatalog(value: unknown): MessageCatalog {
   if (!isRecord(value)) {

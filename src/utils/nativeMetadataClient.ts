@@ -13,6 +13,7 @@ import type {
   PackageMetadata,
   PackageMetadataOutcome,
 } from './metadataRegistry';
+import { isRecord } from '../shared';
 
 const nativePackageManagers = ['npm', 'pnpm'] as const;
 
@@ -145,8 +146,4 @@ function parsePublishTimes(
       )),
     ) as Record<string, string>,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -12,6 +12,7 @@ import type {
   AuditFixAvailability,
   AuditVia,
 } from './auditReport';
+import { describeError, isRecord } from '../shared';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 export type AuditPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
@@ -338,17 +339,17 @@ function incompleteOutcome(reason: AuditIncompleteReason, detail: string): Audit
  * version or summary marker, so an unknown or future schema is never guessed at.
  */
 function recognizeAuditPayload(json: unknown, manager: AuditPackageManager): RecognizedAuditPayload | undefined {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return undefined;
   }
 
-  const hasSummary = isPlainObject(json.metadata);
+  const hasSummary = isRecord(json.metadata);
   const summaryTotal = readSummaryTotal(json.metadata);
 
-  if (isPlainObject(json.vulnerabilities) && (typeof json.auditReportVersion === 'number' || hasSummary)) {
+  if (isRecord(json.vulnerabilities) && (typeof json.auditReportVersion === 'number' || hasSummary)) {
     return { schema: 'npm-v2-vulnerabilities', manager, entries: json.vulnerabilities, summaryTotal };
   }
-  if (isPlainObject(json.advisories) && hasSummary) {
+  if (isRecord(json.advisories) && hasSummary) {
     return { schema: 'npm-v1-advisories', manager, entries: json.advisories, summaryTotal };
   }
   return undefined;
@@ -358,7 +359,7 @@ function collectAdvisories(payload: RecognizedAuditPayload): AuditAdvisory[] {
   const advisories = new Map<string, AuditAdvisory>();
 
   for (const [key, info] of Object.entries(payload.entries)) {
-    if (!isPlainObject(info)) {
+    if (!isRecord(info)) {
       continue;
     }
     const packageName = payload.schema === 'npm-v2-vulnerabilities'
@@ -402,7 +403,7 @@ function collectAdvisories(payload: RecognizedAuditPayload): AuditAdvisory[] {
 
     const viaAdvisories = via.filter(entry => entry.url !== undefined || entry.id !== undefined || entry.source !== undefined);
     const findings = payload.schema === 'npm-v1-advisories' && Array.isArray(info.findings)
-      ? info.findings.filter(isPlainObject)
+      ? info.findings.filter(isRecord)
       : [];
     if (payload.schema === 'npm-v2-vulnerabilities' && viaAdvisories.length > 0) {
       for (const detail of viaAdvisories) {
@@ -463,15 +464,11 @@ function collectVulnerabilities(advisories: readonly AuditAdvisory[]): Map<strin
 }
 
 function readSummaryTotal(metadata: unknown): number | undefined {
-  if (!isPlainObject(metadata) || !isPlainObject(metadata.vulnerabilities)) {
+  if (!isRecord(metadata) || !isRecord(metadata.vulnerabilities)) {
     return undefined;
   }
   const { total } = metadata.vulnerabilities;
   return typeof total === 'number' ? total : undefined;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | undefined {
@@ -504,7 +501,7 @@ function parseFixAvailable(value: unknown): AuditFixAvailability | undefined {
   if (typeof value === 'boolean') {
     return value;
   }
-  if (!isPlainObject(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   const name = readString(value.name);
@@ -524,7 +521,7 @@ function parseVia(value: unknown): AuditVia[] {
     if (typeof entry === 'string' && entry !== '') {
       return [{ identity: entry }];
     }
-    if (!isPlainObject(entry)) {
+    if (!isRecord(entry)) {
       return [];
     }
     const id = readIdentity(entry.id);
@@ -560,8 +557,4 @@ function managerForSchema(schema: AuditSchemaId): AuditPackageManager {
     return 'yarn';
   }
   return 'bun';
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

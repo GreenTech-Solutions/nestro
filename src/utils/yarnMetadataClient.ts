@@ -14,6 +14,7 @@ import type {
 } from './metadataRegistry';
 import { isValidPackageName } from './packageNameValidation';
 import { resolveYarnFamily } from './yarnFamily';
+import { isRecord } from '../shared';
 
 /** Runs Yarn Classic's wrapped package metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnClassic(
@@ -194,8 +195,4 @@ function parsePublishTimes(
       )),
     ) as Record<string, string>,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
