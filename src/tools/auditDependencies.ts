@@ -3,7 +3,7 @@
  * advisories anywhere block at critical, and every other advisory is reported as a warning.
  */
 import type { SignatureAuditExecution } from './auditSignatures';
-import { describeError, describeStderr, isRecord } from '../shared';
+import { compareCodeUnits, describeError, describeStderr, isRecord } from '../shared';
 
 /** Production-only audit: the dependencies bundled into the shipped extension. */
 export const PRODUCTION_AUDIT_ARGS = ['audit', '--prod', '--json'] as const;
@@ -182,9 +182,9 @@ function isAtLeast(severity: AuditSeverity, floor: AuditSeverity): boolean {
 
 function bySeverityThenName(left: ScopedDependencyAdvisory, right: ScopedDependencyAdvisory): number {
   return SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity]
-    || left.moduleName.localeCompare(right.moduleName)
-    || left.id.localeCompare(right.id)
-    || left.key.localeCompare(right.key);
+    || compareCodeUnits(left.moduleName, right.moduleName)
+    || compareCodeUnits(left.id, right.id)
+    || compareCodeUnits(left.key, right.key);
 }
 
 /** Splits both audits into blocking advisories and warnings; an entry seen in production is scoped there. */

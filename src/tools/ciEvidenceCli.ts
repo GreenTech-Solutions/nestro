@@ -1,5 +1,6 @@
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { writeCiEvidence } from './ciEvidence';
+import { runCliAsEntry } from './cliBootstrap';
 import { describeError } from '../shared';
 
 export function parseCiEvidenceArgs(argv: readonly string[]): string {
@@ -28,9 +29,5 @@ export async function mainCiEvidence(argv: readonly string[], cwd: string, env: 
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainCiEvidence(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainCiEvidence(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */

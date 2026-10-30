@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
+import { uniqueStrings } from '../shared';
 import {
   createCheckCoordinator,
   DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
@@ -25,8 +26,8 @@ import type {
 } from '../utils';
 import type { PackageFileEntries } from '../utils';
 import { LoadingItem } from './LoadingItem';
-import { isPackageItem, PackageItem, sanitizePackageText } from './PackageItem';
-import type { PackageOperation } from './PackageItem';
+import { isPackageItem, normalizeOperation, PackageItem, sanitizePackageText } from './PackageItem';
+import type { PackageOperation, PackageOperationInput } from './PackageItem';
 import { PackageDetailItem } from './PackageDetailItem';
 import { GroupItem } from './GroupItem';
 import { StatusItem } from './StatusItem';
@@ -114,8 +115,6 @@ const EMPTY_WORKSPACE_CAPABILITIES: WorkspaceCapabilities = Object.freeze({
 
 /** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
 export const METADATA_CONCURRENCY_CAP = 4;
-
-type PackageOperationInput = PackageOperation | boolean | undefined;
 
 interface AuditOperation {
   readonly generation: number;
@@ -1789,15 +1788,4 @@ function formatFailureDetail(error: unknown): string {
     return error.stack ?? error.message;
   }
   return String(error);
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
-}
-
-function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
-  if (typeof operation !== 'boolean') {
-    return operation;
-  }
-  return operation ? { kind: 'update', target: defaultTarget } : undefined;
 }

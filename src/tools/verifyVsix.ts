@@ -1,15 +1,14 @@
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import { bundleFileName, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET } from './releaseContract';
 import {
   collectSymlinkCandidates,
-  compareNormalizedPaths,
   evaluateVsixPolicy,
   VSIX_EXTENSION_PREFIX,
 } from './vsixPolicy';
 import type { PolicyViolation, VsixPolicyReport } from './vsixPolicy';
 import { readVsixArchive } from './vsixArchive';
 import { parseVsixManifestIdentity } from './vsixManifest';
+import { compareCodeUnits, sha256Hex } from '../shared';
 
 /**
  * `check:vsce` entrypoint: packages the extension, verifies the produced bytes against the
@@ -91,10 +90,6 @@ interface ArtifactCleanupFailure {
 type LockedVerificationOutcome
   = | { readonly ok: true; readonly result: VerifyVsixResult }
     | { readonly ok: false; readonly error: unknown };
-
-export function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
 
 function decodeText(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -261,7 +256,7 @@ export function parseVerifyVsixArgs(argv: readonly string[]): VerifyVsixOptions 
 /** `<sha256>  <archive path>`, ordered by path so the manifest is comparable across builds. */
 function buildManifestLines(entries: readonly { path: string; bytes: Uint8Array }[]): string[] {
   return [...entries]
-    .sort((left, right) => compareNormalizedPaths(left.path, right.path))
+    .sort((left, right) => compareCodeUnits(left.path, right.path))
     .map(entry => `${sha256Hex(entry.bytes)}  ${entry.path}`);
 }
 

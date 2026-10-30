@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -18,7 +17,8 @@ import { bundleFileName, bundleMemberNames, CANDIDATE_FILE, EVIDENCE_FILE, RELEA
 import type { ReleaseCandidateArtifact, ReleaseCandidateEvidence } from './releaseCandidate';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
-import { describeError, isRecord } from '../shared';
+import { runCliAsEntry } from './cliBootstrap';
+import { compareCodeUnits, describeError, hasExactKeys, isRecord, sha256Hex } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
@@ -39,9 +39,7 @@ export function parseReleaseCandidateArgs(argv: readonly string[]): ReleaseCandi
 }
 
 function requireExactKeys(record: Record<string, unknown>, expected: readonly string[], label: string): void {
-  const actual = Object.keys(record).sort((left, right) => left.localeCompare(right));
-  const required = [...expected].sort((left, right) => left.localeCompare(right));
-  if (JSON.stringify(actual) !== JSON.stringify(required)) {
+  if (!hasExactKeys(record, expected)) {
     throw new Error(`${label} contains unexpected or missing fields`);
   }
 }
@@ -157,10 +155,6 @@ async function readPackageVersion(cwd: string): Promise<string> {
   return value.version;
 }
 
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 function parseJson(bytes: Uint8Array, label: string): unknown {
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
@@ -175,8 +169,8 @@ async function verifyEvidenceFiles(
   evidence: ReleaseCandidateEvidence,
   environment: NodeJS.ProcessEnv,
 ): Promise<ReleaseCandidateArtifact> {
-  const entries = (await readdir(artifactDir)).sort((left, right) => left.localeCompare(right));
-  const expectedEntries = bundleMemberNames('verify', evidence.vsixFile).sort((left, right) => left.localeCompare(right));
+  const entries = (await readdir(artifactDir)).sort(compareCodeUnits);
+  const expectedEntries = bundleMemberNames('verify', evidence.vsixFile).sort(compareCodeUnits);
   if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
     throw new Error('verified evidence must contain exactly the six-member provenance bundle');
   }
@@ -317,9 +311,5 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainReleaseCandidate(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainReleaseCandidate(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */

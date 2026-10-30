@@ -2,6 +2,7 @@ import { runDependencyAuditCli } from './auditDependencies';
 import type { DependencyAuditCliDependencies } from './auditDependencies';
 import { createNodePnpmRunner } from './auditSignaturesCli';
 import { createStreamLineWriter } from './verifyVsixCli';
+import { runCliAsEntry } from './cliBootstrap';
 
 /** Node bindings for the dependency audit gate; the decision lives in `auditDependencies.ts`. */
 
@@ -29,9 +30,5 @@ export function mainDependencyAudit(
 }
 
 /* v8 ignore start -- process bootstrap: only reachable when node runs this file directly */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainDependencyAudit(process.argv.slice(2), process.cwd(), process.platform, process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainDependencyAudit(process.argv.slice(2), process.cwd(), process.platform, process.env));
 /* v8 ignore stop */

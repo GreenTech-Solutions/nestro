@@ -1,5 +1,6 @@
 import { sanitizeInlineText } from '../shared';
 import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './auditClient';
+import { compareCodeUnits } from '../shared';
 
 const SEVERITY_ORDER: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
 
@@ -142,7 +143,7 @@ export function mergeAuditAdvisories(advisories: readonly AuditAdvisory[]): Audi
 export function compareAdvisories(left: AuditAdvisory, right: AuditAdvisory): number {
   return SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity)
     || left.packageName.localeCompare(right.packageName)
-    || left.identity.localeCompare(right.identity);
+    || compareCodeUnits(left.identity, right.identity);
 }
 
 export function cloneAuditAdvisory(advisory: AuditAdvisory): AuditAdvisory {
@@ -259,7 +260,7 @@ function uniqueVia(via: readonly AuditVia[]): AuditVia[] {
     const previous = byIdentity.get(entry.identity);
     byIdentity.set(entry.identity, previous === undefined ? { ...entry } : mergeViaEntry(previous, entry));
   }
-  return [...byIdentity.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  return [...byIdentity.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
 }
 
 function mergeViaEntry(left: AuditVia, right: AuditVia): AuditVia {
@@ -287,7 +288,7 @@ function chooseStableString(left: string | undefined, right: string | undefined)
   if (right === undefined || left === right) {
     return left;
   }
-  return [left, right].sort((a, b) => a.localeCompare(b))[0];
+  return [left, right].sort(compareCodeUnits)[0];
 }
 
 function inferSinglePathAttribution(packageName: string, value: string): AuditAttribution {

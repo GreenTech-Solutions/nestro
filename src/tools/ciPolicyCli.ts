@@ -25,7 +25,8 @@ import { REVIEWED_ACTIONS_PATH } from './reviewedActions';
 import type { ReviewedActionsRegistry } from './reviewedActions';
 import { evaluateWorkflowActionPolicy, findUnusedReviewedActions, loadReviewedRegistryForPolicy } from './workflowActionPolicy';
 import type { WorkflowViolation } from './workflowYaml';
-import { describeError } from '../shared';
+import { runCliAsEntry } from './cliBootstrap';
+import { compareCodeUnits, describeError } from '../shared';
 
 export interface WorkflowPolicySource {
   readonly path: string;
@@ -166,7 +167,7 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
       const names = entries
         .filter(entry => entry.isFile() && /^dependabot\.ya?ml$/u.test(entry.name))
         .map(entry => entry.name)
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareCodeUnits);
       return Promise.all(names.map(async name => ({
         path: `.github/${name}`,
         source: await readFile(resolve(directory, name), 'utf8'),
@@ -178,7 +179,7 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
       const names = entries
         .filter(entry => entry.isFile() && /\.ya?ml$/u.test(entry.name))
         .map(entry => entry.name)
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareCodeUnits);
       return Promise.all(names.map(async name => ({
         path: `${WORKFLOWS_DIRECTORY_PATH}/${name}`,
         source: await readFile(resolve(directory, name), 'utf8'),
@@ -192,9 +193,5 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void runCiPolicyCli(createNodeCiPolicyCliDependencies(process.cwd())).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => runCiPolicyCli(createNodeCiPolicyCliDependencies(process.cwd())));
 /* v8 ignore stop */

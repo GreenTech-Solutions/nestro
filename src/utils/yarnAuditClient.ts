@@ -20,7 +20,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
-import { describeError, isRecord, readRequiredString } from '../shared';
+import { compareCodeUnits, describeError, isRecord, readRequiredString } from '../shared';
 
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
@@ -356,7 +356,7 @@ function recognizedOutcome(
   exitCode: number,
   advisories: Map<string, AuditAdvisory>,
 ): AuditOutcome {
-  const normalizedAdvisories = [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  const normalizedAdvisories = [...advisories.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
   const vulnerabilities = new Map<string, AuditSeverity>();
   for (const advisory of normalizedAdvisories) {
     const current = vulnerabilities.get(advisory.packageName);

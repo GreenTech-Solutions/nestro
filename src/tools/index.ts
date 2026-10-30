@@ -26,13 +26,13 @@ export { bundleFileName, bundleMemberNames, bundleUploadPaths, candidateKey, loa
 export type { BundleKind, BundleRole, ReleaseContract } from './releaseContract';
 export { loadReviewedActionsRegistry, parseReviewedActionsRegistry, REVIEWED_ACTIONS_PATH, reviewedActionReference } from './reviewedActions';
 export type { ReviewedAction, ReviewedActionsRegistry } from './reviewedActions';
-export { DEFAULT_OUT_DIR, parseVerifyVsixArgs, runVerifyVsixCli, sha256Hex, verifyVsixPackage } from './verifyVsix';
+export { DEFAULT_OUT_DIR, parseVerifyVsixArgs, runVerifyVsixCli, verifyVsixPackage } from './verifyVsix';
 export type { VerifyVsixCliDependencies, VsixVerifierIo } from './verifyVsix';
 export { createNodeCliDependencies, createNodeVsixVerifierIo, createStreamLineWriter, main, parseGitStatusPaths } from './verifyVsixCli';
 export { readVsixArchive } from './vsixArchive';
 export type { VsixArchiveEntry } from './vsixArchive';
 export { parseVsixManifestIdentity } from './vsixManifest';
-export { classifyForbidden, CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, collectSymlinkCandidates, compareNormalizedPaths, COMPRESSED_SIZE_BUDGET_BYTES, evaluateVsixPolicy, PACKAGED_FILE_COUNT_BUDGET, resolveBundleClosure, toSourcePath, VSIX_SECRET_PATTERNS } from './vsixPolicy';
+export { classifyForbidden, CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, collectSymlinkCandidates, COMPRESSED_SIZE_BUDGET_BYTES, evaluateVsixPolicy, PACKAGED_FILE_COUNT_BUDGET, resolveBundleClosure, toSourcePath, VSIX_SECRET_PATTERNS } from './vsixPolicy';
 export type { ForbiddenClass, PolicyViolation, VsixPolicyReport } from './vsixPolicy';
 export { evaluateWorkflowActionPolicy, findUnusedReviewedActions, loadReviewedRegistryForPolicy } from './workflowActionPolicy';
 export { checkWorkflowContract } from './workflowContract';

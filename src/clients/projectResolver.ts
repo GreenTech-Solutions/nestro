@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { logger } from '../utils/logger';
 import type { PackageManager } from '../utils/packageManagerKind';
+import { compareCodeUnits, isPathWithin } from '../shared';
 
 export type { PackageManager };
 
@@ -189,12 +190,6 @@ function getAncestorDirectories(cwd: string, workspaceFolderPath: string | undef
   return directories;
 }
 
-function isPathContained(basePath: string, candidatePath: string): boolean {
-  const relative = path.relative(basePath, candidatePath);
-  return relative === ''
-    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
 type CanonicalRootResult
   = | { ok: true; root: string; workspaceFolder: string }
     // `unresolvable-path` means `realpath` itself failed; `workspace-escape` means it
@@ -213,7 +208,7 @@ async function canonicalizeRoot(candidateDir: string, workspaceFolderPath: strin
       realpath(candidateDir),
       realpath(workspaceFolderPath),
     ]);
-    if (!isPathContained(canonicalWorkspaceFolder, root)) {
+    if (!isPathWithin(canonicalWorkspaceFolder, root)) {
       return { ok: false, reason: 'workspace-escape' };
     }
     return { ok: true, root, workspaceFolder: workspaceFolderPath };
@@ -332,7 +327,7 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
   // order. The caller's list ultimately comes from `vscode.workspace.findFiles()`, whose
   // order is not contractually guaranteed (N7); the final `projects`/`rejected` sort
   // below only stabilizes the shape of the output, not which manifest wins the claim.
-  const sortedPackageFilePaths = [...packageFilePaths].sort((a, b) => a.localeCompare(b));
+  const sortedPackageFilePaths = [...packageFilePaths].sort(compareCodeUnits);
 
   for (const packageFilePath of sortedPackageFilePaths) {
     const manifestDir = path.dirname(packageFilePath);
@@ -375,13 +370,13 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
   const projects = [...byRoot.values()]
     .map(({ project, originManifests }): AuditProject => ({
       ...project,
-      originManifests: [...originManifests].sort((a, b) => a.localeCompare(b)),
+      originManifests: [...originManifests].sort(compareCodeUnits),
     }))
-    .sort((a, b) => a.projectRoot.localeCompare(b.projectRoot));
+    .sort((a, b) => compareCodeUnits(a.projectRoot, b.projectRoot));
 
   return {
     projects,
-    rejected: [...rejected].sort((a, b) => a.packageFilePath.localeCompare(b.packageFilePath)),
+    rejected: [...rejected].sort((a, b) => compareCodeUnits(a.packageFilePath, b.packageFilePath)),
   };
 }
 
@@ -402,7 +397,7 @@ async function resolveCanonicalOwningWorkspaceFolder(canonicalDir: string): Prom
     }
   }));
   const owners = canonicalFolders
-    .filter((folderPath): folderPath is string => folderPath !== undefined && isPathContained(folderPath, canonicalDir))
+    .filter((folderPath): folderPath is string => folderPath !== undefined && isPathWithin(folderPath, canonicalDir))
     .sort((left, right) => right.length - left.length);
   return owners[0];
 }

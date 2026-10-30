@@ -14,6 +14,7 @@ import {
   formatVulnerablePackageCount,
 } from '../utils';
 import type { StatusReportFailure } from '../utils';
+import { uniqueStrings } from '../shared';
 
 const SHOW_FILTER_PICKER_COMMAND = 'nestro.showFilterPicker';
 const SEARCH_PACKAGES_COMMAND = 'nestro.searchPackages';
@@ -311,8 +312,4 @@ export function projectStatusRows(
   }
 
   return rows;
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }

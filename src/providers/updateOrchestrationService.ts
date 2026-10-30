@@ -1,4 +1,5 @@
 import { resolveMutationCoordinatorKey } from '../clients';
+import { compareCodeUnits } from '../shared';
 import * as utils from '../utils';
 import type { NcuUpdateTarget, OperationCoordinator, PackageMetadataOutcome, ReleaseAgeState } from '../utils';
 import { startRootOperations } from '../utils';
@@ -179,9 +180,8 @@ export async function computeUpdateFingerprint(
     });
   }
 
-  entryFingerprints.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   return JSON.stringify({
-    entries: entryFingerprints,
+    entries: [...entryFingerprints].sort(compareCodeUnits),
     target: policy.target,
     includePreReleases: policy.includePreReleases,
     minimumReleaseAgeDays: policy.minimumReleaseAgeDays,
@@ -305,9 +305,8 @@ function buildPolicyKey(
   packageFiles: readonly string[],
   policy: UpdateFingerprintPolicy,
 ): string {
-  const files = [...packageFiles].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   return JSON.stringify({
-    files,
+    files: [...packageFiles].sort(compareCodeUnits),
     target: policy.target,
     includePreReleases: policy.includePreReleases,
     minimumReleaseAgeDays: policy.minimumReleaseAgeDays,

@@ -12,7 +12,7 @@ import type {
   AuditFixAvailability,
   AuditVia,
 } from './auditReport';
-import { describeError, isRecord } from '../shared';
+import { compareCodeUnits, describeError, isRecord } from '../shared';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 export type AuditPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
@@ -448,7 +448,7 @@ function collectAdvisories(payload: RecognizedAuditPayload): AuditAdvisory[] {
     }
   }
 
-  return [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  return [...advisories.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
 }
 
 function collectVulnerabilities(advisories: readonly AuditAdvisory[]): Map<string, AuditSeverity> {

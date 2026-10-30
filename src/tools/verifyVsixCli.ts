@@ -4,7 +4,8 @@ import { lstat, mkdir, open, readFile, realpath, rm, unlink, writeFile } from 'n
 import { promisify } from 'node:util';
 import { runVerifyVsixCli, VSCE_BIN_RELATIVE_PATH } from './verifyVsix';
 import type { VerifyVsixCliDependencies, VsixVerifierIo } from './verifyVsix';
-import { describeError } from '../shared';
+import { runCliAsEntry } from './cliBootstrap';
+import { describeError, hasErrorCode, isPathWithin } from '../shared';
 
 /**
  * Node bindings for the VSIX verifier. Everything that touches the process or
@@ -23,16 +24,6 @@ function describeChildFailure(command: string, error: unknown): Error {
   return new Error(output.length > 0 ? `${command} failed: ${reason}\n${output}` : `${command} failed: ${reason}`);
 }
 
-function isErrno(error: unknown, code: string): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === code;
-}
-
-function isPathContained(repositoryPath: string, candidatePath: string): boolean {
-  const relative = path.relative(repositoryPath, candidatePath);
-  return relative === ''
-    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
 interface ExistingArtifactAncestor {
   readonly lexicalPath: string;
   readonly realPath: string;
@@ -45,7 +36,7 @@ async function resolveExistingAncestor(candidatePath: string): Promise<ExistingA
       return { lexicalPath: current, realPath: await realpath(current) };
     }
     catch (error) {
-      if (!isErrno(error, 'ENOENT')) {
+      if (!hasErrorCode(error, 'ENOENT')) {
         throw error;
       }
       const parent = path.dirname(current);
@@ -63,7 +54,7 @@ function assertArtifactDirectoryContained(
   dirPath: string,
   allowRepositoryRoot: boolean,
 ): void {
-  if (!isPathContained(repositoryPath, candidatePath)) {
+  if (!isPathWithin(repositoryPath, candidatePath)) {
     throw new Error(`VSIX output directory ${dirPath} resolves outside the repository`);
   }
   if (!allowRepositoryRoot && path.relative(repositoryPath, candidatePath) === '') {
@@ -178,7 +169,7 @@ export function createNodeVsixVerifierIo(cwd: string): VsixVerifierIo {
         handle = await open(resolvedLockPath, 'wx');
       }
       catch (error) {
-        if (isErrno(error, 'EEXIST')) {
+        if (hasErrorCode(error, 'EEXIST')) {
           throw new Error(
             `VSIX artifact lock already exists: ${lockPath}; another verifier may be active. `
             + 'If the lock is stale, remove it manually only after confirming no verifier is running.',
@@ -261,7 +252,7 @@ export function createNodeVsixVerifierIo(cwd: string): VsixVerifierIo {
           }
         }
         catch (error) {
-          if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+          if (hasErrorCode(error, 'ENOENT')) {
             // A candidate that does not exist cannot be a symlink; missing
             // required files are reported by the policy, not here.
             continue;
@@ -321,9 +312,5 @@ export function main(argv: readonly string[], cwd: string): Promise<number> {
 }
 
 /* v8 ignore start -- process bootstrap: only reachable when node runs this file directly */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void main(process.argv.slice(2), process.cwd()).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => main(process.argv.slice(2), process.cwd()));
 /* v8 ignore stop */

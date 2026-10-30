@@ -1,3 +1,5 @@
+import { compareCodeUnits } from '../shared';
+
 /**
  * Serializes package-project mutations by canonical project-root key: operations sharing
  * a key run one at a time, different keys run concurrently up to `concurrencyCap`, and
@@ -29,7 +31,7 @@ export class OperationCoordinator {
   async runManyExclusive<T>(keys: readonly string[], fn: () => Promise<T>): Promise<T> {
     // Code-unit order, not locale collation — must agree with `Set`'s identity so two
     // distinct keys never compare equal and destabilize the shared acquisition order.
-    const sortedKeys = [...new Set(keys)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    const sortedKeys = [...new Set(keys)].sort(compareCodeUnits);
     const releases: (() => void)[] = [];
     try {
       for (const key of sortedKeys) {

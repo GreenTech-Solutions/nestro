@@ -18,7 +18,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { createAuditAdvisory, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
-import { describeError, isRecord, readRequiredString } from '../shared';
+import { compareCodeUnits, describeError, isRecord, readRequiredString } from '../shared';
 
 const bunSchema = 'bun-bulk-advisory' as const;
 const compatibleExitCodes: readonly number[] = [0, 1];
@@ -91,7 +91,7 @@ export function parseBunAuditOutcome(execution: AuditExecution): AuditOutcome {
     const current = vulnerabilities.get(advisory.packageName);
     vulnerabilities.set(advisory.packageName, current === undefined ? advisory.severity : mergeSeverity(current, advisory.severity));
   }
-  const structuredAdvisories = [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  const structuredAdvisories = [...advisories.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
   const expectedExitCode = vulnerabilities.size === 0 ? 0 : 1;
   if (exitCode !== expectedExitCode) {
     return incompleteOutcome(

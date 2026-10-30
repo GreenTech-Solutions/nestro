@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { resolvePnpmLauncher, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 import type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
 import { createStreamLineWriter } from './verifyVsixCli';
+import { runCliAsEntry } from './cliBootstrap';
 import { asString, describeError } from '../shared';
 
 /**
@@ -73,9 +74,5 @@ export function mainSignatureAudit(argv: readonly string[], cwd: string, platfor
 }
 
 /* v8 ignore start -- process bootstrap: only reachable when node runs this file directly */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainSignatureAudit(process.argv.slice(2), process.cwd(), process.platform).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainSignatureAudit(process.argv.slice(2), process.cwd(), process.platform));
 /* v8 ignore stop */

@@ -45,7 +45,7 @@ export async function resolveYarnFamily(projectRoot: string): Promise<YarnFamily
 }
 
 async function readPackageManager(projectRoot: string): Promise<string | undefined> {
-  const contents = await readOptionalFile(path.join(projectRoot, 'package.json'));
+  const contents = await readFileOrUndefined(path.join(projectRoot, 'package.json'));
   if (contents === undefined) {
     return undefined;
   }
@@ -75,9 +75,9 @@ function parsePackageManagerFamily(packageManager: string | undefined): YarnFami
 
 async function resolveMarkerFamily(projectRoot: string): Promise<YarnFamilyResolution | undefined> {
   const [modernConfig, classicConfig, lockfile] = await Promise.all([
-    readOptionalFile(path.join(projectRoot, '.yarnrc.yml')),
-    readOptionalFile(path.join(projectRoot, '.yarnrc')),
-    readOptionalFile(path.join(projectRoot, 'yarn.lock')),
+    readFileOrUndefined(path.join(projectRoot, '.yarnrc.yml')),
+    readFileOrUndefined(path.join(projectRoot, '.yarnrc')),
+    readFileOrUndefined(path.join(projectRoot, 'yarn.lock')),
   ]);
 
   const modern = modernConfig !== undefined || hasModernLockMarker(lockfile);
@@ -143,7 +143,7 @@ function familyFromMajor(major: number): YarnFamily {
   return major >= 2 ? 'modern' : 'unknown';
 }
 
-async function readOptionalFile(filePath: string): Promise<string | undefined> {
+async function readFileOrUndefined(filePath: string): Promise<string | undefined> {
   try {
     const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
     return Buffer.from(raw).toString('utf8');

@@ -19,7 +19,7 @@ import type {
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
-import { isRecord } from '../shared';
+import { isPathWithin, isRecord } from '../shared';
 
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 const MAX_REGISTRY_REDIRECTS = 3;
@@ -435,7 +435,7 @@ async function readBunConfiguration(
     scopes: new Map(),
   };
   for (const configPath of getBunConfigPaths(packageFilePath)) {
-    const contents = await readOptionalFile(configPath);
+    const contents = await readFileOrUndefined(configPath);
     if (contents === undefined) {
       continue;
     }
@@ -555,13 +555,13 @@ function getProjectConfigPaths(packageFilePath: string | undefined, fileName: st
   const packageRoot = packageFilePath === undefined
     ? normalizedWorkspaceRoot
     : path.resolve(path.dirname(packageFilePath));
-  if (!isPathContained(normalizedWorkspaceRoot, packageRoot)) {
+  if (!isPathWithin(normalizedWorkspaceRoot, packageRoot)) {
     return [path.join(normalizedWorkspaceRoot, fileName)];
   }
 
   const projectDirectories: string[] = [];
   let current = packageRoot;
-  while (isPathContained(normalizedWorkspaceRoot, current)) {
+  while (isPathWithin(normalizedWorkspaceRoot, current)) {
     projectDirectories.unshift(current);
     if (current === normalizedWorkspaceRoot) {
       break;
@@ -575,17 +575,11 @@ function getProjectConfigPaths(packageFilePath: string | undefined, fileName: st
   return [...new Set(projectDirectories.map(directory => path.join(directory, fileName)))];
 }
 
-function isPathContained(basePath: string, candidatePath: string): boolean {
-  const relative = path.relative(basePath, candidatePath);
-  return relative === ''
-    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
 async function readNpmrcFile(npmrcPath: string): Promise<string> {
-  return await readOptionalFile(npmrcPath) ?? '';
+  return await readFileOrUndefined(npmrcPath) ?? '';
 }
 
-async function readOptionalFile(filePath: string): Promise<string | undefined> {
+async function readFileOrUndefined(filePath: string): Promise<string | undefined> {
   try {
     return await readFile(filePath, 'utf8');
   }
@@ -608,7 +602,7 @@ async function readClassicYarnConfiguration(
   const config = new Map<string, string>();
   let sourceFound = false;
   for (const configPath of getYarnConfigPaths(packageFilePath, '.yarnrc')) {
-    const contents = await readOptionalFile(configPath);
+    const contents = await readFileOrUndefined(configPath);
     if (contents !== undefined) {
       sourceFound = true;
       mergeClassicYarnConfig(config, parseClassicYarnConfig(contents));
@@ -698,7 +692,7 @@ async function readYarnModernConfiguration(
     scopes: new Map(),
   };
   for (const configPath of getYarnConfigPaths(packageFilePath, '.yarnrc.yml')) {
-    const contents = await readOptionalFile(configPath);
+    const contents = await readFileOrUndefined(configPath);
     if (contents === undefined) {
       continue;
     }

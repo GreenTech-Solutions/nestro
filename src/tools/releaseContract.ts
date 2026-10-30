@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describeError, isRecord } from '../shared';
+import { describeError, hasExactKeys, isRecord } from '../shared';
 
 export const RELEASE_CONTRACT_PATH = '.github/release-contract.json';
 
@@ -55,8 +55,7 @@ function contractError(detail: string): Error {
 }
 
 function exactRecord(value: unknown, expected: readonly string[], label: string): UnknownRecord {
-  const actual = isRecord(value) ? Object.keys(value).sort((left, right) => left.localeCompare(right)) : [];
-  if (!isRecord(value) || actual.join() !== [...expected].sort((left, right) => left.localeCompare(right)).join()) {
+  if (!isRecord(value) || !hasExactKeys(value, expected)) {
     throw contractError(`${label} must contain exactly ${expected.join(', ')}`);
   }
   return value;

@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ReviewedActionsRegistry } from './reviewedActions';
-import { isRecord } from '../shared';
+import { compareCodeUnits, isRecord } from '../shared';
 import type { UnknownRecord, WorkflowViolation } from './workflowYaml';
 
 /** One reviewed step; `uses` names a registry locator and is checked against the registry commit. */
@@ -40,7 +40,7 @@ function normalizeRun(run: string): string {
 function differingKeys(actual: UnknownRecord, expected: UnknownRecord): string[] {
   return [...new Set([...Object.keys(actual), ...Object.keys(expected)])]
     .filter(key => !isDeepStrictEqual(actual[key], expected[key]))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCodeUnits);
 }
 
 function expandStep(step: StepContract, registry: ReviewedActionsRegistry, violations: WorkflowViolation[]): UnknownRecord {

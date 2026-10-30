@@ -1,4 +1,5 @@
 import { bundleFileName, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
+import { compareCodeUnits } from '../shared';
 
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
@@ -139,8 +140,8 @@ export function buildReleaseCandidate(
 
 export function findManifestViolation(manifest: ReleaseCandidateManifest): string | undefined {
   const expectedKeys = RELEASE_CONTRACT.candidateKeys;
-  const actualKeys = Object.keys(manifest).sort((left, right) => left.localeCompare(right));
-  const requiredKeys = [...expectedKeys].sort((left, right) => left.localeCompare(right));
+  const actualKeys = Object.keys(manifest).sort(compareCodeUnits);
+  const requiredKeys = [...expectedKeys].sort(compareCodeUnits);
   if (JSON.stringify(actualKeys) !== JSON.stringify(requiredKeys)) {
     return 'manifest contains unexpected or missing fields';
   }

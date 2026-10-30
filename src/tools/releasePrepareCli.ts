@@ -7,7 +7,8 @@ import type { RawCommit } from './releaseAnalyzer';
 import { runReleasePrepare } from './releasePrepare';
 import type { ReleasePrepareIo } from './releasePrepare';
 import { normalizeArtifactOutDir } from './verifyVsix';
-import { describeError } from '../shared';
+import { runCliAsEntry } from './cliBootstrap';
+import { describeError, readOptionalFile } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const RECORD_SEPARATOR = '';
@@ -108,12 +109,7 @@ export function createNodeReleasePrepareDependencies(
       await writeFile(packageJsonPath, JSON.stringify(packageJson, undefined, 2) + '\n', 'utf8');
     },
     async prependChangelog(entry) {
-      const existing = await readFile(changelogPath, 'utf8').catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return '';
-        }
-        throw error;
-      });
+      const existing = await readOptionalFile(changelogPath) ?? '';
       await writeFile(changelogPath, `${entry}${existing}`, 'utf8');
     },
     async writeNotes(notes) {
@@ -171,9 +167,5 @@ export async function mainReleasePrepare(argv: readonly string[], cwd: string, e
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainReleasePrepare(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainReleasePrepare(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */

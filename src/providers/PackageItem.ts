@@ -17,7 +17,7 @@ export type PackageOperation
     | { readonly kind: 'pin' }
     | { readonly kind: 'switch' };
 
-type PackageOperationInput = PackageOperation | boolean | undefined;
+export type PackageOperationInput = PackageOperation | boolean | undefined;
 
 export class PackageItem extends vscode.TreeItem {
   public readonly operation: PackageOperation | undefined;
@@ -119,7 +119,7 @@ export class PackageItem extends vscode.TreeItem {
   }
 }
 
-function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
+export function normalizeOperation(operation: PackageOperationInput, defaultTarget: string): PackageOperation | undefined {
   if (typeof operation !== 'boolean') {
     return operation;
   }

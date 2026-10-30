@@ -1,5 +1,6 @@
 import { CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET } from './releaseContract';
 import type { VsixArchiveEntry } from './vsixArchive';
+import { compareCodeUnits } from '../shared';
 
 /**
  * Content policy for the published `.vsix`: an allowlist where any unnamed path is a
@@ -207,17 +208,6 @@ interface PackagedFile {
 const RELATIVE_REQUIRE_PATTERN = /require\(\s*(["'])(\.[^"']*)\1\s*\)/g;
 const LATIN1_CHUNK_SIZE = 8192;
 
-/**
- * Deterministic code-unit ordering. `localeCompare` is deliberately avoided so
- * the emitted manifest is byte-identical regardless of the machine's locale.
- */
-export function compareNormalizedPaths(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
-}
-
 /** Maps a packaged path back to the repository path it is built from. */
 export function toSourcePath(packagePath: string): string {
   const rule = VSIX_STATIC_ALLOWLIST.find(candidate => candidate.packagePath === packagePath);
@@ -234,7 +224,7 @@ export function collectSymlinkCandidates(packagePaths: readonly string[]): strin
       candidates.add(segments.slice(0, index).join('/'));
     }
   }
-  return [...candidates].sort(compareNormalizedPaths);
+  return [...candidates].sort(compareCodeUnits);
 }
 
 /** Byte-exact decoding, so pattern matching never depends on UTF-8 validity. */
@@ -310,9 +300,9 @@ export function resolveBundleClosure(
       match = RELATIVE_REQUIRE_PATTERN.exec(content);
     }
   }
-  const sortedClosure = [...closure].sort(compareNormalizedPaths);
-  missing.sort(compareNormalizedPaths);
-  invalid.sort(compareNormalizedPaths);
+  const sortedClosure = [...closure].sort(compareCodeUnits);
+  missing.sort(compareCodeUnits);
+  invalid.sort(compareCodeUnits);
   return { closure: sortedClosure, missing, invalid };
 }
 
@@ -469,7 +459,7 @@ function checkTracked(
   const modified = new Set(input.modifiedTrackedPaths);
   const directlyUntracked = new Set<string>();
   if (input.requireCleanWorktree) {
-    for (const sourcePath of [...modified].sort(compareNormalizedPaths)) {
+    for (const sourcePath of [...modified].sort(compareCodeUnits)) {
       violations.push({
         kind: 'modified-tracked-file',
         path: sourcePath,
@@ -501,7 +491,7 @@ function checkTracked(
   }
   if (input.requireCleanWorktree) {
     const untracked = new Set(input.untrackedWorktreePaths);
-    for (const sourcePath of [...untracked].sort(compareNormalizedPaths)) {
+    for (const sourcePath of [...untracked].sort(compareCodeUnits)) {
       if (directlyUntracked.has(sourcePath)) {
         continue;
       }
@@ -574,8 +564,8 @@ export function evaluateVsixPolicy(input: VsixPolicyInput): VsixPolicyReport {
   checkSecrets(input, violations);
   checkBudgets(input, packagedFiles.length, violations);
 
-  const packagePaths = packagedFiles.map(file => file.packagePath).sort(compareNormalizedPaths);
-  const sourcePaths = packagePaths.map(toSourcePath).sort(compareNormalizedPaths);
+  const packagePaths = packagedFiles.map(file => file.packagePath).sort(compareCodeUnits);
+  const sourcePaths = packagePaths.map(toSourcePath).sort(compareCodeUnits);
   return {
     violations,
     warnings,

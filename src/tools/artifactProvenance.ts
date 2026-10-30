@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { RELEASE_CONTRACT } from './releaseContract';
-import { describeError, hasExactKeys, isRecord } from '../shared';
+import { compareCodeUnits, describeError, hasExactKeys, isRecord, sha256Hex } from '../shared';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -122,11 +121,7 @@ export interface NormalizedManifestEntry {
 }
 
 function sortedStrings(values: readonly string[]): string[] {
-  return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
+  return [...values].sort(compareCodeUnits);
 }
 
 function stableJson(value: unknown): string {
@@ -184,7 +179,7 @@ function dependencyRef(name: string, version: string): string {
 function runtimeFileProperties(runtimeFiles: readonly ArtifactRuntimeFile[]): ArtifactSbomProperty[] {
   const seen = new Set<string>();
   return [...runtimeFiles]
-    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    .sort((left, right) => compareCodeUnits(left.path, right.path))
     .map((file) => {
       if (!RUNTIME_FILE_PATTERN.test(file.path)) {
         throw new Error(`runtime SBOM file path ${file.path} is not a delivered runtime file`);
@@ -455,7 +450,7 @@ export function isWellFormedArtifactProvenance(value: unknown, expectation?: Art
 
 export function buildNormalizedManifest(entries: readonly { path: string; bytes: Uint8Array }[]): string {
   return [...entries]
-    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    .sort((left, right) => compareCodeUnits(left.path, right.path))
     .map(entry => `${sha256Hex(entry.bytes)}  ${entry.path}`)
     .join('\n') + '\n';
 }
@@ -475,7 +470,7 @@ export function parseNormalizedManifest(contents: string): NormalizedManifestEnt
     }
     return { sha256: match[1], path: match[2] };
   });
-  const sorted = [...entries].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  const sorted = [...entries].sort((left, right) => compareCodeUnits(left.path, right.path));
   if (JSON.stringify(entries) !== JSON.stringify(sorted)) {
     throw new Error('normalized manifest entries must be sorted by archive path');
   }
@@ -506,7 +501,7 @@ export function selectDeliveredRuntimeFiles(entries: readonly { path: string; by
   return entries
     .filter(entry => RUNTIME_FILE_PATTERN.test(entry.path))
     .map(entry => ({ path: entry.path, bytes: entry.bytes }))
-    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+    .sort((left, right) => compareCodeUnits(left.path, right.path));
 }
 
 export function parsePackagedIdentity(bytes: Uint8Array, label = 'extension/package.json'): ArtifactPackageIdentity {

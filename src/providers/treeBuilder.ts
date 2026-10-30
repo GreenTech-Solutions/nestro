@@ -4,6 +4,7 @@ import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
+import { compareCodeUnits } from '../shared';
 import type { UpdateType } from '../utils';
 
 const UPDATE_ORDER: Record<UpdateType, number> = {
@@ -212,7 +213,7 @@ export function resolvePackageFileLabels(
   ensureUnicodeDiscriminators(rows, formatting);
   ensureUniquePackageLabels(rows);
   rows.sort((left, right) => comparePackageOwnerLabels(left.owner, right.owner)
-    || compareText(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
+    || compareCodeUnits(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
   return rows;
 }
 
@@ -223,7 +224,7 @@ export function comparePackageOwnerLabels(left: PackageOwnerLabel, right: Packag
   if (left.isRoot !== right.isRoot) {
     return left.isRoot ? -1 : 1;
   }
-  return compareText(left.relativeLabel, right.relativeLabel);
+  return compareCodeUnits(left.relativeLabel, right.relativeLabel);
 }
 
 export function toRelativeLabel(packageFilePath: string, workspaceRoot: string): string {
@@ -631,7 +632,7 @@ function ensureUniqueDisplayNames(
   }));
   const used = new Set<string>();
 
-  candidates.sort((left, right) => compareFolders(left.folder, right.folder) || compareText(left.label, right.label));
+  candidates.sort((left, right) => compareFolders(left.folder, right.folder) || compareCodeUnits(left.label, right.label));
   candidates.forEach(({ folder, label: base }, position) => {
     let label = base;
     if (used.has(label)) {
@@ -650,8 +651,8 @@ function ensureUniqueDisplayNames(
 }
 
 function ensureUniquePackageLabels(rows: PackageLabelRow[]): void {
-  const sorted = [...rows].sort((left, right) => compareText(left.owner.label, right.owner.label)
-    || compareText(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
+  const sorted = [...rows].sort((left, right) => compareCodeUnits(left.owner.label, right.owner.label)
+    || compareCodeUnits(getPathInfo(left.packageFilePath).comparisonPath, getPathInfo(right.packageFilePath).comparisonPath));
   const used = new Set<string>();
   const counts = new Map<string, number>();
   sorted.forEach(row => counts.set(row.owner.label, (counts.get(row.owner.label) ?? 0) + 1));
@@ -678,7 +679,7 @@ function ensureUnicodeDiscriminators(
 ): void {
   const unicodeRows = rows
     .filter(row => row.needsUnicodeDiscriminator)
-    .sort((left, right) => compareText(
+    .sort((left, right) => compareCodeUnits(
       getPathInfo(left.packageFilePath).comparisonPath,
       getPathInfo(right.packageFilePath).comparisonPath,
     ));
@@ -694,11 +695,7 @@ function compareFolders(left: WorkspaceFolderDescriptor, right: WorkspaceFolderD
   if (left.index !== right.index) {
     return left.index - right.index;
   }
-  return compareText(getPathInfo(left.path).comparisonPath, getPathInfo(right.path).comparisonPath);
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  return compareCodeUnits(getPathInfo(left.path).comparisonPath, getPathInfo(right.path).comparisonPath);
 }
 
 function isUnsafeLabelCodePoint(codePoint: number): boolean {

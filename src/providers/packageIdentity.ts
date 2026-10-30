@@ -1,9 +1,9 @@
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import type { AuditSeverity, ReleaseAgeState, UpdateType } from '../utils';
 import type { PackageOperation } from './PackageItem';
+import { isPathWithin, sha256Hex } from '../shared';
 
 export type PackageDependencySection = 'dependencies' | 'devDependencies';
 
@@ -149,7 +149,7 @@ export async function resolveCanonicalPackageLocation(
 
   const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
   const lexicalOwners = workspaceFolders
-    .filter(folder => isPathContained(folder.uri.fsPath, packageFilePath))
+    .filter(folder => isPathWithin(folder.uri.fsPath, packageFilePath))
     .sort((left, right) => right.uri.fsPath.length - left.uri.fsPath.length);
   const lexicalOwner = lexicalOwners[0];
 
@@ -169,10 +169,10 @@ export async function resolveCanonicalPackageLocation(
       path: string;
     } => candidate !== undefined);
     const containingWorkspaceFolders = resolvedWorkspaceFolders
-      .filter(candidate => isPathContained(candidate.path, canonicalPackageFilePath))
+      .filter(candidate => isPathWithin(candidate.path, canonicalPackageFilePath))
       .sort((left, right) => right.path.length - left.path.length);
     const canonicalOwner = containingWorkspaceFolders[0];
-    if (canonicalOwner === undefined || !isPathContained(canonicalOwner.path, canonicalPackageDirectory)) {
+    if (canonicalOwner === undefined || !isPathWithin(canonicalOwner.path, canonicalPackageDirectory)) {
       return { ok: false, reason: 'workspace-escape' };
     }
 
@@ -221,7 +221,7 @@ export async function resolveCanonicalPackageLocation(
         packageDirectory: canonicalPackageDirectory,
         workspaceFolderPath: canonicalOwner.path,
         fileStamp,
-        manifestDigest: createHash('sha256').update(manifestBytes).digest('hex'),
+        manifestDigest: sha256Hex(manifestBytes),
       },
     };
   }
@@ -297,10 +297,4 @@ function toPackageFileStamp(packageStats: {
     size: packageStats.size,
     mtimeMs: packageStats.mtimeMs,
   };
-}
-
-function isPathContained(root: string, candidate: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === ''
-    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }

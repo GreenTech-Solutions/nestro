@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { redactCredentials, sanitizeInlineText } from '../shared';
+import { compareCodeUnits, redactCredentials, sanitizeInlineText } from '../shared';
 
 /** One failure captured by a package read, update check, or security audit. */
 export interface StatusReportFailure {
@@ -31,7 +31,7 @@ const REPORT_GENERIC_VALUE_MIN_LENGTH = 1;
 /** Formats read, update, and audit failures as bounded, plain-text diagnostics. */
 export function formatStatusReport(snapshot: StatusReportSnapshot): string {
   const labels = [...snapshot.fileLabels]
-    .sort((left, right) => left.order - right.order || compareText(left.label, right.label));
+    .sort((left, right) => left.order - right.order || compareCodeUnits(left.label, right.label));
   const labelByPath = new Map(labels.map(label => [label.packageFilePath, sanitizeLabel(label.label)]));
   const orderByPath = new Map(labels.map(label => [label.packageFilePath, label.order]));
   const knownPaths = [...labelByPath.keys()].sort((left, right) => right.length - left.length);
@@ -87,7 +87,7 @@ function appendFailureSection(
       ? vscode.l10n.t('(workspace operation)')
       : failure.packageFilePaths
           .map(path => labelByPath.get(path) ?? vscode.l10n.t('(package file)'))
-          .sort(compareText)
+          .sort(compareCodeUnits)
           .join(', ');
     const reason = failure.reason === undefined
       ? undefined
@@ -114,9 +114,9 @@ function sortFailures(
 ): StatusReportFailure[] {
   return [...failures].sort((left, right) => (
     compareNumber(failureOrderKey(left, orderByPath), failureOrderKey(right, orderByPath))
-    || compareText(failureSortKey(left, labelByPath), failureSortKey(right, labelByPath))
-    || compareText(left.reason ?? '', right.reason ?? '')
-    || compareText(left.detail ?? '', right.detail ?? '')
+    || compareCodeUnits(failureSortKey(left, labelByPath), failureSortKey(right, labelByPath))
+    || compareCodeUnits(left.reason ?? '', right.reason ?? '')
+    || compareCodeUnits(left.detail ?? '', right.detail ?? '')
   ));
 }
 
@@ -133,7 +133,7 @@ function failureSortKey(
 ): string {
   return failure.packageFilePaths
     .map(path => labelByPath.get(path) ?? vscode.l10n.t('(package file)'))
-    .sort(compareText)
+    .sort(compareCodeUnits)
     .join('\u0000');
 }
 
@@ -162,10 +162,6 @@ function sanitizeReportText(
 
 function sanitizeLabel(value: string): string {
   return sanitizeReportText(value, new Map(), []).replace(/[\\/]+/g, '/');
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function compareNumber(left: number, right: number): number {

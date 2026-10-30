@@ -10,12 +10,11 @@ import {
   findZipFixtureEntryOffsets,
   toBytes,
 } from './fixtures';
+import { compareCodeUnits, sha256Hex } from '../shared';
 import {
-  compareNormalizedPaths,
   DEFAULT_OUT_DIR,
   parseVerifyVsixArgs,
   runVerifyVsixCli,
-  sha256Hex,
   verifyVsixPackage,
 } from '../tools';
 import type { VerifyVsixCliDependencies, VsixVerifierIo } from '../tools';
@@ -176,7 +175,7 @@ function createFakeIo(options: FakeIoOptions = {}): FakeIo {
     artifactBytes: (filePath: string): Uint8Array | undefined => files.get(filePath),
     artifactPaths: (): string[] => [...files.keys()]
       .filter(filePath => filePath !== 'package.json')
-      .sort(compareNormalizedPaths),
+      .sort(compareCodeUnits),
   };
 }
 
@@ -234,13 +233,6 @@ describe('parseVerifyVsixArgs()', () => {
     ['an unknown flag', ['--strict'], 'Unknown argument: --strict'],
   ])('rejects %s', (_label, argv, message) => {
     expect(() => parseVerifyVsixArgs(argv)).toThrow(message);
-  });
-});
-
-describe('sha256Hex()', () => {
-  it('matches the well-known digest of empty input', () => {
-    expect(sha256Hex(new Uint8Array(0)))
-      .toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
   });
 });
 
@@ -448,7 +440,7 @@ describe('verifyVsixPackage()', () => {
     expect(result.vsixPath).toBe(VSIX_PATH);
     expect(result.artifactsWritten).toBe(true);
     expect(fake.removed).toEqual(TARGET_ARTIFACT_PATHS);
-    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareNormalizedPaths));
+    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareCodeUnits));
     expect(fake.written.get(DIGEST_PATH)).toBe(`${result.digest}  nestro-9.9.9.vsix\n`);
     expect(result.digest).toBe(sha256Hex(buildCleanVsixFixture()));
   });
@@ -506,7 +498,7 @@ describe('verifyVsixPackage()', () => {
     await verifyVsixPackage(fake.io, { outDir: 'dist', requireCleanWorktree: false });
 
     expect(fake.removed.slice(0, 3)).toEqual(TARGET_ARTIFACT_PATHS);
-    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS, unrelatedPath].sort(compareNormalizedPaths));
+    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS, unrelatedPath].sort(compareCodeUnits));
   });
 
   it('removes a partial package and stale sidecars when packaging creates output and then throws', async () => {
@@ -544,7 +536,7 @@ describe('verifyVsixPackage()', () => {
     await expect(verifyVsixPackage(fake.io, { outDir: 'dist', requireCleanWorktree: false }))
       .rejects.toBe(ensureError);
     expect(fake.removed).toEqual([]);
-    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareNormalizedPaths));
+    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareCodeUnits));
     expect(fake.packaged).toEqual([]);
   });
 
@@ -559,7 +551,7 @@ describe('verifyVsixPackage()', () => {
       .rejects.toBe(lockError);
     expect(fake.removed).toEqual([]);
     expect(fake.packaged).toEqual([]);
-    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareNormalizedPaths));
+    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareCodeUnits));
   });
 
   it('fails closed and removes successful artifacts when lock release fails', async () => {
@@ -638,7 +630,7 @@ describe('verifyVsixPackage()', () => {
     expect(fake.packaged).toEqual([VSIX_PATH]);
     expect(fake.locksAcquired).toEqual([LOCK_PATH, LOCK_PATH]);
     expect(fake.locksReleased).toEqual([LOCK_PATH]);
-    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareNormalizedPaths));
+    expect(fake.artifactPaths()).toEqual([...TARGET_ARTIFACT_PATHS].sort(compareCodeUnits));
     const finalVsixBytes = fake.artifactBytes(VSIX_PATH);
     expect(finalVsixBytes).toBeDefined();
     expect(fake.written.get(DIGEST_PATH)).toBe(`${sha256Hex(finalVsixBytes ?? new Uint8Array())}  nestro-9.9.9.vsix\n`);

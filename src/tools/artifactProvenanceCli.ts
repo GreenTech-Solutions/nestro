@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
@@ -14,7 +13,8 @@ import {
 import { bundleFileName, EVIDENCE_FILE, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
-import { describeError, hasExactKeys, isRecord } from '../shared';
+import { runCliAsEntry } from './cliBootstrap';
+import { compareCodeUnits, describeError, hasExactKeys, isRecord, sha256Hex } from '../shared';
 
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -42,10 +42,6 @@ interface CiEvidence {
   readonly vsixFile: string;
   readonly vsixSha256: string;
   readonly releaseEligible: false;
-}
-
-function sha256Hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
 }
 
 function parseJson(bytes: Uint8Array, label: string): unknown {
@@ -149,8 +145,8 @@ export async function writeArtifactProvenanceBundle(
     bundleFileName('manifest', vsixFile),
     bundleFileName('digest', vsixFile),
     EVIDENCE_FILE,
-  ].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-  const actualEntries = [...entries].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  ].sort(compareCodeUnits);
+  const actualEntries = [...entries].sort(compareCodeUnits);
   if (JSON.stringify(actualEntries) !== JSON.stringify(expectedBaseEntries)) {
     throw new Error('artifact directory must contain exactly the verified VSIX, evidence, normalized manifest and digest');
   }
@@ -261,9 +257,5 @@ export async function mainArtifactProvenance(
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainArtifactProvenance(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainArtifactProvenance(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */
