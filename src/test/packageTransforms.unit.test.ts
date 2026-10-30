@@ -240,6 +240,19 @@ describe('transformPinAllVersions()', () => {
     expect(result.count).toBe(1);
   });
 
+  it('leaves an array section untouched while pinning the other section', () => {
+    const json: PackageJsonDocument = { dependencies: ['^1.0.0'], devDependencies: { vite: '~5.0.0' } };
+    const result = transformPinAllVersions(json);
+    expect(result.count).toBe(1);
+    expect(result.json).toEqual({ dependencies: ['^1.0.0'], devDependencies: { vite: '5.0.0' } });
+  });
+
+  it('leaves string, number and boolean sections untouched', () => {
+    const json: PackageJsonDocument = { dependencies: '^1.0.0', devDependencies: 5 };
+    const result = transformPinAllVersions(json);
+    expect(result).toEqual({ count: 0, json });
+  });
+
   it('does not mutate the input document', () => {
     const json: PackageJsonDocument = { dependencies: { react: '^18.0.0' } };
     transformPinAllVersions(json);
@@ -272,6 +285,11 @@ describe('prepareDependencyVersions() / prepareDependencyType() / prepareVersion
     const raw = JSON.stringify({ dependencies: { react: '18.0.0' } }, undefined, 2);
     const result = preparePinAllVersions(raw);
     expect(result).toEqual({ count: 0, updated: undefined });
+  });
+
+  it('reports nothing to pin for a document whose only section is an array', () => {
+    const raw = '{\n  "dependencies": ["^1.0.0"]\n}\n';
+    expect(preparePinAllVersions(raw)).toEqual({ count: 0, updated: undefined });
   });
 
   it('serializes the pinned document with 4-space indentation when pinning is needed', () => {

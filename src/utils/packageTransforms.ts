@@ -192,12 +192,12 @@ export function transformPinAllVersions(json: PackageJsonDocument): { json: Pack
   let count = 0;
   for (const section of ['dependencies', 'devDependencies'] as const) {
     const dependencies = transformed[section];
-    // A section can be JSON `null` in a hand-edited file; treat it the same as absent.
-    if (dependencies === undefined || dependencies === null) { continue; }
-    for (const [name, version] of Object.entries(dependencies as Record<string, unknown>)) {
+    // Hand-edited files can hold null, arrays or scalars here; only an object section is pinned.
+    if (!isRecord(dependencies)) { continue; }
+    for (const [name, version] of Object.entries(dependencies)) {
       const parsed = parseDependencySpec(version as string);
       if (parsed.supported && parsed.range !== 'exact') {
-        (dependencies as Record<string, unknown>)[name] = formatDependencySpec(parsed, true);
+        dependencies[name] = formatDependencySpec(parsed, true);
         count++;
       }
     }
