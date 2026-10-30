@@ -132,6 +132,12 @@ describe('transformDependencyType()', () => {
       .toThrow('source spec changed from ^1.2.3 to ~2.0.0');
   });
 
+  it('sanitizes spec text in the conflict message', () => {
+    const json: PackageJsonDocument = { dependencies: { pkg: '~2.0.0\u009b31m\tx' } };
+    expect(() => transformDependencyType(json, 'pkg', false, '^1.2.3'))
+      .toThrow('source spec changed from ^1.2.3 to ~2.0.0 x.');
+  });
+
   it('throws a typed conflict when the target already has the package', () => {
     const json: PackageJsonDocument = {
       dependencies: { pkg: '^1.2.3' },

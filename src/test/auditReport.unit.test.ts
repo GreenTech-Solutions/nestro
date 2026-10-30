@@ -15,6 +15,7 @@ import {
   validateAdvisoryUrl,
 } from '../utils';
 import type { AuditAdvisory, AuditOutcome } from '../utils';
+import { sanitizeAuditText } from '../utils/auditReport';
 import type { AuditProjectSummary } from '../providers';
 
 function advisories(outcome: AuditOutcome): readonly AuditAdvisory[] {
@@ -357,6 +358,12 @@ describe('advisory identity and report safety', () => {
     const [mergedSame] = mergeAuditAdvisories([original, sameVia]);
     expect(mergedSame.via[0]).toMatchObject({ identity: 'cause', id: 'b', title: 'A', range: '<1.0.0' });
     expect(mergeAuditAdvisories([original, differentFix])[0].fixAvailable).toBeUndefined();
+  });
+
+  it('sanitizes audit text with the shared policy', () => {
+    expect(sanitizeAuditText('a\tb\u009b31mc\u001b]0;title\u0007d\u0085e\r\nf')).toBe('a bcd e f');
+    expect(sanitizeAuditText('x'.repeat(300))).toHaveLength(240);
+    expect(sanitizeAuditText('x'.repeat(300), 10)).toBe('x'.repeat(10));
   });
 
   it('renders sanitized plain text and rejects unsafe advisory URLs', () => {

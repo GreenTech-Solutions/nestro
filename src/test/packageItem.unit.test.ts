@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { PackageItem } from '../providers';
+import { PackageItem, sanitizePackageText } from '../providers';
 import { formatHeldBackDate } from '../utils';
 
 describe('PackageItem', () => {
@@ -167,6 +167,11 @@ describe('PackageItem', () => {
     expect(item.accessibilityInformation?.label).toContain('Latest version: 1.1.0 ');
     expect(item.accessibilityInformation?.label).toContain('Workspace owner: web owner');
     expect(item.accessibilityInformation?.label).not.toMatch(/[\u0000-\u001f\u007f\u2028\u2029]/);
+  });
+
+  it('strips 8-bit CSI and OSC sequences and bounds the length', () => {
+    expect(sanitizePackageText('a\u009b31mb\u001b]0;title\u0007c\td\u0000e')).toBe('abc d e');
+    expect(sanitizePackageText('x'.repeat(300))).toHaveLength(240);
   });
 
   it('fails closed when the workspace owner cannot be resolved', () => {

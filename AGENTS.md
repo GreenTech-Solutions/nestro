@@ -123,6 +123,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 Bottom layer: imports only Node built-ins — never `vscode` or another subsystem — so every subsystem, `tools` included, can import it through `src/shared/index.ts`. Files are named by meaning, never `utils.ts`/`helpers.ts`/`common.ts`.
 - `guards.ts` — `isRecord()` (non-null, non-array object), `asString()`, `readRequiredString()` (non-blank string or `undefined`), `hasExactKeys()` (order-independent own-key match)
 - `errors.ts` — `describeError()` (an `Error`'s message, otherwise `String(value)`) and `describeStderr()` (`; stderr: …` suffix, empty for blank stderr)
+- `text.ts` — the single text sanitizer and secret redactor: `sanitizeMultilineText()` (ANSI escapes and control characters stripped, line breaks normalized to LF, tabs to spaces; used by the logger), `sanitizeInlineText()` (single-line surfaces: controls and line-break runs become spaces, cut to 240 characters by default; used by tree items, audit report and conflict messages), and `redactCredentials()` (URL user info, `Authorization` values, credential assignments in plain, quoted and JSON form, npm tokens; generic `token`/`api-key` values are masked from a minimum length, 16 by default, and trailing `)`/`]` stay outside the masked value)
 - `index.ts` — barrel exports for shared
 
 ### Tools (`src/tools/`)

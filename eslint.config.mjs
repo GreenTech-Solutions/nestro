@@ -39,7 +39,7 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/utils/bunAuditClient.ts': { maxFunctionLines: 66 },
   'src/utils/bunConfig.ts': { maxLines: 301, maxFunctionLines: 61 },
   'src/utils/metadataRunner.ts': { maxFunctionLines: 138 },
-  'src/utils/packageTransforms.ts': { maxLines: 313 },
+  'src/utils/packageTransforms.ts': { maxLines: 301 },
   'src/utils/processRunner.ts': { maxLines: 346, maxFunctionLines: 162 },
   'src/utils/registryClient.ts': { maxLines: 1318, maxFunctionLines: 90 },
   'src/utils/shellTask.ts': { maxFunctionLines: 77 },

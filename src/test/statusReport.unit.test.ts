@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { openStatusReportCommand } from '../commands';
 import { formatStatusReport } from '../utils';
 import type { StatusReportSnapshot } from '../utils';
@@ -83,6 +83,18 @@ describe('status diagnostics report', () => {
     expect(report.length).toBeLessThan(2500);
   });
 
+  it('masks short generic credentials and keeps closing brackets', () => {
+    const report = formatStatusReport(snapshot({
+      updateFailures: [{
+        packageFilePaths: [],
+        detail: 'failed (token=abc) with [password=hunter2] and api-key: k1\tnext',
+      }],
+    }));
+
+    expect(report).toContain('failed (token=[REDACTED]) with [password=[REDACTED]] and api-key: [REDACTED] next');
+    expect(report).not.toMatch(/hunter2|token=abc|k1/);
+  });
+
   it('sorts failures by the stable owner-qualified label order', () => {
     const report = formatStatusReport(snapshot({
       updateFailures: [
@@ -118,35 +130,27 @@ describe('status diagnostics report', () => {
 });
 
 describe('status report ANSI stripping', () => {
-  afterEach(() => {
-    vi.doUnmock('../utils/logger');
-    vi.resetModules();
-  });
-
-  async function formatWithoutLoggerSanitizer(detail: string): Promise<string> {
-    vi.resetModules();
-    vi.doMock('../utils/logger', () => ({ sanitizeLogText: (value: string): string => value }));
-    const { formatStatusReport: format } = await import('../utils/statusReport');
-    return format(snapshot({
+  function formatDetail(detail: string): string {
+    return formatStatusReport(snapshot({
       updateFailures: [{ packageFilePaths: [], detail }],
     }));
   }
 
-  it('strips CSI sequences without relying on the logger sanitizer', async () => {
-    const report = await formatWithoutLoggerSanitizer('a\u001b[31mred\u001b[0m b\u001b[1;32;4mgreen\u001b[m c');
+  it('strips CSI sequences', () => {
+    const report = formatDetail('a\u001b[31mred\u001b[0m b\u001b[1;32;4mgreen\u001b[m c');
     expect(report).toContain('Details: ared bgreen c');
     expect(report).not.toContain('\u001b');
     expect(report).not.toContain('[31m');
     expect(report).not.toContain('[0m');
   });
 
-  it('strips 8-bit CSI sequences', async () => {
-    const report = await formatWithoutLoggerSanitizer('a\u009b31mred\u009b0m b');
+  it('strips 8-bit CSI sequences', () => {
+    const report = formatDetail('a\u009b31mred\u009b0m b');
     expect(report).toContain('Details: ared b');
   });
 
-  it('strips OSC sequences terminated by BEL or ST', async () => {
-    const report = await formatWithoutLoggerSanitizer(
+  it('strips OSC sequences terminated by BEL or ST', () => {
+    const report = formatDetail(
       'a\u001b]0;window title\u0007b\u001b]8;;https://example.test\u001b\\link\u001b]8;;\u001b\\c',
     );
     expect(report).toContain('Details: ablinkc');

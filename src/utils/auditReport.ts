@@ -1,13 +1,5 @@
+import { sanitizeInlineText } from '../shared';
 import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './auditClient';
-
-const REPORT_ANSI_ESCAPE = new RegExp(
-  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const REPORT_CONTROL = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
-  'g',
-);
 
 const SEVERITY_ORDER: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
 
@@ -22,12 +14,8 @@ export interface AuditFix {
 export type AuditFixAvailability = boolean | AuditFix;
 export type AuditIdentityStability = 'stable' | 'unstable';
 
-export function sanitizeAuditText(value: string, maxLength = 240): string {
-  return value
-    .replace(REPORT_ANSI_ESCAPE, '')
-    .replace(REPORT_CONTROL, '')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .slice(0, maxLength);
+export function sanitizeAuditText(value: string, maxLength?: number): string {
+  return sanitizeInlineText(value, maxLength);
 }
 
 /** A safe, normalized dependency that caused or explains an advisory. */

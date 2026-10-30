@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { sanitizeInlineText } from '../shared';
 import {
   AuditSeverity,
   formatAuditSeverityLabel,
@@ -17,15 +18,6 @@ export type PackageOperation
     | { readonly kind: 'switch' };
 
 type PackageOperationInput = PackageOperation | boolean | undefined;
-
-const PACKAGE_ANSI_ESCAPE = new RegExp(
-  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const PACKAGE_CONTROL = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
-  'g',
-);
 
 export class PackageItem extends vscode.TreeItem {
   public readonly operation: PackageOperation | undefined;
@@ -251,11 +243,7 @@ function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
 }
 
 export function sanitizePackageText(value: string): string {
-  return value
-    .replace(PACKAGE_ANSI_ESCAPE, '')
-    .replace(PACKAGE_CONTROL, ' ')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .slice(0, 240);
+  return sanitizeInlineText(value);
 }
 
 /**

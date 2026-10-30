@@ -139,6 +139,36 @@ describe('logger', () => {
     expect(sanitized).not.toContain('https://ci:s3cr3t@registry.internal/npm');
   });
 
+  it('keeps closing brackets around a redacted value', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const genericSecret = 'abcdefghijklmnopqrstuv';
+
+    expect(sanitizeLogText(`(token=${genericSecret})`)).toBe('(token=[REDACTED])');
+    expect(sanitizeLogText('[password=hunter2]')).toBe('[password=[REDACTED]]');
+    expect(sanitizeLogText('(_authToken=abc) and [passwd: xyz]')).toBe('(_authToken=[REDACTED]) and [passwd: [REDACTED]]');
+    expect(sanitizeLogText('password=ab)cd')).toBe('password=[REDACTED]');
+    expect(sanitizeLogText('password=)))')).toBe('password=[REDACTED]');
+  });
+
+  it('turns tabs into spaces instead of gluing words together', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+
+    expect(sanitizeLogText('name\tversion\t1.0.0')).toBe('name version 1.0.0');
+  });
+
+  it('redacts URL user info in linear time on a long run of separators', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const input = `${`https://a:b ${'x'.repeat(100)} `.repeat(10_000)}https://ci:s3cr3t@registry.internal/npm`;
+
+    const started = performance.now();
+    const sanitized = sanitizeLogText(input);
+    const elapsed = performance.now() - started;
+
+    expect(sanitized).toContain('https://registry.internal/npm');
+    expect(sanitized).not.toContain('s3cr3t');
+    expect(elapsed).toBeLessThan(500);
+  });
+
   it('keeps ordinary short credential-like words and package text intact', async () => {
     const { sanitizeLogText } = await import('../utils/logger');
     const ordinary = [

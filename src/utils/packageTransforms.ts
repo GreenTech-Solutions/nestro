@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
-import { isRecord } from '../shared';
+import { isRecord, sanitizeInlineText } from '../shared';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
 
@@ -325,15 +325,6 @@ function detectNewlineStyle(raw: string): string {
   return raw.match(/\r\n|\r|\n/)?.[0] ?? '\n';
 }
 
-const CONFLICT_ANSI_ESCAPE = new RegExp(
-  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const CONFLICT_CONTROL = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
-  'g',
-);
-
 function sanitizeConflictText(value: unknown): string {
   if (typeof value !== 'string') {
     if (value === undefined) {
@@ -345,9 +336,5 @@ function sanitizeConflictText(value: unknown): string {
     return Array.isArray(value) ? '<array>' : `<${typeof value}>`;
   }
 
-  return value
-    .replace(CONFLICT_ANSI_ESCAPE, '')
-    .replace(CONFLICT_CONTROL, ' ')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .slice(0, 240);
+  return sanitizeInlineText(value);
 }
