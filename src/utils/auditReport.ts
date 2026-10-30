@@ -1,8 +1,7 @@
 import { sanitizeInlineText } from '../shared';
-import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './auditClient';
+import { compareSeverity, mergeSeverity } from './audit/types';
+import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 import { compareCodeUnits } from '../shared';
-
-const SEVERITY_ORDER: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
 
 export type AuditAttribution = 'direct' | 'transitive' | 'unknown';
 
@@ -141,7 +140,7 @@ export function mergeAuditAdvisories(advisories: readonly AuditAdvisory[]): Audi
 }
 
 export function compareAdvisories(left: AuditAdvisory, right: AuditAdvisory): number {
-  return SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity)
+  return compareSeverity(left.severity, right.severity)
     || left.packageName.localeCompare(right.packageName)
     || compareCodeUnits(left.identity, right.identity);
 }
@@ -233,10 +232,6 @@ function getAdvisoryIdentityStability(input: AuditAdvisoryInput): AuditIdentityS
   return input.advisoryId !== undefined || input.url !== undefined
     ? 'stable'
     : 'unstable';
-}
-
-function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
-  return SEVERITY_ORDER.indexOf(left) <= SEVERITY_ORDER.indexOf(right) ? left : right;
 }
 
 function mergeFixAvailability(

@@ -2,9 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import {
   describeBoundedProcessFailure,
-  mergeSeverity,
   parseAuditOutcome,
-  parseSeverity,
   runAuditOutcome,
   runNpmAudit,
   runPackageAudit,
@@ -896,27 +894,5 @@ describe('toAuditResult()', () => {
     catch (err) {
       expect((err as UnrecognizedAuditResultError).outcome).toBe(outcome);
     }
-  });
-});
-
-describe('mergeSeverity()', () => {
-  it.each([
-    ['critical', 'high', 'critical'],
-    ['low', 'critical', 'critical'],
-    ['high', 'high', 'high'],
-    ['info', 'low', 'low'],
-  ] as [AuditSeverity, AuditSeverity, AuditSeverity][])('keeps the more severe of %s and %s (%s)', (left, right, expected) => {
-    expect(mergeSeverity(left, right)).toBe(expected);
-  });
-});
-
-describe('parseSeverity()', () => {
-  it.each([
-    ['critical', 'critical'],
-    ['info', 'info'],
-    ['unknown-severity', undefined],
-    [undefined, undefined],
-  ] as [string | undefined, AuditSeverity | undefined][])('parses %s as %s', (value, expected) => {
-    expect(parseSeverity(value)).toBe(expected);
   });
 });

@@ -1,3 +1,5 @@
+import { mergeSeverity, parseSeverity } from './audit/types';
+import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import type { BoundedProcessOutcome } from './processRunner';
@@ -14,10 +16,9 @@ import type {
 } from './auditReport';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS } from '../shared';
-import type { PackageManager } from '../shared';
 
-export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
-export type AuditPackageManager = PackageManager;
+export { mergeSeverity, parseSeverity } from './audit/types';
+export type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 
 export interface AuditResult {
   vulnerabilities: Map<string, AuditSeverity>;
@@ -26,17 +27,6 @@ export interface AuditResult {
   manager: AuditPackageManager;
   schema: AuditSchemaId;
 }
-
-/**
- * Audit JSON schemas recognized by the manager-specific adapters. The shared parser in
- * this module still recognizes only npm/pnpm shapes; Bun owns its bulk-advisory adapter.
- */
-export type AuditSchemaId
-  = | 'npm-v2-vulnerabilities'
-    | 'npm-v1-advisories'
-    | 'bun-bulk-advisory'
-    | 'yarn-classic-audit'
-    | 'yarn-modern-npm-audit';
 
 /** Why audit output could not be turned into a recognized result. */
 export type AuditIncompleteReason
@@ -116,8 +106,6 @@ export class UnrecognizedAuditResultError extends Error {
     this.outcome = outcome;
   }
 }
-
-const severityOrder: AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
 
 /** npm and pnpm exit 0 without findings and 1 when advisories were reported. */
 const compatibleExitCodes: readonly number[] = [0, 1];
@@ -312,14 +300,6 @@ export function toAuditResult(outcome: AuditOutcome, managerOverride?: AuditPack
     };
   }
   throw new UnrecognizedAuditResultError(outcome);
-}
-
-export function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
-  return severityOrder.indexOf(left) <= severityOrder.indexOf(right) ? left : right;
-}
-
-export function parseSeverity(value: string | undefined): AuditSeverity | undefined {
-  return severityOrder.find(severity => severity === value);
 }
 
 function incompleteOutcome(reason: AuditIncompleteReason, detail: string): AuditIncompleteOutcome {

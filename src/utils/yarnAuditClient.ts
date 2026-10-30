@@ -1,7 +1,12 @@
 import {
-  describeBoundedProcessFailure,
+  emptySeverityCounts,
   mergeSeverity,
   parseSeverity,
+  YARN_CLASSIC_SEVERITY_BITS,
+} from './audit/types';
+import type { AuditSeverity } from './audit/types';
+import {
+  describeBoundedProcessFailure,
   toAuditResult,
 } from './auditClient';
 import type {
@@ -10,7 +15,6 @@ import type {
   AuditIncompleteReason,
   AuditOutcome,
   AuditResult,
-  AuditSeverity,
 } from './auditClient';
 import { createAuditAdvisory, inferPathAttribution, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
@@ -23,13 +27,6 @@ import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequir
 
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
-const severityBits: Readonly<Record<AuditSeverity, number>> = {
-  info: 1,
-  low: 2,
-  moderate: 4,
-  high: 8,
-  critical: 16,
-};
 
 interface ClassicSummary {
   mask: number;
@@ -279,7 +276,7 @@ function parseClassicSummary(record: Record<string, unknown>): ClassicSummary | 
 
   let mask = 0;
   const counts = emptySeverityCounts();
-  for (const [severity, bit] of Object.entries(severityBits) as [AuditSeverity, number][]) {
+  for (const [severity, bit] of Object.entries(YARN_CLASSIC_SEVERITY_BITS) as [AuditSeverity, number][]) {
     const count = vulnerabilitySummary[severity];
     if (!isNonNegativeInteger(count)) {
       return undefined;
@@ -374,15 +371,11 @@ function recognizedOutcome(
   };
 }
 
-function emptySeverityCounts(): Record<AuditSeverity, number> {
-  return { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };
-}
-
 function sameSeverityCounts(
   left: Record<AuditSeverity, number>,
   right: Record<AuditSeverity, number>,
 ): boolean {
-  return (Object.keys(severityBits) as AuditSeverity[])
+  return (Object.keys(YARN_CLASSIC_SEVERITY_BITS) as AuditSeverity[])
     .every(severity => left[severity] === right[severity]);
 }
 

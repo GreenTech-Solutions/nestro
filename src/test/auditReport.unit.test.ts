@@ -8,13 +8,21 @@ import {
   mergeAttribution,
   mergeAuditAdvisories,
   mergePathAttributions,
+  mergeSeverity,
   parseAuditOutcome,
   parseBunAuditOutcome,
+  parseSeverity,
   parseYarnAuditOutcome,
   toAuditResult,
   validateAdvisoryUrl,
 } from '../utils';
-import type { AuditAdvisory, AuditOutcome } from '../utils';
+import type { AuditAdvisory, AuditOutcome, AuditSeverity } from '../utils';
+import {
+  compareSeverity,
+  emptySeverityCounts,
+  SEVERITY_ORDER,
+  YARN_CLASSIC_SEVERITY_BITS,
+} from '../utils/audit/types';
 import { sanitizeAuditText } from '../utils/auditReport';
 import type { AuditProjectSummary } from '../providers';
 
@@ -287,6 +295,19 @@ describe('advisory identity and report safety', () => {
     ]);
   });
 
+  it('keeps the worst severity when advisories with one identity merge', () => {
+    const make = (severity: 'high' | 'low'): AuditAdvisory => createAuditAdvisory({
+      packageName: 'lodash',
+      severity,
+      manager: 'npm',
+      schema: 'npm-v2-vulnerabilities',
+      advisoryId: 'A',
+    });
+
+    expect(mergeAuditAdvisories([make('low'), make('high')]).map(entry => entry.severity)).toEqual(['high']);
+    expect(mergeAuditAdvisories([make('high'), make('low')]).map(entry => entry.severity)).toEqual(['high']);
+  });
+
   it('does not merge distinct advisory IDs and marks title/range fallback identities unstable', () => {
     const base = {
       packageName: 'lodash' as const,
@@ -508,5 +529,51 @@ describe('advisory identity and report safety', () => {
     expect(output).toContain('Status: Incomplete');
     expect(output).toContain('Unassigned audit projects: 1');
     expect(output).not.toContain('secret');
+  });
+});
+
+describe('mergeSeverity()', () => {
+  it.each([
+    ['critical', 'high', 'critical'],
+    ['low', 'critical', 'critical'],
+    ['high', 'high', 'high'],
+    ['info', 'low', 'low'],
+  ] as [AuditSeverity, AuditSeverity, AuditSeverity][])('keeps the more severe of %s and %s (%s)', (left, right, expected) => {
+    expect(mergeSeverity(left, right)).toBe(expected);
+  });
+});
+
+describe('parseSeverity()', () => {
+  it.each([
+    ['critical', 'critical'],
+    ['info', 'info'],
+    ['unknown-severity', undefined],
+    [undefined, undefined],
+  ] as [string | undefined, AuditSeverity | undefined][])('parses %s as %s', (value, expected) => {
+    expect(parseSeverity(value)).toBe(expected);
+  });
+});
+
+describe('severity model', () => {
+  it('orders severities from worst to least severe', () => {
+    expect(SEVERITY_ORDER).toEqual(['critical', 'high', 'moderate', 'low', 'info']);
+  });
+
+  it.each([
+    ['critical', 'info', -4],
+    ['info', 'critical', 4],
+    ['moderate', 'moderate', 0],
+  ] as [AuditSeverity, AuditSeverity, number][])('compares %s with %s as %i', (left, right, expected) => {
+    expect(compareSeverity(left, right)).toBe(expected);
+  });
+
+  it('maps Yarn Classic exit-code bits 1, 2, 4, 8, 16 from info up to critical', () => {
+    expect(YARN_CLASSIC_SEVERITY_BITS).toEqual({ info: 1, low: 2, moderate: 4, high: 8, critical: 16 });
+    expect([...SEVERITY_ORDER].reverse().map(severity => YARN_CLASSIC_SEVERITY_BITS[severity])).toEqual([1, 2, 4, 8, 16]);
+  });
+
+  it('starts every severity count at zero', () => {
+    expect(emptySeverityCounts()).toEqual({ info: 0, low: 0, moderate: 0, high: 0, critical: 0 });
+    expect(Object.keys(emptySeverityCounts())).toHaveLength(SEVERITY_ORDER.length);
   });
 });
