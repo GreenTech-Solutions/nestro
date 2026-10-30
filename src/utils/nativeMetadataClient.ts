@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { isValidPackageName } from './packageNameValidation';
 import { runBoundedProcess } from './processRunner';
 import type { BoundedProcessOutcome } from './processRunner';
 import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
@@ -10,7 +9,7 @@ import type {
   PackageMetadata,
   PackageMetadataOutcome,
 } from './metadataRegistry';
-import { isRecord, PACKAGE_MANAGERS } from '../shared';
+import { isRecord, isValidPackageName, PACKAGE_MANAGERS } from '../shared';
 
 const nativePackageManagers = ['npm', 'pnpm'] as const;
 

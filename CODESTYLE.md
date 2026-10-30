@@ -68,7 +68,7 @@ function isGroupItem(item: vscode.TreeItem): item is GroupItem {
 |---------|-----------|---------|
 | Class / Provider | PascalCase | `PackagesProvider.ts`, `PackageItem.ts` |
 | Utility module | camelCase | `versionUtils.ts`, `packageManager.ts` |
-| Client | PascalCase | `NpmClient.ts`, `ClientManager.ts` |
+| Client | PascalCase | `PackageManagerClient.ts`, `ClientManager.ts` |
 | Barrel | always `index.ts` | `src/providers/index.ts` |
 | Unit test | `*.unit.test.ts` | `versionUtils.unit.test.ts` |
 | Integration test | `*.test.ts` | `installUpdate.test.ts` |
@@ -153,7 +153,7 @@ Each util file exports one primary concern:
 ```
 src/utils/
 ├── versionUtils.ts     → version comparison and classification
-├── packageManager.ts   → PM detection + CLI command builders
+├── packageManager.ts   → PM detection for the metadata adapters
 ├── packageReader.ts    → reading workspace package.json files
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper

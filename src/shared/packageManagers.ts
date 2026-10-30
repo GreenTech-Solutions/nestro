@@ -26,6 +26,21 @@ export const YARN_DIALECTS = {
   modern: { audit: ['npm', 'audit', '--all', '--recursive', '--json'], metadata: ['npm', 'info', '--json', '--'], configFile: '.yarnrc.yml' },
 } as const satisfies Record<string, CommandDialect>;
 
+/** The command table row of one package manager. */
+export interface PackageManagerSpec {
+  readonly bin: string;
+  readonly lockfiles: readonly [string, ...string[]];
+  readonly installVerb: string;
+  readonly addVerb: string;
+  readonly removeVerb: string;
+  readonly devFlag: string;
+  /** Lets `add` target a workspace root, where the manager otherwise refuses; absent when it never refuses. Yarn Modern rejects it. */
+  readonly workspaceRootFlag?: string;
+  /** True when `remove` at a workspace root also needs `workspaceRootFlag`. */
+  readonly removeNeedsWorkspaceRootFlag?: boolean;
+  readonly dialect: CommandDialect;
+}
+
 /** One entry per supported package manager; Yarn's `dialect` is Classic, Modern is `YARN_DIALECTS.modern`. */
 export const PACKAGE_MANAGERS = {
   npm: {
@@ -55,6 +70,7 @@ export const PACKAGE_MANAGERS = {
     removeVerb: 'remove',
     devFlag: '--dev',
     workspaceRootFlag: '--ignore-workspace-root-check',
+    removeNeedsWorkspaceRootFlag: true,
     dialect: YARN_DIALECTS.classic,
   },
   bun: {
@@ -66,17 +82,7 @@ export const PACKAGE_MANAGERS = {
     devFlag: '--dev',
     dialect: { audit: ['audit', '--json'], metadata: undefined, configFile: 'bunfig.toml' },
   },
-} as const satisfies Record<PackageManager, {
-  readonly bin: string;
-  readonly lockfiles: readonly [string, ...string[]];
-  readonly installVerb: string;
-  readonly addVerb: string;
-  readonly removeVerb: string;
-  readonly devFlag: string;
-  /** Lets `add` target a workspace root, where the manager otherwise refuses; absent when it never refuses. Yarn Modern rejects it. */
-  readonly workspaceRootFlag?: string;
-  readonly dialect: CommandDialect;
-}>;
+} as const satisfies Record<PackageManager, PackageManagerSpec>;
 
 export function isPackageManager(value: unknown): value is PackageManager {
   return PACKAGE_MANAGER_NAMES.some(name => name === value);

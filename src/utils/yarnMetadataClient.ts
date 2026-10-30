@@ -9,9 +9,8 @@ import type {
   PackageMetadata,
   PackageMetadataOutcome,
 } from './metadataRegistry';
-import { isValidPackageName } from './packageNameValidation';
 import { resolveYarnFamily } from './yarnFamily';
-import { isRecord, PACKAGE_MANAGERS, YARN_DIALECTS } from '../shared';
+import { isRecord, isValidPackageName, PACKAGE_MANAGERS, YARN_DIALECTS } from '../shared';
 
 /** Runs Yarn Classic's wrapped package metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnClassic(

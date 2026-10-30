@@ -48,33 +48,23 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/NpmClient.ts',
+    file: 'src/clients/PackageManagerClient.ts',
     target: '../utils/auditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/PnpmClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/BunClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/BunClient.ts',
+    file: 'src/clients/PackageManagerClient.ts',
     target: '../utils/bunAuditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/YarnClient.ts',
-    target: '../utils/auditClient',
+    file: 'src/clients/PackageManagerClient.ts',
+    target: '../utils/yarnAuditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/YarnClient.ts',
-    target: '../utils/yarnAuditClient',
+    file: 'src/clients/PackageManagerClient.ts',
+    target: '../utils/shellTask',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
@@ -83,24 +73,9 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/operandValidation.ts',
-    target: '../utils/packageNameValidation',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts; the metadata clients in utils share the one package-name validator.',
-  },
-  {
-    file: 'src/clients/Client.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/Client.ts',
-    target: '../utils/shellTask',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
     file: 'src/utils/packageManager.ts',
     target: '../clients',
-    reason: 'detectPackageManager()/buildInstallCommand() only delegate to ClientManager; the module is documented and tested as part of utils, and relocating it to clients would ripple through every command/provider caller and test for no behavior change.',
+    reason: 'detectPackageManager() only delegates to ClientManager for the metadata adapters in utils; relocating it to clients would ripple through every metadata caller and test for no behavior change.',
   },
   {
     file: 'src/utils/auditReportFormatter.ts',

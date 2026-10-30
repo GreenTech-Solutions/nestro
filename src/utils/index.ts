@@ -18,7 +18,7 @@ export { fetchAllLatestVersions } from './ncuClient';
 export type { NcuUpdateTarget } from './ncuClient';
 export { showError } from './notify';
 export { CHECK_CONCURRENCY_CAP, createCheckCoordinator, MUTATION_CONCURRENCY_CAP, mutationCoordinator, OperationCoordinator } from './operationCoordinator';
-export { buildInstallCommand, buildPackageUpdateCommand, buildRunInstallCommand, detectPackageManager } from './packageManager';
+export { detectPackageManager } from './packageManager';
 export { getPackageDirectory, pinAllWorkspaceDependencyVersions, readAllWorkspaceDependencies, readWorkspaceDependencies, setVersionPin, switchDependencyType, updateDependencyVersionsInFile, updateDependencyVersionsInFilesAtomically, updateWorkspaceDependencyVersions } from './packageReader';
 export type { PackageFileEntries, PackageFileEntry, PackageReadFailure, SkippedPackageFile } from './packageReader';
 export { findWorkspacePackageJsonFiles, getWorkspacePackageFilePath, getWorkspacePackageFilePaths, readPackageFile, toWorkspaceRelativePackageFilePath, writeManyPreparedPackageFilesAtomically, writePreparedPackageFile } from './packageRepository';

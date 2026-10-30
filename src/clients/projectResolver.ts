@@ -6,8 +6,6 @@ import {
   compareCodeUnits,
   DEFAULT_PACKAGE_MANAGER,
   isPathWithin,
-  LOCKFILES,
-  NODE_MODULES_EXCLUDE_GLOB,
   parsePackageManagerField,
 } from '../shared';
 import type { PackageManager } from '../shared';
@@ -62,47 +60,20 @@ export interface AuditProjectResolution {
   readonly rejected: readonly RejectedAuditManifest[];
 }
 
-export async function detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
-  if (cwd !== undefined) {
-    try {
-      const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
-      const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-      return parsePackageManagerField(manifest.packageManager)?.packageManager;
-    }
-    catch {
-      return undefined;
-    }
+async function detectPackageManagerFromManifest(cwd: string): Promise<PackageManager | undefined> {
+  try {
+    const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
+    const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
+    return parsePackageManagerField(manifest.packageManager)?.packageManager;
   }
-
-  const files = await vscode.workspace.findFiles('**/package.json', NODE_MODULES_EXCLUDE_GLOB, 1);
-  if (files.length === 0) {
+  catch {
     return undefined;
   }
-
-  const raw = await vscode.workspace.fs.readFile(files[0]);
-  const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-  return parsePackageManagerField(manifest.packageManager)?.packageManager;
 }
 
 async function detectLockfileSignalInDirectory(cwd: string): Promise<{ packageManager: PackageManager; fileName: string } | undefined> {
   const lockfile = await findLockfile(cwd);
   return lockfile === undefined ? undefined : { packageManager: lockfile.packageManager, fileName: lockfile.fileName };
-}
-
-/**
- * Workspace-wide lock file scan used only when no `cwd` is known at all (e.g. no
- * workspace folder is open yet). Every caller that has a `cwd` resolves an ancestor
- * signal through `detectPackageManagerSignalFromAncestors()` instead, which is why this
- * never takes a `cwd` parameter of its own.
- */
-export async function detectPackageManagerFromLockfile(): Promise<PackageManager | undefined> {
-  for (const lockfile of LOCKFILES) {
-    const files = await vscode.workspace.findFiles(`**/${lockfile.fileName}`, NODE_MODULES_EXCLUDE_GLOB, 1);
-    if (files.length > 0) {
-      return lockfile.packageManager;
-    }
-  }
-  return undefined;
 }
 
 async function detectPackageManagerSignalAt(cwd: string): Promise<{ packageManager: PackageManager; lockfileFileName: string | undefined } | undefined> {

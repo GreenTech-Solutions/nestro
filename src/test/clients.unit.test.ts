@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { BunClient, ClientManager, NpmClient, PnpmClient, YarnClient } from '../clients';
+import { ClientManager, PackageManagerClient } from '../clients';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
@@ -76,47 +76,47 @@ function yarnClassicSummary(overrides: Record<string, number> = {}): string {
 
 describe('package manager clients', () => {
   it('builds npm update commands', () => {
-    expectCommand(new NpmClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
     ]), 'npm', ['install', '--', quoted('react@18.0.0')]);
   });
 
   it('builds pnpm update commands', () => {
-    expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('pnpm', '/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
     ]), 'pnpm', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('builds yarn update commands', () => {
-    expectCommand(new YarnClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('yarn', '/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
     ]), 'yarn', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('builds bun update commands', () => {
-    expectCommand(new BunClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('bun', '/workspace').buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
     ]), 'bun', ['add', '--', quoted('react@18.0.0')]);
   });
 
   it('includes multiple packages in one command', () => {
-    expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('pnpm', '/workspace').buildUpdateCommand([
       { name: 'react', version: '19.0.0', section: 'dependencies' },
       { name: 'typescript', version: '5.9.3', section: 'dependencies' },
     ]), 'pnpm', ['add', '--', quoted('react@19.0.0'), quoted('typescript@5.9.3')]);
   });
 
   it('keeps the section flag before the operand separator for dev dependency updates', () => {
-    expectCommand(new NpmClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
     ]), 'npm', ['install', '--save-dev', '--', quoted('vitest@4.0.0')]);
-    expectCommand(new PnpmClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('pnpm', '/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
     ]), 'pnpm', ['add', '--save-dev', '--', quoted('vitest@4.0.0')]);
-    expectCommand(new YarnClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('yarn', '/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
     ]), 'yarn', ['add', '--dev', '--', quoted('vitest@4.0.0')]);
-    expectCommand(new BunClient('/workspace').buildUpdateCommand([
+    expectCommand(new PackageManagerClient('bun', '/workspace').buildUpdateCommand([
       { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
     ]), 'bun', ['add', '--dev', '--', quoted('vitest@4.0.0')]);
   });
@@ -124,79 +124,92 @@ describe('package manager clients', () => {
   it('places the workspace-root flag between the section flag and the operand separator', () => {
     const targets = [{ name: 'vitest', version: '4.0.0', section: 'devDependencies' as const }];
     expectCommand(
-      new PnpmClient('/workspace', true).buildUpdateCommand(targets),
+      new PackageManagerClient('pnpm', '/workspace', true).buildUpdateCommand(targets),
       'pnpm',
       ['add', '--save-dev', '--ignore-workspace-root-check', '--', quoted('vitest@4.0.0')],
     );
     expectCommand(
-      new YarnClient('/workspace', true).buildUpdateCommand(targets),
+      new PackageManagerClient('yarn', '/workspace', true).buildUpdateCommand(targets),
       'yarn',
       ['add', '--dev', '--ignore-workspace-root-check', '--', quoted('vitest@4.0.0')],
     );
   });
 
   it.each([
-    ['npm', NpmClient, 'install'],
-    ['bun', BunClient, 'add'],
-  ] as const)('never adds a workspace-root flag to %s update commands', (packageManager, ClientCtor, verb) => {
-    expectCommand(new ClientCtor('/workspace', true).buildUpdateCommand([
+    ['npm', 'install'],
+    ['bun', 'add'],
+  ] as const)('never adds a workspace-root flag to %s update commands', (packageManager, verb) => {
+    expectCommand(new PackageManagerClient(packageManager, '/workspace', true).buildUpdateCommand([
       { name: 'react', version: '18.0.0', section: 'dependencies' },
     ]), packageManager, [verb, '--', quoted('react@18.0.0')]);
   });
 
   it('builds npm remove commands', () => {
     expectCommand(
-      new NpmClient('/workspace').buildRemoveCommand(['lodash', 'moment']),
+      new PackageManagerClient('npm', '/workspace').buildRemoveCommand(['lodash', 'moment']),
       'npm',
       ['uninstall', '--', quoted('lodash'), quoted('moment')],
     );
   });
 
-  it.each([
-    ['pnpm', PnpmClient],
-    ['yarn', YarnClient],
-    ['bun', BunClient],
-  ] as const)('builds %s remove commands', (packageManager, ClientCtor) => {
+  it.each(['pnpm', 'yarn', 'bun'] as const)('builds %s remove commands', (packageManager) => {
     expectCommand(
-      new ClientCtor('/workspace').buildRemoveCommand(['lodash', 'moment']),
+      new PackageManagerClient(packageManager, '/workspace').buildRemoveCommand(['lodash', 'moment']),
       packageManager,
       ['remove', '--', quoted('lodash'), quoted('moment')],
+    );
+  });
+
+  it.each(['npm', 'pnpm', 'yarn', 'bun'] as const)('rejects a %s update that mixes dependency sections before building a task', (packageManager) => {
+    expect(() => new PackageManagerClient(packageManager, '/workspace').buildUpdateCommand([
+      { name: 'react', version: '19.0.0', section: 'dependencies' },
+      { name: 'vitest', version: '4.0.0', section: 'devDependencies' },
+    ])).toThrow(/one dependency section/);
+  });
+
+  it('places the workspace-root flag on a Yarn Classic remove at a workspace root', () => {
+    expectCommand(
+      new PackageManagerClient('yarn', '/workspace', true).buildRemoveCommand(['lodash']),
+      'yarn',
+      ['remove', '--ignore-workspace-root-check', '--', quoted('lodash')],
+    );
+  });
+
+  it.each([
+    ['npm', 'uninstall'],
+    ['pnpm', 'remove'],
+    ['bun', 'remove'],
+  ] as const)('never adds a workspace-root flag to %s remove commands', (packageManager, verb) => {
+    expectCommand(
+      new PackageManagerClient(packageManager, '/workspace', true).buildRemoveCommand(['lodash']),
+      packageManager,
+      [verb, '--', quoted('lodash')],
     );
   });
 
   it('strongly quotes a valid package name that still contains shell metacharacters', () => {
     // Apostrophe and asterisk are real, registry-valid name characters that would
     // still break out of naive shell interpolation without Strong quoting.
-    const command = new NpmClient('/workspace').buildUpdateCommand([
+    const command = new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: 'o\'brien-toolkit*', version: '1.0.0', section: 'dependencies' },
     ]);
 
     expectCommand(command, 'npm', ['install', '--', quoted('o\'brien-toolkit*@1.0.0')]);
   });
 
-  it.each([
-    ['npm', NpmClient],
-    ['pnpm', PnpmClient],
-    ['yarn', YarnClient],
-    ['bun', BunClient],
-  ] as const)('rejects an option-shaped package name before building an %s update command', (_packageManager, ClientCtor) => {
-    expect(() => new ClientCtor('/workspace').buildUpdateCommand([
+  it.each(['npm', 'pnpm', 'yarn', 'bun'] as const)('rejects an option-shaped package name before building an %s update command', (packageManager) => {
+    expect(() => new PackageManagerClient(packageManager, '/workspace').buildUpdateCommand([
       { name: '--global', version: '1.0.0', section: 'dependencies' },
     ])).toThrow(/cannot start with a hyphen/);
   });
 
-  it.each([
-    ['npm', NpmClient],
-    ['pnpm', PnpmClient],
-    ['yarn', YarnClient],
-    ['bun', BunClient],
-  ] as const)('rejects an option-shaped package name before building an %s remove command', (_packageManager, ClientCtor) => {
-    expect(() => new ClientCtor('/workspace').buildRemoveCommand(['--global']))
+  it.each(['npm', 'pnpm', 'yarn', 'bun'] as const)('rejects an option-shaped package name before building an %s remove command', (packageManager) => {
+    expect(() => new PackageManagerClient(packageManager, '/workspace').buildRemoveCommand(['--global']))
       .toThrow(/cannot start with a hyphen/);
   });
 
   it('rejects a package name that starts with a registry flag', () => {
-    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+    expect(() => new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: '--registry=http://evil.test', version: '1.0.0', section: 'dependencies' },
     ])).toThrow(/cannot start with a hyphen/);
   });
@@ -213,7 +226,7 @@ describe('package manager clients', () => {
     ['unscoped name with a slash', 'unscoped/name'],
     ['URL-unsafe character', 'left$pad'],
   ] as const)('rejects an invalid unscoped or scoped name: %s', (_label, name) => {
-    expect(() => new NpmClient('/workspace').buildRemoveCommand([name])).toThrow();
+    expect(() => new PackageManagerClient('npm', '/workspace').buildRemoveCommand([name])).toThrow();
   });
 
   it.each([
@@ -227,7 +240,7 @@ describe('package manager clients', () => {
     ['legacy special characters', 'left-pad\'!(~)*'],
     ['legacy length over 214 characters', `a${'b'.repeat(220)}`],
   ] as const)('accepts a valid or legacy-real name: %s', (_label, name) => {
-    expect(() => new NpmClient('/workspace').buildRemoveCommand([name])).not.toThrow();
+    expect(() => new PackageManagerClient('npm', '/workspace').buildRemoveCommand([name])).not.toThrow();
   });
 
   it.each([
@@ -236,7 +249,7 @@ describe('package manager clients', () => {
     ['workspace spec', 'workspace:^1.0.0'],
     ['dist-tag', 'latest'],
   ] as const)('accepts a valid update version: %s', (_label, version) => {
-    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+    expect(() => new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: 'react', version, section: 'dependencies' },
     ])).not.toThrow();
   });
@@ -246,7 +259,7 @@ describe('package manager clients', () => {
     ['leading hyphen', '--registry=http://evil.test'],
     ['embedded control character', '1.0.0\n--global'],
   ] as const)('rejects an invalid update version: %s', (_label, version) => {
-    expect(() => new NpmClient('/workspace').buildUpdateCommand([
+    expect(() => new PackageManagerClient('npm', '/workspace').buildUpdateCommand([
       { name: 'react', version, section: 'dependencies' },
     ])).toThrow();
   });
@@ -263,10 +276,10 @@ describe('runAudit()', () => {
     });
   });
 
-  it('runs npm audit through the base Client implementation', async () => {
+  it('runs npm audit through the package manager client', async () => {
     mockExecSuccess(npmAuditReport('react', 'high'));
 
-    const vulnerabilities = await new NpmClient('/workspace').runAudit();
+    const vulnerabilities = await new PackageManagerClient('npm', '/workspace').runAudit();
 
     expect(vulnerabilities.get('react')).toBe('high');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('npm');
@@ -275,7 +288,7 @@ describe('runAudit()', () => {
   it('delegates pnpm audit to the package audit runner', async () => {
     mockExecSuccess(npmAuditReport('lodash', 'critical'));
 
-    const vulnerabilities = await new PnpmClient('/workspace').runAudit();
+    const vulnerabilities = await new PackageManagerClient('pnpm', '/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('pnpm');
@@ -295,7 +308,7 @@ describe('runAudit()', () => {
       }),
     }));
 
-    const vulnerabilities = await new BunClient('/workspace').runAudit();
+    const vulnerabilities = await new PackageManagerClient('bun', '/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('bun');
@@ -311,7 +324,7 @@ describe('runAudit()', () => {
       ].join('\n'),
     }));
 
-    const vulnerabilities = await new YarnClient('/workspace').runAudit();
+    const vulnerabilities = await new PackageManagerClient('yarn', '/workspace').runAudit();
 
     expect(vulnerabilities.get('lodash')).toBe('critical');
     expect(vulnerabilities.size).toBe(1);
@@ -323,7 +336,7 @@ describe('runAudit()', () => {
       yarnClassicSummary(),
     ].join('\n'));
 
-    await expect(new YarnClient('/workspace').runAudit()).rejects.toMatchObject({
+    await expect(new PackageManagerClient('yarn', '/workspace').runAudit()).rejects.toMatchObject({
       outcome: { kind: 'incomplete', reason: 'malformed-json' },
     });
   });
@@ -335,7 +348,7 @@ describe('runAudit()', () => {
     });
     mockExecFailure(error);
 
-    const vulnerabilities = await new YarnClient('/workspace').runAudit();
+    const vulnerabilities = await new PackageManagerClient('yarn', '/workspace').runAudit();
 
     expect(vulnerabilities.get('vite')).toBe('critical');
   });
@@ -343,7 +356,7 @@ describe('runAudit()', () => {
   it('throws a typed error when Yarn Classic fails before producing inspectable output', async () => {
     mockExecFailure(new Error('yarn not found'));
 
-    await expect(new YarnClient('/workspace').runAudit()).rejects.toThrow('yarn not found');
+    await expect(new PackageManagerClient('yarn', '/workspace').runAudit()).rejects.toThrow('yarn not found');
   });
 });
 
@@ -361,17 +374,12 @@ describe('ClientManager', () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
   });
 
-  it.each([
-    ['npm', NpmClient],
-    ['pnpm', PnpmClient],
-    ['yarn', YarnClient],
-    ['bun', BunClient],
-  ] as const)('returns a %s client from packageManager metadata', async (packageManager, expectedClient) => {
+  it.each(['npm', 'pnpm', 'yarn', 'bun'] as const)('returns a %s client from packageManager metadata', async (packageManager) => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
       Buffer.from(JSON.stringify({ packageManager: `${packageManager}@1.0.0` })),
     );
 
-    await expect(new ClientManager().getClient('/workspace')).resolves.toBeInstanceOf(expectedClient);
+    await expect(new ClientManager().getClient('/workspace')).resolves.toMatchObject({ packageManager });
   });
 
   describe('workspace-root flag', () => {
@@ -444,6 +452,19 @@ describe('ClientManager', () => {
       });
 
       await expect(updateArgs('/workspace')).resolves.toEqual(['add', '--', quoted('react@18.0.0')]);
+    });
+
+    it('adds the flag to a remove at a Yarn Classic root and omits it below the root', async () => {
+      mockWorkspaceFiles({
+        '/workspace/package.json': JSON.stringify({ packageManager: 'yarn@1.22.22', workspaces: ['packages/*'] }),
+        '/workspace/packages/app/package.json': '{}',
+      });
+      const manager = new ClientManager();
+
+      expect((await manager.getClient('/workspace')).buildRemoveCommand(['lodash']).args)
+        .toEqual(['remove', '--ignore-workspace-root-check', '--', quoted('lodash')]);
+      expect((await manager.getClient('/workspace/packages/app')).buildRemoveCommand(['lodash']).args)
+        .toEqual(['remove', '--', quoted('lodash')]);
     });
 
     it('omits the flag for a Yarn Classic workspace package below the root', async () => {

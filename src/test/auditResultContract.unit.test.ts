@@ -17,14 +17,14 @@ vi.mock('../utils/processRunner', () => ({
 }));
 
 vi.mock('../clients', async () => {
-  const { NpmClient } = await vi.importActual<typeof import('../clients/NpmClient')>('../clients/NpmClient');
+  const { PackageManagerClient } = await vi.importActual<typeof import('../clients/PackageManagerClient')>('../clients/PackageManagerClient');
   return {
     ClientManager: vi.fn(function (this: {
-      getClient: () => Promise<InstanceType<typeof NpmClient>>;
-      createClient: () => InstanceType<typeof NpmClient>;
+      getClient: () => Promise<InstanceType<typeof PackageManagerClient>>;
+      createClient: () => InstanceType<typeof PackageManagerClient>;
     }) {
-      this.getClient = () => Promise.resolve(new NpmClient('/workspace'));
-      this.createClient = () => new NpmClient('/workspace');
+      this.getClient = () => Promise.resolve(new PackageManagerClient('npm', '/workspace'));
+      this.createClient = () => new PackageManagerClient('npm', '/workspace');
     }),
     // Every known package file resolves to one project rooted at its own directory —
     // this suite's fixtures are all single-manifest, so real project-graph dedupe is

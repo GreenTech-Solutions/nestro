@@ -1,47 +1,44 @@
-import * as vscode from 'vscode';
-
 // `@scope/name` (scope optional) with exactly one separating slash.
 const SCOPED_NAME_PATTERN = /^(?:@([^/]+)\/)?([^/]+)$/;
+
+export type PackageNameProblem
+  = | { readonly kind: 'empty' }
+    | { readonly kind: 'leading-hyphen' }
+    | { readonly kind: 'malformed' }
+    | { readonly kind: 'unsafe-scope'; readonly segment: string }
+    | { readonly kind: 'unsafe-name'; readonly segment: string };
 
 /**
  * Rejects only what makes an operand option-like or unresolvable — leading hyphen,
  * empty name, malformed scope, or URL-unsafe characters. Mixed case and length past
  * 214 pass as real legacy names; leading `.`/`_` pass only as inert, not real, ones.
  */
-export function validatePackageName(name: string): void {
+export function classifyPackageName(name: string): PackageNameProblem | undefined {
   if (name.length === 0) {
-    throw new Error(vscode.l10n.t('Package name cannot be empty.'));
+    return { kind: 'empty' };
   }
   if (name.startsWith('-')) {
-    throw new Error(vscode.l10n.t('Package name "{0}" cannot start with a hyphen.', name));
+    return { kind: 'leading-hyphen' };
   }
 
   const match = SCOPED_NAME_PATTERN.exec(name);
   if (match === null) {
-    throw new Error(vscode.l10n.t('Package name "{0}" is not a valid package or scoped package name.', name));
+    return { kind: 'malformed' };
   }
 
   const [, scope, unscopedName] = match;
   if (scope !== undefined && !isUrlSafeSegment(scope)) {
-    throw new Error(vscode.l10n.t('Package scope "{0}" contains characters a registry URL can\'t carry.', scope));
+    return { kind: 'unsafe-scope', segment: scope };
   }
   if (!isUrlSafeSegment(unscopedName)) {
-    throw new Error(vscode.l10n.t(
-      'Package name "{0}" contains characters a registry URL can\'t carry.',
-      unscopedName,
-    ));
+    return { kind: 'unsafe-name', segment: unscopedName };
   }
+  return undefined;
 }
 
-/** True when `validatePackageName()` accepts the name. */
+/** True when `classifyPackageName()` finds nothing wrong with the name. */
 export function isValidPackageName(name: string): boolean {
-  try {
-    validatePackageName(name);
-    return true;
-  }
-  catch {
-    return false;
-  }
+  return classifyPackageName(name) === undefined;
 }
 
 function isUrlSafeSegment(segment: string): boolean {
