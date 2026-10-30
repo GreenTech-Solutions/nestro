@@ -7,7 +7,7 @@ import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMet
 import { PACKAGE_MANAGER_NAMES } from '../shared';
 import type { PackageManager } from '../shared';
 
-export type MetadataAdapterTier = 'native-cli' | 'config-aware-https' | 'public-npm';
+export type MetadataAdapterTier = 'native-cli' | 'config-aware-https';
 
 export interface PublishTimesProvided {
   kind: 'provided';
@@ -44,7 +44,6 @@ export interface MetadataAdapter {
 const tierOrder: Readonly<Record<MetadataAdapterTier, number>> = {
   'native-cli': 0,
   'config-aware-https': 1,
-  'public-npm': 2,
 };
 
 export const configAwareHttpsMetadataAdapter: MetadataAdapter = {

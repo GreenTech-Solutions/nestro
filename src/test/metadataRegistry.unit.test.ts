@@ -200,8 +200,8 @@ describe('MetadataAdapterRegistry', () => {
       statusCode: 404,
       privateRegistry: true,
     };
-    const privateAdapter = createAdapter('config-aware-https', ['npm'], privateResult);
-    const publicAdapter = createAdapter('public-npm', ['npm'], success);
+    const privateAdapter = createAdapter('native-cli', ['npm'], privateResult);
+    const publicAdapter = createAdapter('config-aware-https', ['npm'], success);
     const registry = new MetadataAdapterRegistry([publicAdapter, privateAdapter]);
 
     await expect(registry.fetchMetadata({
@@ -218,8 +218,8 @@ describe('MetadataAdapterRegistry', () => {
       timeoutMs: 15_000,
       privateRegistry: true,
     };
-    const privateAdapter = createAdapter('config-aware-https', ['npm'], privateResult);
-    const publicAdapter = createAdapter('public-npm', ['npm'], success);
+    const privateAdapter = createAdapter('native-cli', ['npm'], privateResult);
+    const publicAdapter = createAdapter('config-aware-https', ['npm'], success);
     const registry = new MetadataAdapterRegistry([publicAdapter, privateAdapter]);
 
     await expect(registry.fetchMetadata({

@@ -16,7 +16,7 @@ export { configAwareHttpsMetadataAdapter, fetchPackageMetadata, MetadataAdapterR
 export type { MetadataAdapter, PackageMetadataOutcome } from './metadataRegistry';
 export { runBoundedMetadataRequest } from './metadataRunner';
 export type { MetadataSchemaResult } from './metadataRunner';
-export { fetchPackageMetadataFromNativeCli, nativeCliMetadataAdapter, parseNativeCliMetadata } from './nativeMetadataClient';
+export { fetchPackageMetadataFromNativeCli, nativeCliMetadataAdapter } from './nativeMetadataClient';
 export { fetchAllLatestVersions } from './ncuClient';
 export type { NcuUpdateTarget } from './ncuClient';
 export { showError } from './notify';

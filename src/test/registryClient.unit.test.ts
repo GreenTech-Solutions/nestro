@@ -6,10 +6,10 @@ import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchPackageMetadataFromRegistry,
-  parseNpmRegistryMetadata,
   resolvePackageRegistryUrl,
   selectVersionsForPicker,
 } from '../utils/registryClient';
+import { parsePackument } from '../utils/metadata/packument';
 import { parseClassicYarnConfig } from '../utils/registry/yarnrc';
 import { parseYarnModernConfig } from '../utils/registry/yarnrcYml';
 import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry, parseBunConfig } from '../utils';
@@ -725,7 +725,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       return toClientRequest(request);
     });
     const publicAdapter: MetadataAdapter = {
-      tier: 'public-npm',
+      tier: 'config-aware-https',
       packageManagers: ['yarn'],
       fetchMetadata: vi.fn().mockResolvedValue({
         kind: 'success',
@@ -1020,7 +1020,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       return toClientRequest(request);
     });
     const publicAdapter: MetadataAdapter = {
-      tier: 'public-npm',
+      tier: 'config-aware-https',
       packageManagers: ['bun'],
       fetchMetadata: vi.fn().mockResolvedValue({
         kind: 'success',
@@ -1267,7 +1267,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('parses publish times at the parser boundary', () => {
-    expect(parseNpmRegistryMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: '2.0.0' },
       versions: { '1.0.0': {}, '2.0.0': {} },
       time: {
@@ -1289,7 +1289,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('distinguishes a source without publish times from a version without a time', () => {
-    expect(parseNpmRegistryMetadata({
+    expect(parsePackument({
       'dist-tags': {},
       versions: { '1.0.0': {} },
     })).toEqual({
@@ -1301,7 +1301,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       },
     });
 
-    expect(parseNpmRegistryMetadata({
+    expect(parsePackument({
       'dist-tags': {},
       versions: { '1.0.0': {}, '2.0.0': {} },
       time: { '1.0.0': '2020-02-01T00:00:00.000Z' },
@@ -1324,15 +1324,15 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       versions: { '1.0.0': {} },
     };
 
-    expect(parseNpmRegistryMetadata({ ...base, time: null })).toMatchObject({
+    expect(parsePackument({ ...base, time: null })).toMatchObject({
       kind: 'recognized',
       result: { publishTimes: { kind: 'not-provided' } },
     });
-    expect(parseNpmRegistryMetadata({ ...base, time: { '1.0.0': 1700000000000 } })).toMatchObject({
+    expect(parsePackument({ ...base, time: { '1.0.0': 1700000000000 } })).toMatchObject({
       kind: 'recognized',
       result: { publishTimes: { kind: 'provided', byVersion: {} } },
     });
-    expect(parseNpmRegistryMetadata({
+    expect(parsePackument({
       ...base,
       time: { '1.0.0': '2020-01-01T00:00:00.000Z', unpublished: { name: 'x' } },
     })).toMatchObject({
@@ -1347,9 +1347,9 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('classifies unknown and malformed packument schemas', () => {
-    expect(parseNpmRegistryMetadata(null)).toEqual({ kind: 'unrecognized' });
-    expect(parseNpmRegistryMetadata({})).toEqual({ kind: 'unrecognized' });
-    expect(parseNpmRegistryMetadata({ 'dist-tags': [], versions: {} })).toEqual({ kind: 'malformed' });
+    expect(parsePackument(null)).toEqual({ kind: 'unrecognized' });
+    expect(parsePackument({})).toEqual({ kind: 'unrecognized' });
+    expect(parsePackument({ 'dist-tags': [], versions: {} })).toEqual({ kind: 'malformed' });
   });
 });
 

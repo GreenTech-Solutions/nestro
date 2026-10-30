@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPackageMetadataFromNativeCli, parseNativeCliMetadata } from '../utils';
+import { fetchPackageMetadataFromNativeCli } from '../utils';
+import { parsePackument } from '../utils/metadata/packument';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
@@ -36,7 +37,7 @@ describe('native metadata client', () => {
       result: {
         distTags: { latest: '2.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '2.0.0': '2024-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '2.0.0'],
+        versions: ['2.0.0', '1.0.0'],
       },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
@@ -83,7 +84,7 @@ describe('native metadata client', () => {
   });
 
   it('accepts a full packument-shaped versions object without guessing another schema', () => {
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: '1.0.0' },
       versions: { '1.0.0': {}, '1.1.0': {} },
       time: { '1.0.0': '2020-01-01T00:00:00.000Z' },
@@ -92,7 +93,7 @@ describe('native metadata client', () => {
       result: {
         distTags: { latest: '1.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '1.0.0': '2020-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '1.1.0'],
+        versions: ['1.1.0', '1.0.0'],
       },
     });
   });
@@ -126,11 +127,11 @@ describe('native metadata client', () => {
   });
 
   it('rejects malformed version entries instead of treating their keys as versions', () => {
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: '1.0.0' },
       versions: { '1.0.0': 'not-version-metadata' },
     })).toEqual({ kind: 'malformed' });
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: 1 },
       versions: { '1.0.0': {} },
     })).toEqual({ kind: 'malformed' });

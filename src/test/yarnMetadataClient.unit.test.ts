@@ -47,7 +47,7 @@ describe('Yarn native metadata clients', () => {
       result: {
         distTags: { latest: '2.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '2.0.0': '2024-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '2.0.0'],
+        versions: ['2.0.0', '1.0.0'],
       },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
@@ -68,7 +68,7 @@ describe('Yarn native metadata clients', () => {
 
     await expect(fetchPackageMetadataFromYarnModern(request)).resolves.toMatchObject({
       kind: 'success',
-      result: { versions: ['1.0.0', '2.0.0'] },
+      result: { versions: ['2.0.0', '1.0.0'] },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',

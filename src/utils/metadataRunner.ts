@@ -81,7 +81,6 @@ export interface MetadataTransportError extends MetadataPrivateRegistryContext {
 }
 
 export interface BoundedMetadataTransportError extends MetadataTransportError {
-  message?: string;
   redirectLocation?: string;
 }
 
@@ -220,18 +219,7 @@ export function runBoundedMetadataRequest<T>(
       }
 
       try {
-        const parsed = options.parse(payload);
-        switch (parsed.kind) {
-          case 'recognized':
-            settle({ kind: 'success', result: parsed.result });
-            return;
-          case 'unrecognized':
-            settle({ kind: 'unrecognized' });
-            return;
-          case 'malformed':
-            settle({ kind: 'malformed', reason: 'schema' });
-            return;
-        }
+        settle(mapSchemaResult(options.parse(payload)));
       }
       catch {
         settle({ kind: 'malformed', reason: 'schema' });
@@ -261,6 +249,20 @@ export function runBoundedMetadataRequest<T>(
       settle(createTransportError('request', error));
     }
   });
+}
+
+/** Converts a parser result into the outcome that ends a metadata request. */
+export function mapSchemaResult<T>(
+  parsed: MetadataSchemaResult<T>,
+): MetadataSuccess<T> | MetadataUnrecognized | MetadataMalformed {
+  switch (parsed.kind) {
+    case 'recognized':
+      return { kind: 'success', result: parsed.result };
+    case 'unrecognized':
+      return { kind: 'unrecognized' };
+    case 'malformed':
+      return { kind: 'malformed', reason: 'schema' };
+  }
 }
 
 function getContentLength(response: IncomingMessage | undefined): number | undefined {
