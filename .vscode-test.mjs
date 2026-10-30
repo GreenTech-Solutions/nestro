@@ -2,7 +2,7 @@ import { defineConfig } from '@vscode/test-cli';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
@@ -41,9 +41,6 @@ const MOCHA_TEST_TIMEOUT_MS = 20_000;
 /** Glob handed to Mocha, relative to this file. */
 const COMPILED_TESTS_GLOB = 'out/test/**/*.test.js';
 
-/** Directory the glob above resolves into. */
-const COMPILED_TESTS_DIR = join(rootDir, 'out', 'test');
-
 /**
  * VS Code names its IPC socket `<version.substr(0, 4)>-main.sock` inside the
  * user-data dir, e.g. `1.12-main.sock` for 1.125.0. The version slice is always
@@ -57,47 +54,6 @@ const SOCKET_FILE_NAME_LENGTH = '1.12-main.sock'.length;
  * character later. Windows uses a named pipe, so no limit applies there.
  */
 const SOCKET_PATH_LIMITS = { darwin: 103, linux: 107 };
-
-/**
- * Fails the configuration when no compiled integration test exists.
- *
- * Mocha reports `0 passing` with exit code 0 when it finds no test file, and
- * `pnpm run build` wipes `out/` (tsdown `clean: true`) together with
- * `out/test/`. Without this check a channel could report success without having
- * executed a single test.
- */
-function assertCompiledTestsExist() {
-  if (countCompiledTests(COMPILED_TESTS_DIR) > 0) {
-    return;
-  }
-
-  throw new Error(
-    `No compiled integration tests found under ${COMPILED_TESTS_DIR} (glob "${COMPILED_TESTS_GLOB}"). `
-    + 'Run `pnpm run test:compile` first — `pnpm run build` removes `out/` including the compiled tests, '
-    + 'and a run with zero tests would otherwise report success.',
-  );
-}
-
-function countCompiledTests(directory) {
-  let entries;
-  try {
-    entries = readdirSync(directory, { withFileTypes: true });
-  }
-  catch {
-    return 0;
-  }
-
-  let count = 0;
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      count += countCompiledTests(join(directory, entry.name));
-    }
-    else if (entry.name.endsWith('.test.js')) {
-      count += 1;
-    }
-  }
-  return count;
-}
 
 /**
  * Fails the configuration as soon as the extension declares dependent
@@ -278,7 +234,7 @@ function defineChannel(label, version) {
     mocha: {
       ui: 'tdd',
       timeout: MOCHA_TEST_TIMEOUT_MS,
-      // A run that executes no test must be red, not a silent success.
+      // A run that executes no test (for example an empty or missing `out/test`) must be red, not a silent success.
       failZero: true,
     },
   };
@@ -287,8 +243,6 @@ function defineChannel(label, version) {
 
   return channel;
 }
-
-assertCompiledTestsExist();
 
 export default defineConfig([
   defineChannel('minimum', MINIMUM_VSCODE_VERSION),
