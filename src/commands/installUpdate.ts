@@ -10,6 +10,7 @@ import {
 } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
+  formatDependencySectionLabel,
   formatHeldBackDate,
   formatPackageCount,
   formatShellTaskCommandForLog,
@@ -31,6 +32,19 @@ import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packa
 const clientManager = new ClientManager();
 
 type PackageUpdate = { capability: ResolvedPackageItem; version: string; releaseAge?: ReleaseAgeState };
+
+type PackageUpdateGroup = { packageFilePath: string; updates: PackageUpdate[] };
+
+type PackageUpdateTaskOutcome
+  = | { readonly kind: 'completed' }
+    | { readonly kind: 'blocked' }
+    | { readonly kind: 'unverified' }
+    | { readonly kind: 'failed'; readonly message: string };
+
+type ImmediateUpdateRun
+  = | { readonly kind: 'completed' }
+    | { readonly kind: 'cancelled' }
+    | { readonly kind: 'stopped'; readonly message: string; readonly error?: unknown };
 
 interface InstallPackageSelection {
   readonly kind: 'selected';
@@ -124,7 +138,7 @@ export async function runResolvedPackageVersion(
       if (!await confirmRiskyUpdates([{ capability: beforeTask, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
         return;
       }
-      await runPackageUpdateTask(
+      const outcome = await runPackageUpdateTask(
         [{ capability: beforeTask, version }],
         client.buildUpdateCommand([{
           name: taskItem.packageName,
@@ -135,6 +149,13 @@ export async function runResolvedPackageVersion(
         provider,
         beforeTask.packageDirectory,
       );
+      if (outcome.kind === 'failed') {
+        showError(outcome.message);
+      }
+      else if (outcome.kind === 'unverified') {
+        await provider.loadPackages();
+        throw new Error(formatUnverifiedUpdateMessage());
+      }
     }
     catch (err) {
       if (activeCapability !== undefined) {
@@ -267,50 +288,25 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
         });
         const refreshed = await refreshUpdatedCapabilities(active, provider);
         if (refreshed === undefined) {
-          await provider.loadPackages();
-          throw new Error(vscode.l10n.t(
-            'Package update could not be verified. Refresh the package list and try again.',
-          ));
+          throw new Error(formatUnverifiedUpdateMessage());
         }
         refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
         return;
       }
 
-      for (const group of groupImmediateUpdatesByPackageFile(prevalidatedUpdates)) {
-        const checkedUpdates = await revalidateUpdates(group.updates, provider);
-        if (checkedUpdates === undefined) {
-          return;
-        }
-        const cwd = checkedUpdates[0].capability.packageDirectory;
-        const client = await clientManager.getClient(cwd);
-        const beforeTaskUpdates = await revalidateUpdates(checkedUpdates, provider);
-        if (beforeTaskUpdates === undefined) {
-          return;
-        }
-        if (!await confirmRiskyUpdates(beforeTaskUpdates, confirmedRiskyUpdates)) {
-          return;
-        }
-        const command = client.buildUpdateCommand(
-          beforeTaskUpdates.map(update => ({
-            name: update.capability.item.packageName,
-            version: update.version,
-            section: update.capability.identity.section,
-          })),
-        );
-        const completed = await runPackageUpdateTask(
-          beforeTaskUpdates,
-          command,
-          vscode.l10n.t('Update All Packages'),
-          provider,
-          cwd,
-        );
-        if (!completed) {
-          return;
-        }
+      const run = await runImmediateUpdateGroups(
+        groupImmediateUpdatesByPackageFile(prevalidatedUpdates),
+        confirmedRiskyUpdates,
+        provider,
+      );
+      if (run.kind === 'stopped') {
+        await reconcileAfterFailedUpdate(provider);
+        showError(run.message, run.error);
       }
     }
     catch (err) {
       activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
+      await reconcileAfterFailedUpdate(provider);
       showError(vscode.l10n.t('failed to update packages — {0}', err instanceof Error ? err.message : String(err)), err);
     }
   });
@@ -391,7 +387,7 @@ async function runPackageUpdateTask(
   taskName: string,
   provider: PackagesProvider,
   cwd?: string,
-): Promise<boolean> {
+): Promise<PackageUpdateTaskOutcome> {
   const activeUpdates = updates.map(update => ({
     ...update,
     capability: provider.markPackageUpdatingForCapability(update.capability, {
@@ -401,7 +397,7 @@ async function runPackageUpdateTask(
   }));
   if (activeUpdates.some(update => update.capability === undefined)) {
     resetActiveCapabilities(activeUpdates, provider);
-    return false;
+    return { kind: 'blocked' };
   }
   const active = activeUpdates as { capability: ResolvedPackageItem; version: string }[];
   logger.info(`Running update command: ${formatShellTaskCommandForLog(command)}`);
@@ -417,18 +413,131 @@ async function runPackageUpdateTask(
     const refreshed = await refreshUpdatedCapabilities(active, provider);
     if (refreshed === undefined) {
       active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-      await provider.loadPackages();
-      throw new Error(vscode.l10n.t(
-        'Package update could not be verified. Refresh the package list and try again.',
-      ));
+      return { kind: 'unverified' };
     }
     provider.invalidateUpdateCache();
     refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
-    return true;
+    return { kind: 'completed' };
   }
   active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-  showError(formatShellTaskFailureMessage(taskName, exitCode));
-  return false;
+  return { kind: 'failed', message: formatShellTaskFailureMessage(taskName, exitCode) };
+}
+
+/** Runs the groups in order; a stop reports which groups were updated and which were not. */
+async function runImmediateUpdateGroups(
+  groups: readonly PackageUpdateGroup[],
+  confirmedRiskyUpdates: Set<string>,
+  provider: PackagesProvider,
+): Promise<ImmediateUpdateRun> {
+  let completedCount = 0;
+  const stopped = (reason: string, error?: unknown): ImmediateUpdateRun => ({
+    kind: 'stopped',
+    message: formatPartialUpdateFailure(reason, groups, completedCount),
+    error,
+  });
+  try {
+    for (const group of groups) {
+      const checkedUpdates = await revalidateUpdates(group.updates, provider);
+      if (checkedUpdates === undefined) {
+        return stopped(vscode.l10n.t('the package list changed while updating.'));
+      }
+      const cwd = checkedUpdates[0].capability.packageDirectory;
+      const client = await clientManager.getClient(cwd);
+      const beforeTaskUpdates = await revalidateUpdates(checkedUpdates, provider);
+      if (beforeTaskUpdates === undefined) {
+        return stopped(vscode.l10n.t('the package list changed while updating.'));
+      }
+      if (!await confirmRiskyUpdates(beforeTaskUpdates, confirmedRiskyUpdates)) {
+        return { kind: 'cancelled' };
+      }
+      const command = client.buildUpdateCommand(
+        beforeTaskUpdates.map(update => ({
+          name: update.capability.item.packageName,
+          version: update.version,
+          section: update.capability.identity.section,
+        })),
+      );
+      const outcome = await runPackageUpdateTask(
+        beforeTaskUpdates,
+        command,
+        vscode.l10n.t('Update All Packages'),
+        provider,
+        cwd,
+      );
+      if (outcome.kind === 'blocked') {
+        return stopped(vscode.l10n.t('the package list changed while updating.'));
+      }
+      if (outcome.kind === 'unverified') {
+        // The task ran, so which roots changed is unknown until the reload; no per-root list.
+        return {
+          kind: 'stopped',
+          message: vscode.l10n.t('failed to update packages — {0}', formatUnverifiedUpdateMessage()),
+        };
+      }
+      if (outcome.kind === 'failed') {
+        return stopped(outcome.message);
+      }
+      completedCount += 1;
+    }
+  }
+  catch (err) {
+    return stopped(err instanceof Error ? err.message : String(err), err);
+  }
+  return { kind: 'completed' };
+}
+
+function formatUnverifiedUpdateMessage(): string {
+  return vscode.l10n.t('Package update could not be verified. Refresh the package list and try again.');
+}
+
+function formatPartialUpdateFailure(
+  reason: string,
+  groups: readonly PackageUpdateGroup[],
+  completedCount: number,
+): string {
+  const labels = formatUpdateGroupLabels(groups);
+  const updated = labels.slice(0, completedCount);
+  const notUpdated = labels.slice(completedCount);
+  const reasonSentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
+  const updatedSentence = updated.length === 0
+    ? vscode.l10n.t('Nothing was updated.')
+    : vscode.l10n.t('Updated: {0}.', updated.join(', '));
+  const notUpdatedSentence = vscode.l10n.t('Not updated: {0}.', notUpdated.join(', '));
+  return vscode.l10n.t(
+    'failed to update packages — {0} {1} {2}',
+    reasonSentence,
+    updatedSentence,
+    notUpdatedSentence,
+  );
+}
+
+function formatUpdateGroupLabels(groups: readonly PackageUpdateGroup[]): string[] {
+  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
+  const labelByPath = new Map(
+    resolvePackageFileLabels(
+      groups.map(group => group.packageFilePath),
+      folders,
+      getLocalizedPackageLabelFormatting(),
+    ).map(({ packageFilePath, owner }) => [packageFilePath, owner.label]),
+  );
+  return groups.map((group) => {
+    const label = labelByPath.get(group.packageFilePath) ?? group.packageFilePath;
+    const hasSiblingGroup = groups.some(other => other !== group && other.packageFilePath === group.packageFilePath);
+    return hasSiblingGroup
+      ? `${label} (${formatDependencySectionLabel(group.updates[0].capability.identity.section)})`
+      : label;
+  });
+}
+
+/** Drops the update cache and re-reads manifests; a reload failure is logged, never raised. */
+async function reconcileAfterFailedUpdate(provider: PackagesProvider): Promise<void> {
+  try {
+    provider.invalidateUpdateCache();
+    await provider.loadPackages();
+  }
+  catch (reconcileErr) {
+    logger.error('Failed to reconcile package state after a failed Update All.', reconcileErr);
+  }
 }
 
 function resetActiveCapabilities(
@@ -462,7 +571,7 @@ async function refreshUpdatedCapabilities(
 
 function groupDeferredUpdatesByPackageFile(
   updates: readonly PackageUpdate[],
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
+): PackageUpdateGroup[] {
   return groupUpdatesByPackageFile(updates, update => update.capability.packageFilePath);
 }
 
@@ -485,7 +594,7 @@ function toDeferredUpdateFileGroups(active: readonly PackageUpdate[]): PackageFi
 
 function groupImmediateUpdatesByPackageFile(
   updates: readonly PackageUpdate[],
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
+): PackageUpdateGroup[] {
   return groupUpdatesByPackageFile(updates, (update) => {
     return `${update.capability.packageFilePath}\0${update.capability.identity.section}`;
   });
@@ -494,7 +603,7 @@ function groupImmediateUpdatesByPackageFile(
 function groupUpdatesByPackageFile(
   updates: readonly PackageUpdate[],
   getGroupKey: (update: PackageUpdate) => string,
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
+): PackageUpdateGroup[] {
   const byKey = new Map<string, PackageUpdate[]>();
   for (const update of updates) {
     const groupKey = getGroupKey(update);
