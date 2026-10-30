@@ -10,7 +10,7 @@ import {
   buildArtifactSbom,
   buildNormalizedManifest,
   mainReleaseCandidate,
-  parsePackagedIdentity,
+  parseExtensionIdentity,
   parseReleaseCandidateArgs,
   readRuntimeDependencies,
   readVsixArchive,
@@ -65,7 +65,7 @@ async function createCandidateFixture(): Promise<{ root: string; artifact: strin
   if (packageEntry === undefined) {
     throw new Error('fixture package manifest missing');
   }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const identity = parseExtensionIdentity(packageEntry.bytes);
   const packagedManifest = JSON.parse(new TextDecoder('utf-8').decode(packageEntry.bytes)) as unknown;
   const runtimeDependencies = readRuntimeDependencies(packagedManifest);
   const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);

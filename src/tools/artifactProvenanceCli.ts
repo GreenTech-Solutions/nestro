@@ -1,19 +1,18 @@
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { normalizeArtifactOutDir } from './artifactOutDir';
 import {
   ARTIFACT_PROVENANCE_FILE,
   ARTIFACT_SBOM_FILE,
   buildArtifactProvenance,
-  buildArtifactSbom,
-  parsePackagedIdentity,
-  readRuntimeDependencies,
-  selectDeliveredRuntimeFiles,
 } from './artifactProvenance';
-import { readDigestSidecar, readEvidenceFile } from './evidenceFiles';
-import { findNormalizedManifestViolation } from './normalizedManifest';
+import type { ArtifactProvenanceInput } from './artifactProvenance';
+import { buildArtifactSbom } from './artifactSbom';
+import { readVerifiedVsix } from './evidenceBundle';
+import { readEvidenceFile } from './evidenceFiles';
+import type { CiEvidence } from './evidenceFiles';
+import { readPackagedSbomInputs } from './packagedRuntime';
 import { bundleFileName, EVIDENCE_FILE, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
-import { normalizeArtifactOutDir } from './verifyVsix';
-import { readVsixArchive } from './vsixArchive';
 import { runCliAsEntry } from './cliBootstrap';
 import { compareCodeUnits, describeError, sha256Hex } from '../shared';
 
@@ -30,14 +29,7 @@ export interface ArtifactProvenanceEnvironment {
   readonly signerWorkflow?: string;
 }
 
-function parseJson(bytes: Uint8Array, label: string): unknown {
-  try {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-  }
-  catch (error) {
-    throw new Error(`${label} is not valid JSON: ${describeError(error)}`, { cause: error });
-  }
-}
+type ProvenanceMetadata = Pick<ArtifactProvenanceInput, 'sourceSha' | 'ciRunId' | 'ciRunAttempt' | 'eventName' | 'repository' | 'signerWorkflow'>;
 
 function requireEnvironment(value: string | undefined, fallback: string, label: string): string {
   const result = value ?? fallback;
@@ -54,67 +46,28 @@ export function parseArtifactProvenanceArgs(argv: readonly string[]): ArtifactPr
   return { artifactDir: normalizeArtifactOutDir(argv[1]) };
 }
 
-export async function writeArtifactProvenanceBundle(
-  cwd: string,
-  artifactDir: string,
-  environment: ArtifactProvenanceEnvironment = {},
-): Promise<{ readonly sourceSha: string; readonly vsixFile: string }> {
-  const resolvedDir = resolve(cwd, artifactDir);
-  const entries = await readdir(resolvedDir);
+/** Requires the directory to hold exactly the verified VSIX, evidence, manifest and digest, and returns the VSIX name. */
+async function findVerifiedVsixFile(artifactDir: string): Promise<string> {
+  const entries = await readdir(artifactDir);
   const vsixFiles = entries.filter(entry => VSIX_FILE_PATTERN.test(entry));
   if (vsixFiles.length !== 1) {
     throw new Error(`artifact directory must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = vsixFiles[0];
-  const expectedBaseEntries = [
+  const expectedEntries = [
     vsixFile,
     bundleFileName('manifest', vsixFile),
     bundleFileName('digest', vsixFile),
     EVIDENCE_FILE,
   ].sort(compareCodeUnits);
-  const actualEntries = [...entries].sort(compareCodeUnits);
-  if (JSON.stringify(actualEntries) !== JSON.stringify(expectedBaseEntries)) {
+  if (JSON.stringify([...entries].sort(compareCodeUnits)) !== JSON.stringify(expectedEntries)) {
     throw new Error('artifact directory must contain exactly the verified VSIX, evidence, normalized manifest and digest');
   }
+  return vsixFile;
+}
 
-  const evidence = await readEvidenceFile(resolvedDir);
-  if (evidence.vsixFile !== vsixFile) {
-    throw new Error(`${EVIDENCE_FILE} VSIX filename does not match the artifact directory`);
-  }
-  const vsixBytes = await readFile(join(resolvedDir, vsixFile));
-  const artifactSha256 = sha256Hex(vsixBytes);
-  if (artifactSha256 !== evidence.vsixSha256) {
-    throw new Error(`VSIX bytes do not match ${EVIDENCE_FILE} digest`);
-  }
-  const sidecarDigest = await readDigestSidecar(resolvedDir, vsixFile);
-  if (sidecarDigest !== artifactSha256) {
-    throw new Error('VSIX digest sidecar does not match the artifact bytes');
-  }
-  const archiveEntries = readVsixArchive(vsixBytes);
-  const manifestFile = bundleFileName('manifest', vsixFile);
-  const manifestContents = await readFile(join(resolvedDir, manifestFile), 'utf8');
-  const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
-  if (manifestViolation !== undefined) {
-    throw new Error(manifestViolation);
-  }
-  const packagedManifestEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
-  if (packagedManifestEntry === undefined) {
-    throw new Error('VSIX must contain extension/package.json for the SBOM');
-  }
-  const packagedManifest = parseJson(packagedManifestEntry.bytes, 'extension/package.json');
-  const identity = parsePackagedIdentity(packagedManifestEntry.bytes);
-  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
-  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
-  const sbom = buildArtifactSbom({
-    identity,
-    artifactFile: vsixFile,
-    artifactSha256,
-    runtimeFiles,
-    dependencies: runtimeDependencies.dependencies,
-    optionalDependencies: runtimeDependencies.optionalDependencies,
-  });
-  const sbomContents = `${JSON.stringify(sbom, undefined, 2)}\n`;
-  const sbomSha256 = sha256Hex(new TextEncoder().encode(sbomContents));
+/** Resolves the CI identity from the environment, which must agree with `evidence.json`. */
+function readProvenanceMetadata(environment: ArtifactProvenanceEnvironment, evidence: CiEvidence): ProvenanceMetadata {
   const sourceSha = requireEnvironment(environment.sourceSha, evidence.sourceSha, 'PROVENANCE_SOURCE_SHA');
   const ciRunId = requireEnvironment(environment.ciRunId, evidence.runId, 'PROVENANCE_CI_RUN_ID');
   const ciRunAttempt = requireEnvironment(environment.ciRunAttempt, evidence.runAttempt, 'PROVENANCE_CI_RUN_ATTEMPT');
@@ -131,31 +84,46 @@ export async function writeArtifactProvenanceBundle(
     `${repository}/${RELEASE_CONTRACT.workflows.signerPath}`,
     'PROVENANCE_SIGNER_WORKFLOW',
   );
-  const provenance = buildArtifactProvenance({
-    sourceSha,
-    ciRunId,
-    ciRunAttempt,
-    eventName,
-    repository,
-    signerWorkflow,
+  return { sourceSha, ciRunId, ciRunAttempt, eventName, repository, signerWorkflow };
+}
+
+export async function writeArtifactProvenanceBundle(
+  cwd: string,
+  artifactDir: string,
+  environment: ArtifactProvenanceEnvironment = {},
+): Promise<{ readonly sourceSha: string; readonly vsixFile: string }> {
+  const resolvedDir = resolve(cwd, artifactDir);
+  const vsixFile = await findVerifiedVsixFile(resolvedDir);
+  const evidence = await readEvidenceFile(resolvedDir);
+  if (evidence.vsixFile !== vsixFile) {
+    throw new Error(`${EVIDENCE_FILE} VSIX filename does not match the artifact directory`);
+  }
+  const vsix = await readVerifiedVsix(resolvedDir, evidence);
+  const sbomContents = `${JSON.stringify(buildArtifactSbom({
+    ...readPackagedSbomInputs(vsix.archiveEntries),
     artifactFile: vsixFile,
-    artifactSha256,
-    manifestFile,
-    manifestSha256: sha256Hex(new TextEncoder().encode(manifestContents)),
+    artifactSha256: evidence.vsixSha256,
+  }), undefined, 2)}\n`;
+  const metadata = readProvenanceMetadata(environment, evidence);
+  const provenance = buildArtifactProvenance({
+    ...metadata,
+    artifactFile: vsixFile,
+    artifactSha256: evidence.vsixSha256,
+    manifestFile: vsix.manifestFile,
+    manifestSha256: vsix.manifestSha256,
     sbomFile: ARTIFACT_SBOM_FILE,
-    sbomSha256,
+    sbomSha256: sha256Hex(sbomContents),
   });
-  const provenanceContents = `${JSON.stringify(provenance, undefined, 2)}\n`;
   const generated = [join(resolvedDir, ARTIFACT_SBOM_FILE), join(resolvedDir, ARTIFACT_PROVENANCE_FILE)];
   try {
     await writeFile(generated[0], sbomContents, 'utf8');
-    await writeFile(generated[1], provenanceContents, 'utf8');
+    await writeFile(generated[1], `${JSON.stringify(provenance, undefined, 2)}\n`, 'utf8');
   }
   catch (error) {
     await Promise.all(generated.map(file => rm(file, { force: true })));
     throw error;
   }
-  return { sourceSha, vsixFile };
+  return { sourceSha: metadata.sourceSha, vsixFile };
 }
 
 export async function mainArtifactProvenance(

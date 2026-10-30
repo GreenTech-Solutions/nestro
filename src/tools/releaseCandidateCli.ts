@@ -2,25 +2,14 @@ import { execFile } from 'node:child_process';
 import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import {
-  ARTIFACT_PROVENANCE_FILE,
-  ARTIFACT_SBOM_FILE,
-  findArtifactProvenanceViolation,
-  findArtifactSbomViolation,
-  parsePackagedIdentity,
-  readRuntimeDependencies,
-  selectDeliveredRuntimeFiles,
-} from './artifactProvenance';
-import { COMMIT_SHA_PATTERN, POSITIVE_INTEGER_PATTERN, readDigestSidecar, readEvidenceFile } from './evidenceFiles';
-import { findNormalizedManifestViolation } from './normalizedManifest';
+import { normalizeArtifactOutDir } from './artifactOutDir';
+import { verifyEvidenceBundle } from './evidenceBundle';
+import type { ProvenanceOrigin } from './evidenceBundle';
+import { COMMIT_SHA_PATTERN, POSITIVE_INTEGER_PATTERN, readEvidenceFile } from './evidenceFiles';
 import { buildReleaseCandidate } from './releaseCandidate';
-import { bundleFileName, bundleMemberNames, CANDIDATE_FILE, EVIDENCE_FILE, RELEASE_CONTRACT } from './releaseContract';
-import type { CiEvidence } from './evidenceFiles';
-import type { ReleaseCandidateArtifact } from './releaseCandidate';
-import { normalizeArtifactOutDir } from './verifyVsix';
-import { readVsixArchive } from './vsixArchive';
+import { CANDIDATE_FILE, EVIDENCE_FILE, RELEASE_CONTRACT } from './releaseContract';
 import { runCliAsEntry } from './cliBootstrap';
-import { compareCodeUnits, describeError, isRecord, sha256Hex } from '../shared';
+import { describeError, isRecord } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
@@ -81,92 +70,11 @@ async function readPackageVersion(cwd: string): Promise<string> {
   return value.version;
 }
 
-function parseJson(bytes: Uint8Array, label: string): unknown {
-  try {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-  }
-  catch (error) {
-    throw new Error(`${label} is not valid JSON`, { cause: error });
-  }
-}
-
-async function verifyEvidenceFiles(
-  artifactDir: string,
-  evidence: CiEvidence,
-  environment: NodeJS.ProcessEnv,
-): Promise<ReleaseCandidateArtifact> {
-  const entries = (await readdir(artifactDir)).sort(compareCodeUnits);
-  const expectedEntries = bundleMemberNames('verify', evidence.vsixFile).sort(compareCodeUnits);
-  if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) {
-    throw new Error('verified evidence must contain exactly the six-member provenance bundle');
-  }
-  const vsixBytes = await readFile(resolve(artifactDir, evidence.vsixFile));
-  const actualDigest = sha256Hex(vsixBytes);
-  if (actualDigest !== evidence.vsixSha256) {
-    throw new Error(`candidate VSIX digest does not match ${EVIDENCE_FILE}`);
-  }
-  const digestFile = bundleFileName('digest', evidence.vsixFile);
-  if (await readDigestSidecar(artifactDir, evidence.vsixFile) !== evidence.vsixSha256) {
-    throw new Error(`candidate evidence digest sidecar does not match ${EVIDENCE_FILE}`);
-  }
-  const archiveEntries = readVsixArchive(vsixBytes);
-  const manifestFile = bundleFileName('manifest', evidence.vsixFile);
-  const manifestContents = await readFile(resolve(artifactDir, manifestFile), 'utf8');
-  const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
-  if (manifestViolation !== undefined) {
-    throw new Error(manifestViolation);
-  }
-  const packagedManifest = archiveEntries.find(entry => entry.path === 'extension/package.json');
-  if (packagedManifest === undefined) {
-    throw new Error('VSIX must contain extension/package.json');
-  }
-  const identity = parsePackagedIdentity(packagedManifest.bytes);
-  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
-  const runtimeDependencies = readRuntimeDependencies(parseJson(packagedManifest.bytes, 'extension/package.json'));
-  const manifestSha256 = sha256Hex(new TextEncoder().encode(manifestContents));
-  const sbomBytes = await readFile(resolve(artifactDir, ARTIFACT_SBOM_FILE));
-  const sbomSha256 = sha256Hex(sbomBytes);
-  const sbom = parseJson(sbomBytes, ARTIFACT_SBOM_FILE);
-  const sbomViolation = findArtifactSbomViolation(sbom, {
-    identity,
-    artifactFile: evidence.vsixFile,
-    artifactSha256: evidence.vsixSha256,
-    runtimeFiles,
-    dependencies: runtimeDependencies.dependencies,
-    optionalDependencies: runtimeDependencies.optionalDependencies,
-  });
-  if (sbomViolation !== undefined) {
-    throw new Error(sbomViolation);
-  }
-  const provenanceBytes = await readFile(resolve(artifactDir, ARTIFACT_PROVENANCE_FILE));
-  const provenance = parseJson(provenanceBytes, ARTIFACT_PROVENANCE_FILE);
-  const provenanceViolation = findArtifactProvenanceViolation(provenance, {
-    sourceSha: evidence.sourceSha,
-    ciRunId: evidence.runId,
-    ciRunAttempt: evidence.runAttempt,
-    eventName: 'push',
-    repository: environment.RELEASE_REPOSITORY ?? 'local/repository',
-    signerWorkflow: environment.RELEASE_SIGNER_WORKFLOW ?? `${environment.RELEASE_REPOSITORY ?? 'local/repository'}/${RELEASE_CONTRACT.workflows.signerPath}`,
-    artifactFile: evidence.vsixFile,
-    artifactSha256: evidence.vsixSha256,
-    manifestFile,
-    manifestSha256,
-    sbomFile: ARTIFACT_SBOM_FILE,
-    sbomSha256,
-  });
-  if (provenanceViolation !== undefined) {
-    throw new Error(provenanceViolation);
-  }
+function resolveProvenanceOrigin(environment: NodeJS.ProcessEnv): ProvenanceOrigin {
+  const repository = environment.RELEASE_REPOSITORY ?? 'local/repository';
   return {
-    vsixFile: evidence.vsixFile,
-    digestFile,
-    digest: evidence.vsixSha256,
-    manifestFile,
-    manifestSha256,
-    sbomFile: ARTIFACT_SBOM_FILE,
-    sbomSha256,
-    provenanceFile: ARTIFACT_PROVENANCE_FILE,
-    provenanceSha256: sha256Hex(provenanceBytes),
+    repository,
+    signerWorkflow: environment.RELEASE_SIGNER_WORKFLOW ?? `${repository}/${RELEASE_CONTRACT.workflows.signerPath}`,
   };
 }
 
@@ -198,7 +106,7 @@ export async function mainReleaseCandidate(argv: readonly string[], cwd: string,
     if (candidateRunId === undefined || !POSITIVE_INTEGER_PATTERN.test(candidateRunId)) {
       throw new Error('RELEASE_CANDIDATE_RUN_ID must be a positive integer');
     }
-    const artifact = await verifyEvidenceFiles(resolvedArtifactDir, evidence, env);
+    const artifact = await verifyEvidenceBundle(resolvedArtifactDir, evidence, resolveProvenanceOrigin(env));
     const packageVersion = await readPackageVersion(cwd);
     const existingTags = await listExistingTags(cwd);
     const notes = await readReleaseNotes(cwd, packageVersion);

@@ -41,6 +41,7 @@ export default defineConfig({
 				'src/utils/logger.ts': { statements: 100, branches: 83, functions: 100, lines: 100 },
 				// VSIX-tool floors use each file's clean-allowlist measurement, rounded down.
 				'src/tools/vsixPolicy.ts': { statements: 98, branches: 97, functions: 100, lines: 98 },
+				'src/tools/vsixBundle.ts': { statements: 98, branches: 96, functions: 100, lines: 98 },
 				'src/tools/verifyVsix.ts': { statements: 100, branches: 98, functions: 100, lines: 100 },
 				'src/tools/verifyVsixCli.ts': { statements: 100, branches: 94, functions: 100, lines: 100 },
 				// Dependency- and signature-audit files stay pinned at their measured 100% floors.

@@ -2,11 +2,11 @@ import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { normalizeArtifactOutDir } from './artifactOutDir';
 import { parsePrepareReleaseConfig } from './releaseAnalyzer';
 import type { RawCommit } from './releaseAnalyzer';
 import { runReleasePrepare } from './releasePrepare';
 import type { ReleasePrepareIo } from './releasePrepare';
-import { normalizeArtifactOutDir } from './verifyVsix';
 import { runCliAsEntry } from './cliBootstrap';
 import { describeError, readOptionalFile } from '../shared';
 

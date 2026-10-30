@@ -1,29 +1,14 @@
-import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import {
-  ARTIFACT_PROVENANCE_FILE,
-  ARTIFACT_SBOM_FILE,
-  bundleFileName,
-  bundleMemberNames,
-  findArtifactProvenanceViolation,
-  findArtifactSbomViolation,
-  findNormalizedManifestViolation,
-  parsePackagedIdentity,
-  readDigestSidecar,
-  readEvidenceFile,
-  readRuntimeDependencies,
-  selectDeliveredRuntimeFiles,
-} from '../tools';
-import type { ArtifactProvenance } from '../tools';
-import { readVsixArchive } from '../tools';
+import { readEvidenceFile, verifyEvidenceBundle } from '../tools';
 import {
   downloadAndUnzipVSCode,
   runTests,
   runVSCodeCommand,
 } from '@vscode/test-electron';
 import { removeFixturePath } from './fixtures/removeFixturePath';
-import { compareCodeUnits, sha256Hex } from '../shared';
+import { describeError } from '../shared';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SOCKET_FILE_NAME_LENGTH = '1.12-main.sock'.length;
@@ -85,82 +70,16 @@ export function parsePackagedSmokeArgs(argv: readonly string[]): PackagedSmokeOp
 
 export async function verifyDownloadedEvidence(artifactDir: string, expectedSha: string): Promise<string> {
   const canonicalDir = await realpath(artifactDir);
-  const entries = await readdir(canonicalDir);
-  const vsixFiles = entries.filter(entry => entry.endsWith('.vsix'));
+  const vsixFiles = (await readdir(canonicalDir)).filter(entry => entry.endsWith('.vsix'));
   if (vsixFiles.length !== 1) {
     throw new Error(`downloaded artifact must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = basename(vsixFiles[0]);
-  const expectedEntries = bundleMemberNames('verify', vsixFile).sort(compareCodeUnits);
-  if (entries.slice().sort(compareCodeUnits).join('\n') !== expectedEntries.join('\n')) {
-    throw new Error('downloaded artifact must contain exactly the six-member provenance bundle');
-  }
   const evidence = await readEvidenceFile(canonicalDir);
   if (evidence.sourceSha !== expectedSha || evidence.releaseEligible !== false || evidence.vsixFile !== vsixFile) {
     throw new Error('downloaded evidence identity does not match the exact tested SHA or evidence-only contract');
   }
-  const vsixBytes = await readFile(join(canonicalDir, vsixFile));
-  const archiveEntries = readVsixArchive(vsixBytes);
-  const manifestContents = await readFile(join(canonicalDir, bundleFileName('manifest', vsixFile)), 'utf8');
-  const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
-  if (manifestViolation !== undefined) {
-    throw new Error(manifestViolation);
-  }
-  const packageEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
-  if (packageEntry === undefined) {
-    throw new Error('downloaded VSIX must contain extension/package.json');
-  }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
-  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
-  const packagedManifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(packageEntry.bytes)) as unknown;
-  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
-  const sbomBytes = await readFile(join(canonicalDir, ARTIFACT_SBOM_FILE));
-  const sbom = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(sbomBytes)) as unknown;
-  const sbomViolation = findArtifactSbomViolation(sbom, {
-    identity,
-    artifactFile: vsixFile,
-    artifactSha256: evidence.vsixSha256,
-    runtimeFiles,
-    dependencies: runtimeDependencies.dependencies,
-    optionalDependencies: runtimeDependencies.optionalDependencies,
-  });
-  if (sbomViolation !== undefined) {
-    throw new Error(sbomViolation);
-  }
-  const provenanceBytes = await readFile(join(canonicalDir, ARTIFACT_PROVENANCE_FILE));
-  let provenance: unknown;
-  try {
-    provenance = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(provenanceBytes)) as unknown;
-  }
-  catch (error) {
-    throw new Error(`provenance.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-  }
-  const provenanceViolation = findArtifactProvenanceViolation(provenance);
-  if (provenanceViolation !== undefined) {
-    throw new Error(provenanceViolation);
-  }
-  const provenanceDocument = provenance as ArtifactProvenance;
-  const manifestSha256 = sha256Hex(manifestContents);
-  const sbomSha256 = sha256Hex(sbomBytes);
-  if (provenanceDocument.sourceSha !== evidence.sourceSha
-    || provenanceDocument.ciRunId !== evidence.runId
-    || provenanceDocument.ciRunAttempt !== evidence.runAttempt
-    || provenanceDocument.eventName !== evidence.eventName
-    || provenanceDocument.artifact.file !== vsixFile
-    || provenanceDocument.artifact.sha256 !== evidence.vsixSha256
-    || provenanceDocument.artifact.manifestFile !== bundleFileName('manifest', vsixFile)
-    || provenanceDocument.artifact.manifestSha256 !== manifestSha256
-    || provenanceDocument.artifact.sbomFile !== ARTIFACT_SBOM_FILE
-    || provenanceDocument.artifact.sbomSha256 !== sbomSha256
-    || provenanceDocument.attestation.subjectName !== vsixFile
-    || provenanceDocument.attestation.subjectDigest !== `sha256:${evidence.vsixSha256}`) {
-    throw new Error('downloaded provenance does not link the exact evidence, VSIX, manifest, SBOM and attestation subject');
-  }
-  const sidecarDigest = await readDigestSidecar(canonicalDir, vsixFile);
-  const actualDigest = sha256Hex(vsixBytes);
-  if (sidecarDigest !== actualDigest || evidence.vsixSha256 !== actualDigest) {
-    throw new Error('downloaded VSIX digest does not match its sidecar and evidence identity');
-  }
+  await verifyEvidenceBundle(canonicalDir, evidence);
   return join(canonicalDir, vsixFile);
 }
 
@@ -321,7 +240,7 @@ export function buildVsixInstallArgs(
 if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
   void runPackagedSmoke(parsePackagedSmokeArgs(process.argv.slice(2)), process.cwd())
     .catch((error: unknown) => {
-      process.stderr.write(`Packaged smoke failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`Packaged smoke failed: ${describeError(error)}\n`);
       process.exitCode = 1;
     });
 }

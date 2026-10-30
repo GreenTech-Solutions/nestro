@@ -1,4 +1,4 @@
-import { normalizeArtifactOutDir } from './verifyVsix';
+import { normalizeArtifactOutDir } from './artifactOutDir';
 import { writeCiEvidence } from './ciEvidence';
 import { runCliAsEntry } from './cliBootstrap';
 import { describeError } from '../shared';

@@ -7,7 +7,7 @@ import {
   buildArtifactProvenance,
   buildArtifactSbom,
   buildNormalizedManifest,
-  parsePackagedIdentity,
+  parseExtensionIdentity,
   readRuntimeDependencies,
   readVsixArchive,
   selectDeliveredRuntimeFiles,
@@ -67,7 +67,7 @@ async function createEvidenceDir(overrides: EvidenceEventOverrides = {}): Promis
   if (packageEntry === undefined) {
     throw new Error('fixture package manifest missing');
   }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const identity = parseExtensionIdentity(packageEntry.bytes);
   const packagedManifest = JSON.parse(new TextDecoder().decode(packageEntry.bytes)) as unknown;
   const runtimeDependencies = readRuntimeDependencies(packagedManifest);
   const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);

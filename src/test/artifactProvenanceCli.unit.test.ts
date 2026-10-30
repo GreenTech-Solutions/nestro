@@ -187,7 +187,7 @@ describe('artifact provenance CLI', () => {
     const invalidIdentity = await createProvenanceFixture(cleanVsixFixtureEntries().map(entry => entry.path === 'extension/package.json'
       ? { ...entry, content: '{}' }
       : entry));
-    await expectMainFailure(invalidIdentity.root, 'must contain non-empty name');
+    await expectMainFailure(invalidIdentity.root, 'non-empty string "name"');
 
     const invalidDependencies = await createProvenanceFixture(cleanVsixFixtureEntries().map(entry => entry.path === 'extension/package.json'
       ? { ...entry, content: JSON.stringify({ name: 'nestro', version: '9.9.9', publisher: 'greentech-solutions', dependencies: [] }) }
