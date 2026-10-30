@@ -32,7 +32,6 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/tools/verifyVsix.ts': { maxLines: 436 },
   'src/tools/verifyVsixCli.ts': { maxFunctionLines: 150 },
   'src/tools/vsixArchive.ts': { maxFunctionLines: 96 },
-  'src/tools/vsixManifest.ts': { maxLines: 584, maxFunctionLines: 75 },
   'src/tools/vsixPolicy.ts': { maxLines: 473 },
   'src/utils/auditClient.ts': { maxLines: 445, maxFunctionLines: 88 },
   'src/utils/bunAuditClient.ts': { maxFunctionLines: 66 },
