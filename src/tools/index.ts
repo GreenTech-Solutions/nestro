@@ -4,7 +4,7 @@ export { mainArtifactProvenance, parseArtifactProvenanceArgs } from './artifactP
 export { describeDependencyAdvisory, evaluateDependencyAudit, FULL_AUDIT_ARGS, GRAPH_BLOCKING_SEVERITY, parseDependencyAuditArgs, parseDependencyAuditReport, PRODUCTION_AUDIT_ARGS, PRODUCTION_BLOCKING_SEVERITY, runDependencyAuditCli } from './auditDependencies';
 export type { AuditSeverity, DependencyAdvisory, DependencyAuditCliDependencies, DependencyAuditExecution, ScopedDependencyAdvisory } from './auditDependencies';
 export { createNodeDependencyAuditCliDependencies, mainDependencyAudit } from './auditDependenciesCli';
-export { evaluateSignatureAudit, MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION, parseSignatureAuditArgs, resolvePnpmExecutable, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
+export { evaluateSignatureAudit, MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION, parseSignatureAuditArgs, resolvePnpmLauncher, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 export type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
 export { createNodePnpmRunner, createNodeSignatureAuditCliDependencies, createNodeSignatureAuditRunner, mainSignatureAudit } from './auditSignaturesCli';
 export { createCiEvidence, writeCiEvidence } from './ciEvidence';

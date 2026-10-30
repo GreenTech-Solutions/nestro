@@ -7,10 +7,15 @@ import {
   yarnVersionProbeMaxBufferBytes,
   yarnVersionProbeTimeoutMs,
 } from '../utils';
+import { resolveSpawnTarget } from '../utils/processRunner';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
+vi.mock('../utils/processRunner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/processRunner')>();
+  return { ...actual, resolveSpawnTarget: vi.fn(actual.resolveSpawnTarget) };
+});
 
 type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
 
@@ -148,6 +153,43 @@ describe('resolveYarnFamily()', () => {
       },
       expect.any(Function),
     );
+  });
+
+  it('probes through the resolved Windows launcher with verbatim cmd.exe arguments', async () => {
+    mockWorkspaceFiles({ [`${root}/package.json`]: '{}' });
+    vi.mocked(resolveSpawnTarget).mockReturnValueOnce({
+      kind: 'resolved',
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', '""C:\\yarn\\yarn.cmd" --version"'],
+      windowsVerbatimArguments: true,
+    });
+    mockVersionProbe(null, '1.22.19\n');
+
+    await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'classic', source: 'version-probe' });
+    expect(resolveSpawnTarget).toHaveBeenCalledWith('yarn', ['--version']);
+    expect(execFile).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '""C:\\yarn\\yarn.cmd" --version"'],
+      {
+        cwd: root,
+        maxBuffer: yarnVersionProbeMaxBufferBytes,
+        timeout: yarnVersionProbeTimeoutMs,
+        windowsVerbatimArguments: true,
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('keeps the family unknown without probing when no Yarn launcher can be resolved', async () => {
+    mockWorkspaceFiles({ [`${root}/package.json`]: '{}' });
+    vi.mocked(resolveSpawnTarget).mockReturnValueOnce({
+      kind: 'unresolved',
+      reason: 'command-not-found',
+      message: 'yarn was not found on PATH.',
+    });
+
+    await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'unknown', source: 'version-probe' });
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it.each([

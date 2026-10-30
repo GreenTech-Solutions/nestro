@@ -46,13 +46,25 @@ describe('createNodeSignatureAuditRunner()', () => {
     });
   });
 
-  it('uses the Windows launcher shim, which execFile cannot start without its extension', async () => {
+  it('starts pnpm through a shell on Windows, where its launcher is a .cmd shim', async () => {
     execFileAsyncMock.mockResolvedValue({ stdout: VERIFIED_REPORT, stderr: '' });
 
     const result = await createNodeSignatureAuditRunner(CWD, 'win32')();
 
-    expect(execFileAsyncMock).toHaveBeenCalledWith('pnpm.cmd', expect.anything(), expect.anything());
-    expect(result.command).toBe('pnpm.cmd audit signatures --json');
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'pnpm',
+      ['audit', 'signatures', '--json'],
+      expect.objectContaining({ shell: true }),
+    );
+    expect(result.command).toBe('pnpm audit signatures --json');
+  });
+
+  it('starts pnpm without a shell elsewhere', async () => {
+    execFileAsyncMock.mockResolvedValue({ stdout: VERIFIED_REPORT, stderr: '' });
+
+    await createNodeSignatureAuditRunner(CWD, 'linux')();
+
+    expect(execFileAsyncMock).toHaveBeenCalledWith('pnpm', expect.anything(), expect.objectContaining({ shell: false }));
   });
 
   it.each([
