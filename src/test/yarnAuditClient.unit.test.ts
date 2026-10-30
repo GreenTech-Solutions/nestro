@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
-  AUDIT_PROCESS_TIMEOUT_MS,
   parseYarnAuditOutcome,
   runYarnAudit,
   runYarnAuditOutcome,

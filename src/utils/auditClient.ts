@@ -12,25 +12,12 @@ import type {
   AuditFixAvailability,
   AuditVia,
 } from './auditReport';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS } from '../shared';
 import type { PackageManager } from '../shared';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 export type AuditPackageManager = PackageManager;
-
-/**
- * Generous but finite: Yarn's full-graph recursive audit and slow registries can legitimately
- * take a while, but Node's default (`timeout: 0`, unbounded) is what let a stalled process
- * hold `Running audit…` forever.
- */
-export const AUDIT_PROCESS_TIMEOUT_MS = 120_000;
-
-/**
- * A large monorepo's audit JSON can comfortably exceed Node's 1MB `maxBuffer` default,
- * which would otherwise turn a valid large report into a false `overflow`. 20MB is a
- * deliberate, enforced bound.
- */
-export const AUDIT_PROCESS_MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 
 export interface AuditResult {
   vulnerabilities: Map<string, AuditSeverity>;

@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const MAX_CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
+/** Child-output ceiling shared by the CLIs that spawn `pnpm` / `vsce`. */
+export const MAX_CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const execFileAsync = promisify(execFile);
 

@@ -26,14 +26,14 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/test/verifyVsix.unit.test.ts': { maxLines: 885 },
   'src/tools/auditSignatures.ts': { maxFunctionLines: 77 },
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },
-  'src/utils/auditClient.ts': { maxLines: 445, maxFunctionLines: 88 },
+  'src/utils/auditClient.ts': { maxLines: 444, maxFunctionLines: 88 },
   'src/utils/bunAuditClient.ts': { maxFunctionLines: 66 },
   'src/utils/bunConfig.ts': { maxLines: 301, maxFunctionLines: 61 },
   'src/utils/metadataRunner.ts': { maxFunctionLines: 138 },
   'src/utils/processRunner.ts': { maxFunctionLines: 162 },
   'src/utils/registryClient.ts': { maxLines: 1313, maxFunctionLines: 90 },
   'src/utils/shellTask.ts': { maxFunctionLines: 77 },
-  'src/utils/yarnAuditClient.ts': { maxLines: 394 },
+  'src/utils/yarnAuditClient.ts': { maxLines: 393 },
 };
 
 const PRODUCT_LIMITS = { maxLines: 300, maxFunctionLines: 60 };

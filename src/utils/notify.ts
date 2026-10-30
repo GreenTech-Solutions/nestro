@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { logger, sanitizeLogText } from './logger';
+import { MAX_NOTIFICATION_LENGTH } from '../config';
 
-const MAX_NOTIFICATION_LENGTH = 240;
 const ABSOLUTE_PATH_PATTERN = /(^|[\s("'`])((?:\/(?!\/)|[A-Za-z]:[\\/])[^\s"'`<>(){}[\],;:!?]*)(?=$|[\s"'`<>(){}[\],;:!?])/g;
 
 export function showError(message: string, err?: unknown): void {

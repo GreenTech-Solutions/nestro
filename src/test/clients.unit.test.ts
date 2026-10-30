@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { BunClient, ClientManager, NpmClient, PnpmClient, YarnClient } from '../clients';
-import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../utils';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 

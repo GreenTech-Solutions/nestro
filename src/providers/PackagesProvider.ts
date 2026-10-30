@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
-import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
+import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings, WRITE_SUPPRESSION_RELEASE_MS } from '../config';
 import { uniqueStrings } from '../shared';
 import {
   createCheckCoordinator,
@@ -273,7 +273,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const timer = setTimeout(() => {
         this.writeSuppressionTimers.delete(timer);
         this.writeSuppressionDepth = Math.max(0, this.writeSuppressionDepth - 1);
-      }, 600);
+      }, WRITE_SUPPRESSION_RELEASE_MS);
       this.writeSuppressionTimers.add(timer);
     }
   }

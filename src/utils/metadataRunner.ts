@@ -1,8 +1,6 @@
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
-
-export const METADATA_REQUEST_TIMEOUT_MS = 15_000;
-export const METADATA_RESPONSE_MAX_BYTES = 5 * 1024 * 1024;
+import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
 
 export interface MetadataPrivateRegistryContext {
   privateRegistry?: boolean;

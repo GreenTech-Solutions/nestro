@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { DEFAULT_KILL_GRACE_PERIOD_MS } from '../config';
 import { describeError, getWindowsSystemExecutablePath, resolveSpawnTarget } from '../shared';
 
 export interface BoundedProcessOptions {
@@ -64,13 +65,6 @@ export type BoundedProcessOutcome
     | BoundedProcessAborted
     | BoundedProcessOverflow
     | BoundedProcessSpawnError;
-
-/**
- * Pause between the initial termination signal and the forceful escalation for a process
- * that ignores it. Governs only how long an already-bounded cleanup step may take, so a
- * conservative, short default is used and left overridable per call.
- */
-const DEFAULT_KILL_GRACE_PERIOD_MS = 2_000;
 
 /**
  * Classifies the run into a typed outcome: a non-`exit` outcome means the process was

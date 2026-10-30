@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getCheckUpdatesOnStartup, getDefaultFilter, getMonorepoGlob, getRunAuditOnStartup } from './config';
+import { getCheckUpdatesOnStartup, getDefaultFilter, getMonorepoGlob, getRunAuditOnStartup, PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from './config';
 import { FilterManager, isFilterType, PackagesProvider } from './providers';
 import {
   copyPackageNameCommand,
@@ -100,9 +100,6 @@ export function registerWorkspaceFoldersWatcher(
     }),
   );
 }
-
-/** Filesystem-event coalescing window: each event restarts the timer, so writes faster than this interval never trigger a reload. */
-export const PACKAGE_JSON_WATCHER_DEBOUNCE_MS = 500;
 
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,

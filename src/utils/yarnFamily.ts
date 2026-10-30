@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
+import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
 import { describeError, isRecord, PACKAGE_MANAGERS, parsePackageManagerField, resolveSpawnTarget, YARN_DIALECTS } from '../shared';
 
 const execFileAsync = promisify(execFile);
@@ -19,9 +20,6 @@ export interface YarnFamilyResolution {
   family: YarnFamily;
   source: YarnFamilySource;
 }
-
-export const yarnVersionProbeTimeoutMs = 5_000;
-export const yarnVersionProbeMaxBufferBytes = 8_192;
 
 /**
  * Resolves the Yarn command family for one already-selected project root. Explicit
@@ -121,8 +119,8 @@ async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResoluti
   try {
     const result = await execFileAsync(target.command, target.args, {
       cwd: projectRoot,
-      maxBuffer: yarnVersionProbeMaxBufferBytes,
-      timeout: yarnVersionProbeTimeoutMs,
+      maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+      timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
       ...(target.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
     }) as { stdout: string } | string;
     const stdout = typeof result === 'string' ? result : result.stdout;

@@ -21,10 +21,22 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 const CHECKOUT_ID = createHash('sha256').update(rootDir).digest('hex').slice(0, 8);
 
 /**
- * Lowest VS Code version the extension claims to support.
- * Must stay an exact patch and match `engines.vscode` / `@types/vscode`.
+ * Lowest VS Code version the extension claims to support, read from `engines.vscode`.
+ * The range must stay a caret on an exact patch (`^1.125.0`) and match `@types/vscode`.
  */
-const MINIMUM_VSCODE_VERSION = '1.125.0';
+function readMinimumVscodeVersion() {
+  const manifest = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+  const match = /^\^(\d+\.\d+\.\d+)$/.exec(manifest.engines?.vscode ?? '');
+  if (match === null) {
+    throw new Error(`engines.vscode must be a caret range on an exact patch version, got ${JSON.stringify(manifest.engines?.vscode)}`);
+  }
+  return match[1];
+}
+
+const MINIMUM_VSCODE_VERSION = readMinimumVscodeVersion();
+
+/** Per-test Mocha timeout inside the Extension Host. */
+const MOCHA_TEST_TIMEOUT_MS = 20_000;
 
 /** Glob handed to Mocha, relative to this file. */
 const COMPILED_TESTS_GLOB = 'out/test/**/*.test.js';
@@ -265,7 +277,7 @@ function defineChannel(label, version) {
     launchArgs: [`--user-data-dir=${userDataDir}`, `--extensions-dir=${extensionsDir}`],
     mocha: {
       ui: 'tdd',
-      timeout: 20000,
+      timeout: MOCHA_TEST_TIMEOUT_MS,
       // A run that executes no test must be red, not a silent success.
       failZero: true,
     },

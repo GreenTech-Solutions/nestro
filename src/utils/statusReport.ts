@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { MAX_DETAIL_LENGTH } from '../config';
 import { compareCodeUnits, redactCredentials, sanitizeInlineText } from '../shared';
 
 /** One failure captured by a package read, update check, or security audit. */
@@ -23,7 +24,6 @@ export interface StatusReportSnapshot {
   readonly fileLabels: readonly StatusReportFileLabel[];
 }
 
-const MAX_DETAIL_LENGTH = 2000;
 const FILE_URI_PATTERN = /\bfile:\/\/[^\s"'`<>(){}[\],;!?]+/giu;
 const ABSOLUTE_PATH_PATTERN = /(^|[\s("'`=])((?:\/(?!\/)|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>(){}[\],;:!?]*)/g;
 const REPORT_GENERIC_VALUE_MIN_LENGTH = 1;

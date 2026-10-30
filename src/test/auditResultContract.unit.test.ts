@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES } from '../config';
 import { FilterManager, PackagesProvider, StatusItem } from '../providers';
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
 } from '../utils';

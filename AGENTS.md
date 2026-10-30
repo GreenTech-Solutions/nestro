@@ -132,6 +132,7 @@ Bottom layer: imports only Node built-ins — never `vscode` or another subsyste
 ### Config (`src/config/`)
 Typed `nestro.*` settings: the only place that calls `vscode.workspace.getConfiguration()`. Sits between `shared` and `utils` (it may import `vscode` and `shared`; `utils` reads settings, so it cannot sit above `utils`). Every `get*()` reads the setting live at call time and never caches; `SETTING_DEFAULTS` mirrors `contributes.configuration` in `package.json`, checked by `src/test/configurationManifest.unit.test.ts`.
 - `settings.ts` — `SETTING_DEFAULTS`, one getter per setting, and `getUpdatePolicySettings()` (target, pre-release flag, minimum release age); an out-of-enum `updateTarget` / `defaultFilter` or an invalid `minimumReleaseAgeDays` falls back to the default
+- `limits.ts` — every extension timeout, size and length limit (metadata, audit, `npm-check-updates` and Yarn probe processes, kill grace, update-cache TTL, watcher debounce, write-suppression release, view/notification/report text caps) defined once; limits that `src/tools` also needs live in `src/shared`, which `tools` may import (`INLINE_TEXT_MAX_LENGTH`)
 - `index.ts` — barrel exports for config
 
 ### Tools (`src/tools/`)

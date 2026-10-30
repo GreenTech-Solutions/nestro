@@ -1,6 +1,4 @@
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
-  AUDIT_PROCESS_TIMEOUT_MS,
   describeBoundedProcessFailure,
   mergeSeverity,
   parseSeverity,
@@ -18,6 +16,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { createAuditAdvisory, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequiredString } from '../shared';
 
 const bunSchema = 'bun-bulk-advisory' as const;

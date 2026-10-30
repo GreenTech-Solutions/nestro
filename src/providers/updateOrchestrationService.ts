@@ -1,4 +1,5 @@
 import { resolveMutationCoordinatorKey } from '../clients';
+import { UPDATE_CACHE_TTL_MS } from '../config';
 import { compareCodeUnits } from '../shared';
 import * as utils from '../utils';
 import type { NcuUpdateTarget, OperationCoordinator, PackageMetadataOutcome, ReleaseAgeState } from '../utils';
@@ -105,8 +106,6 @@ export interface UpdateOrchestrationServiceContract {
     policy: UpdateFingerprintPolicy,
   ): Promise<string>;
 }
-
-const UPDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function createDefaultDependencies(
   checkCoordinator: OperationCoordinator,

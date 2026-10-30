@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { writeFile } from 'node:fs/promises';
-import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS, registerPackageJsonWatcher } from '../../extension';
+import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from '../../config';
+import { registerPackageJsonWatcher } from '../../extension';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider, WorkspaceFolderItem } from '../../providers';
 
 /**

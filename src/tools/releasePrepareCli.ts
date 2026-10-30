@@ -11,6 +11,7 @@ import { runCliAsEntry } from './cliBootstrap';
 import { describeError, readOptionalFile } from '../shared';
 
 const execFileAsync = promisify(execFile);
+const GIT_LOG_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const RECORD_SEPARATOR = '';
 const FIELD_SEPARATOR = '';
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
@@ -91,7 +92,7 @@ export function createNodeReleasePrepareDependencies(
       const { stdout } = await execFileAsync(
         'git',
         ['log', range, `--format=%H${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`],
-        { cwd, maxBuffer: 1024 * 1024 * 16 },
+        { cwd, maxBuffer: GIT_LOG_MAX_BUFFER_BYTES },
       );
       return parseCommitLog(stdout);
     },

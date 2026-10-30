@@ -1,9 +1,8 @@
+import { NCU_TIMEOUT_MS } from '../config';
 import { DEFAULT_MINIMUM_RELEASE_AGE_DAYS, readMinimumReleaseAgeDays } from '../shared';
 import type { UpdateTarget } from '../shared';
 
 export type NcuUpdateTarget = UpdateTarget;
-
-const NCU_TIMEOUT_MS = 60_000;
 
 type Run = (options: {
   packageFile: string;

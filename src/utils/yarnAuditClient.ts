@@ -1,6 +1,4 @@
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
-  AUDIT_PROCESS_TIMEOUT_MS,
   describeBoundedProcessFailure,
   mergeSeverity,
   parseSeverity,
@@ -20,6 +18,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
+import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequiredString, YARN_DIALECTS } from '../shared';
 
 const classicSchema = 'yarn-classic-audit' as const;

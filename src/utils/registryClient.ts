@@ -18,11 +18,11 @@ import type {
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
+import { MAX_REGISTRY_REDIRECTS } from '../config';
 import { isPathWithin, isRecord, PACKAGE_MANAGERS, stripVersionDecorations, YARN_DIALECTS } from '../shared';
 import type { PackageManager } from '../shared';
 
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
-const MAX_REGISTRY_REDIRECTS = 3;
 const REGISTRY_ACCEPT_HEADER = 'application/vnd.npm.install-v1+json';
 const SIMPLE_CONFIG_KEYS = new Set([
   'registry',

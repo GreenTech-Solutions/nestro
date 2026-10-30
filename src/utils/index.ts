@@ -1,4 +1,4 @@
-export { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS, describeBoundedProcessFailure, mergeSeverity, parseAuditOutcome, parseSeverity, runAuditOutcome, runNpmAudit, runPackageAudit, toAuditResult, UnrecognizedAuditResultError } from './auditClient';
+export { describeBoundedProcessFailure, mergeSeverity, parseAuditOutcome, parseSeverity, runAuditOutcome, runNpmAudit, runPackageAudit, toAuditResult, UnrecognizedAuditResultError } from './auditClient';
 export type { AuditAdvisoriesOutcome, AuditCleanOutcome, AuditErrorOutcome, AuditIncompleteOutcome, AuditIncompleteReason, AuditOutcome, AuditPackageManager, AuditResult, AuditSchemaId, AuditSeverity } from './auditClient';
 export { cloneAuditAdvisory, createAuditAdvisory, inferPathAttribution, mergeAttribution, mergeAuditAdvisories, mergePathAttributions } from './auditReport';
 export type { AuditAdvisory } from './auditReport';
@@ -11,7 +11,7 @@ export { formatAdvisoryRows, formatAuditSeverityLabel, formatDependencySectionLa
 export { logger } from './logger';
 export { configAwareHttpsMetadataAdapter, fetchPackageMetadata, MetadataAdapterRegistry, resolveMetadataRegistryKey } from './metadataRegistry';
 export type { MetadataAdapter, PackageMetadataOutcome } from './metadataRegistry';
-export { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES, runBoundedMetadataRequest } from './metadataRunner';
+export { runBoundedMetadataRequest } from './metadataRunner';
 export type { MetadataSchemaResult } from './metadataRunner';
 export { fetchPackageMetadataFromNativeCli, nativeCliMetadataAdapter, parseNativeCliMetadata } from './nativeMetadataClient';
 export { fetchAllLatestVersions } from './ncuClient';
@@ -37,6 +37,6 @@ export type { StatusReportFailure, StatusReportFileLabel, StatusReportSnapshot }
 export { compareRawVersions, getGreatestVersion, getUpdateType, isPreReleaseVersion, isVersionOutdated } from './versionUtils';
 export type { UpdateType } from './versionUtils';
 export { parseYarnAuditOutcome, runYarnAudit, runYarnAuditOutcome } from './yarnAuditClient';
-export { resolveYarnFamily, yarnVersionProbeMaxBufferBytes, yarnVersionProbeTimeoutMs } from './yarnFamily';
+export { resolveYarnFamily } from './yarnFamily';
 export type { YarnFamily } from './yarnFamily';
 export { fetchPackageMetadataFromYarnClassic, fetchPackageMetadataFromYarnModern, parseYarnClassicMetadata, parseYarnModernMetadata, yarnClassicMetadataAdapter } from './yarnMetadataClient';

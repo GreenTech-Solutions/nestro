@@ -2,12 +2,9 @@ import { EventEmitter } from 'node:events';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
+import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
 import { isRecord } from '../shared';
-import {
-  METADATA_REQUEST_TIMEOUT_MS,
-  METADATA_RESPONSE_MAX_BYTES,
-  runBoundedMetadataRequest,
-} from '../utils';
+import { runBoundedMetadataRequest } from '../utils';
 import type { MetadataSchemaResult } from '../utils';
 
 vi.mock('node:https', () => ({

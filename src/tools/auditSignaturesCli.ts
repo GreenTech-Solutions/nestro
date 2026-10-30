@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 import type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
+import { MAX_CHILD_OUTPUT_BYTES } from './childProcess';
 import { createStreamLineWriter } from './verifyVsixCli';
 import { runCliAsEntry } from './cliBootstrap';
 import { asString, describeError, PACKAGE_MANAGERS, resolveSpawnTarget } from '../shared';
@@ -12,9 +13,6 @@ import type { SpawnTargetEnvironment } from '../shared';
  * the pure decision in `auditSignatures.ts` can be exercised without a registry. Spawns pnpm
  * itself rather than being piped its output, which would drop the audit's own exit code.
  */
-
-/** Same child-output ceiling the VSIX verifier uses; a signature report is far smaller. */
-const MAX_CHILD_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const execFileAsync = promisify(execFile);
 

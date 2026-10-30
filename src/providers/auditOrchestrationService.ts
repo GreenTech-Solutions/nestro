@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { readFile as fsReadFile, realpath as fsRealpath, stat as fsStat } from 'node:fs/promises';
+import { AUDIT_NODE_PACKAGE_JSON_MAX_BYTES } from '../config';
 import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject, PackageManager } from '../clients';
 import { cloneAuditAdvisory, inferPathAttribution, mergeAuditAdvisories, mergeSeverity, runRootOperations } from '../utils';
@@ -13,9 +14,6 @@ import type {
 } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
 import { isPackageManager } from '../shared';
-
-/** Real installed `package.json` files are tiny; this bound only guards against a corrupt read. */
-const AUDIT_NODE_PACKAGE_JSON_MAX_BYTES = 1024 * 1024;
 
 /** Loose enough to accept a prerelease/build suffix; the exact major.minor.patch parser downstream still fail-closes on it. */
 const PLAIN_SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;

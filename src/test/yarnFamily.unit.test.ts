@@ -2,12 +2,9 @@ import { execFile } from 'node:child_process';
 import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import {
-  resolveYarnFamily,
-  yarnVersionProbeMaxBufferBytes,
-  yarnVersionProbeTimeoutMs,
-} from '../utils';
+import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
 import { resolveSpawnTarget } from '../shared';
+import { resolveYarnFamily } from '../utils';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -148,8 +145,8 @@ describe('resolveYarnFamily()', () => {
       ['--version'],
       {
         cwd: root,
-        maxBuffer: yarnVersionProbeMaxBufferBytes,
-        timeout: yarnVersionProbeTimeoutMs,
+        maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+        timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
       },
       expect.any(Function),
     );
@@ -172,8 +169,8 @@ describe('resolveYarnFamily()', () => {
       ['/d', '/s', '/c', '""C:\\yarn\\yarn.cmd" --version"'],
       {
         cwd: root,
-        maxBuffer: yarnVersionProbeMaxBufferBytes,
-        timeout: yarnVersionProbeTimeoutMs,
+        maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+        timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
         windowsVerbatimArguments: true,
       },
       expect.any(Function),

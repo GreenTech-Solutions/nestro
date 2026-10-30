@@ -4,6 +4,7 @@ import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
 import { WorkspaceFolderItem } from './WorkspaceFolderItem';
+import { MAX_DESCRIPTION_SEARCH_LENGTH } from '../config';
 import { compareCodeUnits } from '../shared';
 import type { UpdateType } from '../utils';
 
@@ -71,8 +72,6 @@ interface PackageLabelRow {
 }
 
 const UNOWNED_FOLDER_INDEX = Number.MAX_SAFE_INTEGER;
-/** Keeps any label showing the raw search query short, for the sidebar and for screen readers. */
-const MAX_DESCRIPTION_SEARCH_LENGTH = 24;
 const UNSAFE_LABEL_CODE_POINT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 const DEFAULT_PACKAGE_LABEL_FORMATTING: PackageLabelFormatting = {
   rootLabel: '(root)',
