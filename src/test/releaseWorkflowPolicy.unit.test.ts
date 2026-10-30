@@ -16,6 +16,7 @@ import {
   evaluateReleasePrepareWorkflowPolicy,
   evaluateReleaseWorkflowPolicy,
   evaluateVsixPolicy,
+  loadReviewedActionsRegistry,
   PACKAGED_FILE_COUNT_BUDGET,
   reviewedActionReference,
 } from '../tools';
@@ -431,9 +432,10 @@ describe('release workflow policies', () => {
 
   it('requires the verified workflow-dispatch PR head in CI', () => {
     const ciSource = readFileSync(resolve(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
-    expect(evaluateCiWorkflowPolicy(ciSource)).toEqual([]);
-    expect(evaluateCiWorkflowPolicy(ciSource.replace('head_sha:\n        required: true', 'head_sha:\n        required: false')))
-      .toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'safe-trigger' })]));
+    const registry = loadReviewedActionsRegistry(repositoryRoot);
+    expect(evaluateCiWorkflowPolicy(ciSource, registry)).toEqual([]);
+    expect(evaluateCiWorkflowPolicy(ciSource.replace('head_sha:\n        required: true', 'head_sha:\n        required: false'), registry))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'trigger-contract' })]));
   });
 
   it('checks the candidate manifest keys against the codepoint-sorted key list release:candidate actually writes', () => {

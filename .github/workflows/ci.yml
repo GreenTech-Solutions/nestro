@@ -76,6 +76,9 @@ jobs:
       - name: Validate workflow syntax
         shell: bash
         run: bash .github/scripts/ci/install-actionlint.sh
+      - name: Lint CI shell scripts
+        shell: bash
+        run: bash .github/scripts/ci/shellcheck.sh
       - name: Workflow policy
         run: pnpm run ci:policy
       - name: Unit coverage

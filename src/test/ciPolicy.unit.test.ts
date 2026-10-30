@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
@@ -11,7 +11,9 @@ import {
   evaluateCodeownersPolicy,
   evaluateDependabotConfigPolicy,
   evaluateWorkflowActionPolicy,
+  findUnusedReviewedActions,
   loadReviewedActionsRegistry,
+  loadReviewedRegistryForPolicy,
   parseReviewedActionsRegistry,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
   REVIEWED_ACTIONS_PATH,
@@ -29,26 +31,36 @@ const registry = loadReviewedActionsRegistry(repositoryRoot);
 const checkout = registry.actions['actions/checkout'];
 const unreviewedSha = 'f'.repeat(40);
 
-function mutateWorkflow(mutator: (workflow: Record<string, unknown>) => void): string {
-  const workflow = parse(canonicalSource, { uniqueKeys: true }) as Record<string, unknown>;
+type Mapping = Record<string, unknown>;
+
+function mutateWorkflow(mutator: (workflow: Mapping) => void): string {
+  const workflow = parse(canonicalSource, { uniqueKeys: true }) as Mapping;
   mutator(workflow);
   return stringify(workflow);
 }
 
-function jobs(workflow: Record<string, unknown>): Record<string, Record<string, unknown>> {
-  return workflow.jobs as Record<string, Record<string, unknown>>;
+function jobs(workflow: Mapping): Record<string, Mapping> {
+  return workflow.jobs as Record<string, Mapping>;
 }
 
-function steps(workflow: Record<string, unknown>, job: string): Record<string, unknown>[] {
-  return jobs(workflow)[job].steps as Record<string, unknown>[];
+function steps(workflow: Mapping, job: string): Mapping[] {
+  return jobs(workflow)[job].steps as Mapping[];
 }
 
-function removeRun(workflow: Record<string, unknown>, job: string, needle: string): void {
-  jobs(workflow)[job].steps = steps(workflow, job).filter(step => !String(step.run ?? '').includes(needle));
+function stepNamed(workflow: Mapping, job: string, name: string): Mapping {
+  const found = steps(workflow, job).find(step => step.name === name);
+  if (found === undefined) {
+    throw new Error(`${job} has no step named ${name}`);
+  }
+  return found;
+}
+
+function removeStep(workflow: Mapping, job: string, name: string): void {
+  jobs(workflow)[job].steps = steps(workflow, job).filter(step => step.name !== name);
 }
 
 function expectRejected(source: string, rule: string): void {
-  expect(evaluateCiWorkflowPolicy(source)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
+  expect(evaluateCiWorkflowPolicy(source, registry)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
 }
 
 function expectRejectedDependabot(source: string, rule: string): void {
@@ -57,332 +69,276 @@ function expectRejectedDependabot(source: string, rule: string): void {
   );
 }
 
+const SETUP_JOBS = ['quality', 'extension-host', 'package', 'packaged-smoke'];
+const QUALITY_GATES = [
+  'Audit dependencies',
+  'Audit dependency signatures',
+  'Strict lint',
+  'Production typecheck',
+  'Test typecheck',
+  'Validate workflow syntax',
+  'Lint CI shell scripts',
+  'Workflow policy',
+  'Unit coverage',
+  'Build',
+];
+
+const SEMANTIC_MUTATIONS: ReadonlyArray<readonly [string, (workflow: Mapping) => void, string]> = [
+  ['pull_request_target next to a normal PR trigger', (w) => {
+    (w.on as Mapping).pull_request_target = {};
+  }, 'trigger-contract'],
+  ['narrowed PR event types', (w) => {
+    (w.on as Mapping).pull_request = { types: ['closed'] };
+  }, 'trigger-contract'],
+  ['an extra push filter', (w) => {
+    ((w.on as Mapping).push as Mapping)['paths-ignore'] = ['src/**'];
+  }, 'trigger-contract'],
+  ['a different push branch', (w) => {
+    ((w.on as Mapping).push as Mapping).branches = ['feature'];
+  }, 'trigger-contract'],
+  ['a wider workflow permission', (w) => {
+    (w.permissions as Mapping)['pull-requests'] = 'write';
+  }, 'permissions-contract'],
+  ['job-level permission escalation', (w) => {
+    jobs(w).quality.permissions = { contents: 'write' };
+  }, 'job-contract'],
+  ['a job-level EXPECTED_SHA override', (w) => {
+    jobs(w).quality.env = { EXPECTED_SHA: '0'.repeat(40) };
+  }, 'job-contract'],
+  ['a step-level EXPECTED_SHA rebinding', (w) => {
+    stepNamed(w, 'quality', 'Checkout exact tested commit').env = { EXPECTED_SHA: '0'.repeat(40) };
+  }, 'step-contract'],
+  ['a workflow-wide shell default', (w) => {
+    w.defaults = { run: { shell: 'bash -n {0}' } };
+  }, 'workflow-contract'],
+  ['a rebound workflow EXPECTED_SHA', (w) => {
+    (w.env as Mapping).EXPECTED_SHA = '0'.repeat(40);
+  }, 'env-contract'],
+  ['an unreviewed extra job', (w) => {
+    jobs(w).publish_backdoor = { 'runs-on': 'ubuntu-latest', steps: [] };
+  }, 'job-allowlist'],
+  ['an extra publish step hidden inside an allowed job', (w) => {
+    steps(w, 'quality').push({ run: 'pnpm exec semantic-release', env: { TOKEN: '${{ secrets.TOKEN }}' } });
+  }, 'step-allowlist'],
+  ['a mutable external action reference', (w) => {
+    stepNamed(w, 'quality', 'Checkout exact tested commit').uses = 'actions/checkout@v7';
+  }, 'step-contract'],
+  ['an unreviewed full action commit', (w) => {
+    stepNamed(w, 'quality', 'Checkout exact tested commit').uses = `actions/checkout@${unreviewedSha}`;
+  }, 'step-contract'],
+  ['an echoed lint gate', (w) => {
+    stepNamed(w, 'quality', 'Strict lint').run = 'echo pnpm run lint';
+  }, 'step-contract'],
+  ['a disabled build gate', (w) => {
+    stepNamed(w, 'quality', 'Build').if = '${{ false }}';
+  }, 'step-contract'],
+  ['an echoed checkout identity assertion', (w) => {
+    stepNamed(w, 'quality', 'Assert checkout identity').run = 'echo git rev-parse HEAD EXPECTED_SHA';
+  }, 'step-contract'],
+  ['a shell override that turns lint into syntax-only validation', (w) => {
+    stepNamed(w, 'quality', 'Strict lint').shell = 'bash -n {0}';
+  }, 'step-contract'],
+  ['a condition on a reviewed action step', (w) => {
+    stepNamed(w, 'quality', 'Setup Node.js').if = '${{ cancelled() }}';
+  }, 'step-contract'],
+  ['a working directory on a run step', (w) => {
+    stepNamed(w, 'quality', 'Strict lint')['working-directory'] = 'fixtures/pass';
+  }, 'step-contract'],
+  ['a shell override on the Host step', (w) => {
+    stepNamed(w, 'extension-host', 'Run Extension Host on Linux').shell = 'bash -n {0}';
+  }, 'step-contract'],
+  ['an extra setup input that overrides the Node source', (w) => {
+    (stepNamed(w, 'quality', 'Setup Node.js').with as Mapping)['node-version'] = '22.0.0';
+  }, 'step-contract'],
+  ['pnpm/setup installing a second Node.js runtime', (w) => {
+    delete (stepNamed(w, 'quality', 'Prepare pnpm').with as Mapping)['node-version-file'];
+  }, 'step-contract'],
+  ['an incomplete OS/channel Host matrix', (w) => {
+    const matrix = (jobs(w)['extension-host'].strategy as Mapping).matrix as Mapping;
+    matrix.channel = ['stable'];
+    matrix.os = ['ubuntu-latest'];
+  }, 'job-contract'],
+  ['a Host matrix exclude escape hatch', (w) => {
+    ((jobs(w)['extension-host'].strategy as Mapping).matrix as Mapping).exclude = [{ os: 'windows-latest', channel: 'minimum' }];
+  }, 'job-contract'],
+  ['a Host runner that ignores matrix.os', (w) => {
+    jobs(w)['extension-host']['runs-on'] = 'ubuntu-latest';
+  }, 'job-contract'],
+  ['a packaged-smoke runner that ignores matrix.os', (w) => {
+    jobs(w)['packaged-smoke']['runs-on'] = 'ubuntu-latest';
+  }, 'job-contract'],
+  ['a Host job that bypasses quality', (w) => {
+    jobs(w)['extension-host'].needs = [];
+  }, 'job-contract'],
+  ['a Host job that runs after failures', (w) => {
+    jobs(w)['extension-host'].if = '${{ always() }}';
+  }, 'job-contract'],
+  ['a narrowed Host matrix parallelism', (w) => {
+    (jobs(w)['extension-host'].strategy as Mapping)['max-parallel'] = 1;
+  }, 'job-contract'],
+  ['a duplicate package dependency', (w) => {
+    (jobs(w).package.needs as string[]).push('quality');
+  }, 'job-contract'],
+  ['a duplicate required dependency', (w) => {
+    (jobs(w).required.needs as string[]).push('quality');
+  }, 'job-contract'],
+  ['a package job that survives a failed gate', (w) => {
+    jobs(w).package.if = '${{ always() }}';
+  }, 'job-contract'],
+  ['package verification without the clean checkout guard', (w) => {
+    stepNamed(w, 'package', 'Package and verify VSIX').run = 'pnpm run check:vsce';
+  }, 'step-contract'],
+  ['an upload that accepts missing files', (w) => {
+    (stepNamed(w, 'package', 'Upload immutable evidence').with as Mapping)['if-no-files-found'] = 'warn';
+  }, 'step-contract'],
+  ['an upload with overwrite enabled', (w) => {
+    (stepNamed(w, 'package', 'Upload immutable evidence').with as Mapping).overwrite = true;
+  }, 'step-contract'],
+  ['an upload with unbounded retention', (w) => {
+    (stepNamed(w, 'package', 'Upload immutable evidence').with as Mapping)['retention-days'] = 90;
+  }, 'step-contract'],
+  ['an evidence download by mutable name', (w) => {
+    const options = stepNamed(w, 'packaged-smoke', 'Download exact immutable evidence').with as Mapping;
+    delete options['artifact-ids'];
+    options.name = 'verify-evidence';
+  }, 'step-contract'],
+  ['a forged producer artifact output', (w) => {
+    (jobs(w).package.outputs as Mapping)['artifact-id'] = '${{ github.run_id }}';
+  }, 'job-contract'],
+  ['a required gate that does not run after a skip', (w) => {
+    jobs(w).required.if = '${{ success() }}';
+  }, 'job-contract'],
+  ['a required gate that forgets one upstream result', (w) => {
+    delete (stepNamed(w, 'required', 'Reject failed or skipped gates').env as Mapping).PACKAGED_SMOKE_RESULT;
+  }, 'step-contract'],
+  ['an echo-only required aggregator', (w) => {
+    stepNamed(w, 'required', 'Reject failed or skipped gates').run = 'echo "$QUALITY_RESULT $HOST_RESULT $PACKAGE_RESULT $PACKAGED_SMOKE_RESULT"';
+  }, 'step-contract'],
+  ['a conditional required step', (w) => {
+    stepNamed(w, 'required', 'Reject failed or skipped gates').if = '${{ cancelled() }}';
+  }, 'step-contract'],
+  ['a required job that ignores failure', (w) => {
+    jobs(w).required['continue-on-error'] = true;
+  }, 'job-contract'],
+  ['a gate step that ignores failure', (w) => {
+    stepNamed(w, 'quality', 'Strict lint')['continue-on-error'] = '${{ true }}';
+  }, 'step-contract'],
+  ['an aggregator variable bound to the wrong upstream result', (w) => {
+    (stepNamed(w, 'required', 'Reject failed or skipped gates').env as Mapping).QUALITY_RESULT = '${{ needs.package.result }}';
+  }, 'step-contract'],
+];
+
 describe('CI workflow policy', () => {
   it('accepts the canonical workflow as a complete contract, not a substring smoke test', () => {
-    expect(evaluateCiWorkflowPolicy(canonicalSource)).toEqual([]);
+    expect(evaluateCiWorkflowPolicy(canonicalSource, registry)).toEqual([]);
   });
 
-  it.each([
-    ['dependency audit', 'pnpm run audit:dependencies'],
-    ['signature audit', 'pnpm run audit:signatures'],
-    ['strict lint', 'pnpm run lint'],
-    ['production typecheck', 'pnpm run typecheck'],
-    ['test typecheck', 'tsc -p tsconfig.test.json --noEmit'],
-    ['workflow policy', 'pnpm run ci:policy'],
-    ['unit coverage', 'pnpm run test:unit:coverage'],
-    ['build', 'pnpm run build'],
-  ])('fails when the %s quality gate is injected out', (_label, command) => {
-    expectRejected(mutateWorkflow(workflow => removeRun(workflow, 'quality', command)), 'quality-gate');
+  it.each(SEMANTIC_MUTATIONS)('rejects %s', (_label, mutate, rule) => {
+    expectRejected(mutateWorkflow(mutate), rule);
   });
 
-  it('rejects pull_request_target even if a normal PR trigger remains', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      (workflow.on as Record<string, unknown>).pull_request_target = {};
-    }), 'safe-trigger');
+  it.each(QUALITY_GATES)('fails when the %s quality gate is injected out', (name) => {
+    expectRejected(mutateWorkflow(workflow => removeStep(workflow, 'quality', name)), 'step-allowlist');
   });
 
-  it('rejects narrowed PR event types and extra push filters', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      (workflow.on as Record<string, unknown>).pull_request = { types: ['closed'] };
-    }), 'safe-trigger');
-    expectRejected(mutateWorkflow((workflow) => {
-      const push = (workflow.on as Record<string, unknown>).push as Record<string, unknown>;
-      push['paths-ignore'] = ['src/**'];
-    }), 'safe-trigger');
+  it.each(SETUP_JOBS)('rejects a missing checked-out SHA assertion in %s', (job) => {
+    expectRejected(mutateWorkflow(workflow => removeStep(workflow, job, 'Assert checkout identity')), 'step-allowlist');
   });
 
-  it('rejects any permission wider than read-only repository contents', () => {
+  it.each(SETUP_JOBS)('rejects a non-frozen install in %s', (job) => {
     expectRejected(mutateWorkflow((workflow) => {
-      (workflow.permissions as Record<string, unknown>)['pull-requests'] = 'write';
-    }), 'least-permissions');
-  });
-
-  it('rejects a mutable external action reference in any job', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'quality')[0].uses = 'actions/checkout@v7';
-    }), 'immutable-action');
-  });
-
-  it('rejects an unreviewed full action commit even though it is immutable-looking', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'quality')[0].uses = `actions/checkout@${unreviewedSha}`;
-    }), 'reviewed-action');
-  });
-
-  it('rejects job-level permission escalation', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).quality.permissions = { contents: 'write' };
-    }), 'least-permissions');
-  });
-
-  it('rejects source-identity overrides and workflow shell defaults', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).quality.env = { EXPECTED_SHA: '0'.repeat(40) };
-    }), 'source-identity');
-    expectRejected(mutateWorkflow((workflow) => {
-      workflow.defaults = { run: { shell: 'bash -n {0}' } };
-    }), 'workflow-defaults');
-  });
-
-  it('rejects an unreviewed extra job even when its YAML is otherwise valid', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).publish_backdoor = { runs_on: 'ubuntu-latest', steps: [] };
-    }), 'job-allowlist');
-  });
-
-  it('rejects an extra publish step hidden inside an allowed job', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'quality').push({ run: 'pnpm exec semantic-release', env: { TOKEN: '${{ secrets.TOKEN }}' } });
-    }), 'step-allowlist');
-  });
-
-  it.each([
-    ['echoed lint', 'pnpm run lint', 'echo pnpm run lint'],
-    ['disabled build', 'pnpm run build', 'pnpm run build'],
-  ])('rejects %s instead of treating it as an executable gate', (_label, command, replacement) => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const step = steps(workflow, 'quality').find(candidate => candidate.run === command);
-      if (step !== undefined) {
-        step.run = replacement;
-        if (_label === 'disabled build') {
-          step.if = '${{ false }}';
-        }
-      }
-    }), _label === 'disabled build' ? 'failure-safe-step' : 'quality-gate');
-  });
-
-  it('rejects an echoed checkout identity assertion', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const assertion = steps(workflow, 'quality').find(step => String(step.run).includes('git rev-parse HEAD'));
-      if (assertion !== undefined) {
-        assertion.run = 'echo git rev-parse HEAD EXPECTED_SHA';
-      }
-    }), 'exact-checkout');
-  });
-
-  it('rejects shell overrides that turn a required command into syntax-only validation', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const lint = steps(workflow, 'quality').find(step => step.run === 'pnpm run lint');
-      if (lint !== undefined) {
-        lint.shell = 'bash -n {0}';
-      }
-    }), 'quality-gate');
-  });
-
-  it('rejects execution modifiers on reviewed action and run steps', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const setupNode = steps(workflow, 'quality')
-        .find(step => String(step.uses ?? '').startsWith('actions/setup-node@'));
-      if (setupNode !== undefined) {
-        setupNode.if = '${{ cancelled() }}';
-      }
+      stepNamed(workflow, job, 'Install frozen dependencies').run = 'pnpm install';
     }), 'step-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      const lint = steps(workflow, 'quality').find(step => step.run === 'pnpm run lint');
-      if (lint !== undefined) {
-        lint['working-directory'] = 'fixtures/pass';
-      }
-    }), 'step-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      const host = steps(workflow, 'extension-host')
-        .find(step => String(step.run ?? '').startsWith('xvfb-run'));
-      if (host !== undefined) {
-        host.shell = 'bash -n {0}';
-      }
-    }), 'step-contract');
-  });
-
-  it('rejects extra setup inputs that override the reviewed Node source', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const setupNode = steps(workflow, 'quality')
-        .find(step => String(step.uses ?? '').startsWith('actions/setup-node@'));
-      const options = setupNode?.with as Record<string, unknown>;
-      options['node-version'] = '22.0.0';
-    }), 'step-contract');
-  });
-
-  it('rejects pnpm/setup that installs a second Node.js runtime from a version file', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const pnpmSetup = steps(workflow, 'quality')
-        .find(step => String(step.uses ?? '').startsWith('pnpm/setup@'));
-      delete (pnpmSetup?.with as Record<string, unknown>)['node-version-file'];
-    }), 'toolchain');
-  });
-
-  it('rejects step-scoped EXPECTED_SHA rebinding', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const checkout = steps(workflow, 'quality')[0];
-      checkout.env = { EXPECTED_SHA: '0'.repeat(40) };
-    }), 'source-identity');
-  });
-
-  it.each(['quality', 'extension-host', 'package', 'packaged-smoke'])(
-    'rejects a missing checked-out SHA assertion in %s',
-    (job) => {
-      expectRejected(mutateWorkflow(workflow => removeRun(workflow, job, 'git rev-parse HEAD')), 'exact-checkout');
-    },
-  );
-
-  it.each(['quality', 'extension-host', 'package', 'packaged-smoke'])(
-    'rejects a non-frozen install in %s',
-    (job) => {
-      expectRejected(mutateWorkflow((workflow) => {
-        const install = steps(workflow, job).find(step => String(step.run ?? '').includes('pnpm install'));
-        if (install !== undefined) {
-          install.run = 'pnpm install';
-        }
-      }), 'frozen-install');
-    },
-  );
-
-  it('rejects an incomplete OS/channel Host matrix', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const strategy = jobs(workflow)['extension-host'].strategy as Record<string, unknown>;
-      const matrix = strategy.matrix as Record<string, unknown>;
-      matrix.channel = ['stable'];
-      matrix.os = ['ubuntu-latest'];
-    }), 'host-matrix');
-  });
-
-  it('rejects matrix jobs whose runner ignores matrix.os', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow)['extension-host']['runs-on'] = 'ubuntu-latest';
-    }), 'job-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow)['packaged-smoke']['runs-on'] = 'ubuntu-latest';
-    }), 'job-contract');
-  });
-
-  it('rejects Host control flow that can bypass quality or narrow matrix execution', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow)['extension-host'].needs = [];
-    }), 'job-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow)['extension-host'].if = '${{ always() }}';
-    }), 'job-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      const strategy = jobs(workflow)['extension-host'].strategy as Record<string, unknown>;
-      strategy['max-parallel'] = 1;
-    }), 'job-contract');
-  });
-
-  it('rejects duplicate dependencies in package and required aggregation', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      (jobs(workflow).package.needs as string[]).push('quality');
-    }), 'job-contract');
-    expectRejected(mutateWorkflow((workflow) => {
-      (jobs(workflow).required.needs as string[]).push('quality');
-    }), 'job-contract');
   });
 
   it('rejects a Host matrix that does not build the extension before compiling tests', () => {
-    expectRejected(mutateWorkflow(workflow => removeRun(workflow, 'extension-host', 'pnpm run build')), 'step-allowlist');
+    expectRejected(mutateWorkflow(workflow => removeStep(workflow, 'extension-host', 'Build extension')), 'step-allowlist');
   });
 
-  it('rejects matrix include/exclude escape hatches and push branch drift', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const strategy = jobs(workflow)['extension-host'].strategy as Record<string, unknown>;
-      (strategy.matrix as Record<string, unknown>).exclude = [{ os: 'windows-latest', channel: 'minimum' }];
-    }), 'host-matrix');
-    expectRejected(mutateWorkflow((workflow) => {
-      const push = (workflow.on as Record<string, unknown>).push as Record<string, unknown>;
-      push.branches = ['feature'];
-    }), 'safe-trigger');
-  });
-
-  it('rejects package execution that can survive a failed upstream gate', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).package.if = '${{ always() }}';
-    }), 'failure-safe-needs');
-  });
-
-  it('rejects package verification without the clean tracked-checkout guard', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const packageStep = steps(workflow, 'package').find(step => String(step.run ?? '').includes('check:vsce'));
-      if (packageStep !== undefined) {
-        packageStep.run = 'pnpm run check:vsce';
-      }
-    }), 'package-policy');
-  });
-
-  it.each([
-    ['missing files accepted', 'if-no-files-found', 'warn'],
-    ['overwrite enabled', 'overwrite', true],
-    ['unbounded retention', 'retention-days', 90],
-  ])('rejects an upload with %s', (_label, key, value) => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const upload = steps(workflow, 'package').find(step => String(step.uses ?? '').startsWith('actions/upload-artifact@'));
-      (upload?.with as Record<string, unknown>)[key] = value;
-    }), 'immutable-artifact');
-  });
-
-  it('rejects downloading evidence by a mutable name instead of exact artifact ID', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const download = steps(workflow, 'packaged-smoke')
-        .find(step => String(step.uses ?? '').startsWith('actions/download-artifact@'));
-      const options = download?.with as Record<string, unknown>;
-      delete options['artifact-ids'];
-      options.name = 'verify-evidence';
-    }), 'exact-artifact-id');
-  });
-
-  it('rejects forged or missing producer artifact outputs', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const outputs = jobs(workflow).package.outputs as Record<string, unknown>;
-      outputs['artifact-id'] = '${{ github.run_id }}';
-    }), 'artifact-outputs');
-  });
-
-  it('rejects a required gate that does not run after a skip/failure', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).required.if = '${{ success() }}';
-    }), 'stable-required-gate');
-  });
-
-  it('rejects a required gate that forgets one upstream result', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const result = steps(workflow, 'required')[0];
-      const env = result.env as Record<string, unknown>;
-      delete env.PACKAGED_SMOKE_RESULT;
-    }), 'stable-required-gate');
-  });
-
-  it('rejects an echo-only required aggregator with correct-looking variable names', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'required')[0].run = 'echo "$QUALITY_RESULT $HOST_RESULT $PACKAGE_RESULT $PACKAGED_SMOKE_RESULT"';
-    }), 'stable-required-gate');
-  });
-
-  it('rejects required-step and required-job failure suppression', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'required')[0].if = '${{ cancelled() }}';
-    }), 'stable-required-gate');
-    expectRejected(mutateWorkflow((workflow) => {
-      jobs(workflow).required['continue-on-error'] = true;
-    }), 'failure-safe-job');
-    expectRejected(mutateWorkflow((workflow) => {
-      const lint = steps(workflow, 'quality').find(step => step.run === 'pnpm run lint');
-      if (lint !== undefined) {
-        lint['continue-on-error'] = '${{ true }}';
-      }
-    }), 'failure-safe-step');
-  });
-
-  it('rejects an aggregator variable bound to the wrong upstream result', () => {
-    expectRejected(mutateWorkflow((workflow) => {
-      const env = steps(workflow, 'required')[0].env as Record<string, unknown>;
-      env.QUALITY_RESULT = '${{ needs.package.result }}';
-    }), 'stable-required-gate');
+  it('names the differing keys without echoing their values', () => {
+    const violations = evaluateCiWorkflowPolicy(mutateWorkflow((workflow) => {
+      stepNamed(workflow, 'quality', 'Strict lint').run = 'echo secret-value';
+    }), registry);
+    expect(violations).toEqual([{
+      rule: 'step-contract',
+      message: 'quality step 9 (Strict lint) must match the reviewed step; differs in: run',
+    }]);
   });
 
   it('rejects malformed or duplicate-key YAML before evaluating semantics', () => {
     expectRejected('name: Verify\nname: Forged\njobs: {}\n', 'yaml');
+  });
+
+  it('rejects YAML anchors and aliases anywhere in the workflow', () => {
+    expectRejected(canonicalSource.replace('contents: read', 'contents: &level read'), 'yaml');
+    expectRejected(canonicalSource.replace('  CI_ARTIFACT_DIR: dist/ci', '  CI_ARTIFACT_DIR: &dir dist/ci\n  OTHER: *dir'), 'yaml');
+  });
+
+  it('rejects a workflow that is not a mapping and jobs that are not mappings', () => {
+    expectRejected('- not\n- a mapping\n', 'workflow-shape');
+    expectRejected(canonicalSource.replace(/^jobs:[\s\S]*$/mu, 'jobs: forged\n'), 'workflow-shape');
+    expectRejected(mutateWorkflow((workflow) => {
+      jobs(workflow).required = 'forged' as unknown as Mapping;
+    }), 'workflow-shape');
+  });
+});
+
+describe('CI workflow mutations', () => {
+  const canonical = parse(canonicalSource) as Mapping;
+  const stepCases = Object.entries(jobs(canonical)).flatMap(([jobId, job]) => (job.steps as Mapping[]).flatMap((step, index) => {
+    const label = `${jobId} step ${index + 1} (${String(step.name)})`;
+    const cases: Array<readonly [string, (workflow: Mapping) => void]> = [
+      [`drops ${label}`, (workflow) => {
+        (steps(workflow, jobId)).splice(index, 1);
+      }],
+      [`swaps ${label} with its neighbour`, (workflow) => {
+        const list = steps(workflow, jobId);
+        const other = index + 1 < list.length ? index + 1 : index - 1;
+        [list[index], list[other]] = [list[other], list[index]];
+      }],
+      [`disables failure on ${label}`, (workflow) => {
+        steps(workflow, jobId)[index]['continue-on-error'] = true;
+      }],
+    ];
+    if (typeof step.run === 'string') {
+      cases.push([`alters the run of ${label}`, (workflow) => {
+        steps(workflow, jobId)[index].run = `${String(step.run)}\ntrue`;
+      }]);
+    }
+    if (typeof step.uses === 'string') {
+      cases.push([`repins the action of ${label}`, (workflow) => {
+        steps(workflow, jobId)[index].uses = `${String(step.uses).slice(0, String(step.uses).indexOf('@'))}@${unreviewedSha}`;
+      }]);
+    }
+    return cases;
+  }));
+  const jobCases = Object.entries(jobs(canonical)).flatMap(([jobId, job]) => [
+    ...Object.keys(job).filter(key => key !== 'steps').map((key): readonly [string, (workflow: Mapping) => void] => [
+      `removes ${key} from ${jobId}`,
+      (workflow) => {
+        Reflect.deleteProperty(jobs(workflow)[jobId], key);
+      },
+    ]),
+    [`adds a timeout to ${jobId}`, (workflow: Mapping) => {
+      jobs(workflow)[jobId]['timeout-minutes'] = 1;
+    }] as const,
+  ]);
+  const headerCases = ['name', 'on', 'permissions', 'env'].map((key): readonly [string, (workflow: Mapping) => void] => [
+    `removes the workflow ${key}`,
+    (workflow) => {
+      Reflect.deleteProperty(workflow, key);
+    },
+  ]);
+
+  it.each([...stepCases, ...jobCases, ...headerCases])('rejects a workflow that %s', (_label, mutate) => {
+    expect(evaluateCiWorkflowPolicy(mutateWorkflow(mutate), registry)).not.toEqual([]);
   });
 });
 
 describe('CI workflow shell scripts', () => {
   const scriptRuns = [
     ['Validate workflow syntax', 'quality', 'install-actionlint.sh'],
+    ['Lint CI shell scripts', 'quality', 'shellcheck.sh'],
     ['Resolve the exact VSIX attestation subject', 'package', 'resolve-vsix-subject.sh'],
   ] as const;
 
@@ -391,7 +347,7 @@ describe('CI workflow shell scripts', () => {
   }
 
   it('keeps every run block at five lines or fewer, except the pre-checkout dispatch check', () => {
-    const workflow = parse(canonicalSource) as Record<string, unknown>;
+    const workflow = parse(canonicalSource) as Mapping;
     for (const jobId of Object.keys(jobs(workflow))) {
       for (const step of steps(workflow, jobId)) {
         if (typeof step.run === 'string' && step.name !== 'Resolve the dispatched pull request') {
@@ -402,9 +358,8 @@ describe('CI workflow shell scripts', () => {
   });
 
   it.each(scriptRuns)('runs %s as a one-line call to a script in .github/scripts/ci', (name, job, script) => {
-    const workflow = parse(canonicalSource) as Record<string, unknown>;
-    const step = steps(workflow, job).find(candidate => candidate.name === name);
-    expect(step?.run).toBe(`bash .github/scripts/ci/${script}`);
+    const workflow = parse(canonicalSource) as Mapping;
+    expect(stepNamed(workflow, job, name).run).toBe(`bash .github/scripts/ci/${script}`);
     expect(existsSync(resolve(repositoryRoot, '.github/scripts/ci', script))).toBe(true);
   });
 
@@ -424,27 +379,26 @@ describe('CI workflow shell scripts', () => {
     }
   });
 
-  it.each(scriptRuns)('rejects %s once its script call is inlined or replaced', (name, job) => {
-    const rule = job === 'package' ? 'attestation-subject' : 'step-contract';
-    expectRejected(mutateWorkflow((workflow) => {
-      const step = steps(workflow, job).find(candidate => candidate.name === name);
-      if (step !== undefined) {
-        step.run = 'echo skipped';
-      }
-    }), rule);
+  it('lints every script under .github/scripts and fails when there is none', () => {
+    const script = scriptSource('shellcheck.sh');
+    expect(script).toContain('find .github/scripts -type f -name \'*.sh\' -exec shellcheck {} +');
+    expect(script).toContain('test -n "$(find .github/scripts -type f -name \'*.sh\' -print -quit)"');
   });
 
-  it('rejects an actionlint call that no longer goes through the reviewed script', () => {
+  it.each(scriptRuns)('rejects %s once its script call is inlined or replaced', (name, job) => {
     expectRejected(mutateWorkflow((workflow) => {
-      const step = steps(workflow, 'quality').find(candidate => candidate.name === 'Validate workflow syntax');
-      if (step !== undefined) {
-        step.run = 'bash .github/scripts/ci/other.sh';
-      }
-    }), 'quality-gate');
+      stepNamed(workflow, job, name).run = 'echo skipped';
+    }), 'step-contract');
+  });
+
+  it('rejects a script call that no longer goes through the reviewed script', () => {
+    expectRejected(mutateWorkflow((workflow) => {
+      stepNamed(workflow, 'quality', 'Validate workflow syntax').run = 'bash .github/scripts/ci/other.sh';
+    }), 'step-contract');
   });
 
   it('keeps the dispatch resolution inline and ahead of the checkout', () => {
-    const workflow = parse(canonicalSource) as Record<string, unknown>;
+    const workflow = parse(canonicalSource) as Mapping;
     const [first] = steps(workflow, 'quality');
     expect(first.name).toBe('Resolve the dispatched pull request');
     expect(String(first.run)).not.toContain('.github/scripts');
@@ -452,10 +406,9 @@ describe('CI workflow shell scripts', () => {
 
   it('rejects the dispatch resolution once it runs after the checkout', () => {
     expectRejected(mutateWorkflow((workflow) => {
-      const quality = steps(workflow, 'quality');
-      const [dispatch, ...rest] = quality;
+      const [dispatch, ...rest] = steps(workflow, 'quality');
       jobs(workflow).quality.steps = [rest[0], dispatch, ...rest.slice(1)];
-    }), 'dispatch-identity');
+    }), 'step-contract');
   });
 });
 
@@ -463,8 +416,8 @@ describe('immutable workflow action policy', () => {
   const checkoutReference = reviewedActionReference('actions/checkout');
 
   it('accepts every reviewed action reference and version comment in the current workflows', () => {
-    expect(evaluateWorkflowActionPolicy(canonicalSource)).toEqual([]);
-    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(canonicalSource, registry)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource, registry)).toEqual([]);
   });
 
   it.each(['v6', 'main', checkout.sha.slice(0, 7), checkout.sha.toUpperCase(), 'not-a-sha'])(
@@ -522,14 +475,14 @@ describe('immutable workflow action policy', () => {
         with:
           uses: attacker/action@v1
 `;
-    expect(evaluateWorkflowActionPolicy(inertSource)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(inertSource, registry)).toEqual([]);
   });
 
   it('does not treat a release topology or permissions change as an action-policy violation', () => {
     const mutated = canonicalReleaseSource
       .replace('contents: read', 'contents: write')
       .replace('      - name: Upload the immutable candidate', '      - name: Extra run-only step\n        run: echo unchanged-action-policy\n\n      - name: Upload the immutable candidate');
-    expect(evaluateWorkflowActionPolicy(mutated)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(mutated, registry)).toEqual([]);
   });
 
   it('fails closed on malformed YAML and executable step shape', () => {
@@ -604,7 +557,7 @@ describe('reviewed action update policy', () => {
   });
 
   it('accepts the registry pin and fails closed on an unenrolled SHA, mutable tag and bad version comment', () => {
-    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource)).toEqual([]);
+    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource, registry)).toEqual([]);
 
     const unknownUpdate = canonicalReleaseSource.replace(
       reviewedCheckout,
@@ -649,19 +602,19 @@ describe('reviewed action update policy', () => {
       - run: echo safe
         env:
           NOTE: gh pr merge --auto
-`)).toEqual([]);
+`, registry)).toEqual([]);
   });
 
   it('fails closed on workflow alias exhaustion', () => {
     const aliases = Array.from({ length: 101 }, () => '*job').join(', ');
     const source = `job: &job { runs-on: ubuntu-latest, steps: [] }\njobs: { aliases: [${aliases}] }\n`;
-    expect(() => evaluateWorkflowActionPolicy(source)).not.toThrow();
+    expect(() => evaluateWorkflowActionPolicy(source, registry)).not.toThrow();
     expectRejectedAction(source, 'yaml');
   });
 });
 
 function expectRejectedAction(source: string, rule: string): void {
-  expect(evaluateWorkflowActionPolicy(source)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
+  expect(evaluateWorkflowActionPolicy(source, registry)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
 }
 
 describe('reviewed actions registry', () => {
@@ -761,5 +714,53 @@ describe('reviewed actions registry', () => {
   it('rejects a workflow pinned to a SHA the registry no longer lists', () => {
     const stale = canonicalReleaseSource.replace(reviewedActionReference('actions/checkout'), `actions/checkout@${unreviewedSha}`);
     expectRejectedAction(stale, 'reviewed-action');
+  });
+
+  it('loads the canonical registry for policy use without violations', () => {
+    expect(loadReviewedRegistryForPolicy(canonicalRegistrySource)).toEqual({ registry, violations: [] });
+  });
+
+  it.each([
+    ['malformed JSON', '{ "actions": '],
+    ['an unknown top-level key', registryWith((value) => {
+      value.extra = {};
+    })],
+    ['a short SHA', registryWith((value) => {
+      value.actions['actions/checkout'].sha = checkout.sha.slice(0, 7);
+    })],
+  ])('reports %s as a violation instead of throwing', (_label, source) => {
+    const loaded = loadReviewedRegistryForPolicy(source);
+    expect(loaded.registry).toBeUndefined();
+    expect(loaded.violations).toEqual([{ rule: 'reviewed-registry', message: expect.not.stringContaining(REVIEWED_ACTIONS_PATH) as string }]);
+  });
+});
+
+describe('reviewed registry usage', () => {
+  const workflowsDirectory = resolve(repositoryRoot, '.github/workflows');
+  const workflowSources = readdirSync(workflowsDirectory)
+    .filter(name => /\.ya?ml$/u.test(name))
+    .map(name => readFileSync(resolve(workflowsDirectory, name), 'utf8'));
+  const withExtraEntry = {
+    ...registry,
+    actions: { ...registry.actions, 'owner/unused': { sha: unreviewedSha, tag: 'v1.0.0' } },
+  };
+
+  it('finds every canonical registry entry in some workflow', () => {
+    expect(findUnusedReviewedActions(registry, workflowSources)).toEqual([]);
+  });
+
+  it('reports an entry that no workflow uses', () => {
+    expect(findUnusedReviewedActions(withExtraEntry, workflowSources)).toEqual([
+      { rule: 'unused-registry-entry', message: 'owner/unused is in the reviewed registry but no workflow uses it' },
+    ]);
+  });
+
+  it('reports every entry once the workflows stop using them', () => {
+    expect(findUnusedReviewedActions(registry, [])).toHaveLength(Object.keys(registry.actions).length);
+  });
+
+  it('counts job-level uses and skips workflows it cannot parse', () => {
+    const jobLevel = `jobs:\n  call:\n    uses: owner/unused@${unreviewedSha}\n`;
+    expect(findUnusedReviewedActions(withExtraEntry, [...workflowSources, jobLevel, 'jobs: [unterminated\n'])).toEqual([]);
   });
 });

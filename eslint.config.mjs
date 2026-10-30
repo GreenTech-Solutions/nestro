@@ -27,8 +27,6 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/tools/artifactProvenance.ts': { maxLines: 518, maxFunctionLines: 74 },
   'src/tools/artifactProvenanceCli.ts': { maxFunctionLines: 102 },
   'src/tools/auditSignatures.ts': { maxFunctionLines: 77 },
-  'src/tools/ciPolicy.ts': { maxLines: 839, maxFunctionLines: 153 },
-  'src/tools/ciPolicyCli.ts': { maxFunctionLines: 89 },
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },
   'src/tools/releaseCandidateCli.ts': { maxLines: 309, maxFunctionLines: 80 },
   'src/tools/releasePrepareCli.ts': { maxFunctionLines: 65 },
