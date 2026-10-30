@@ -91,7 +91,9 @@ node scripts/screenshots/capture.mjs --out images
 ```
 
 It builds the fixture, drives VS Code through the four states, captures each window, and crops
-and downscales the frames the same way this document describes.
+and downscales the frames the same way this document describes. The window settings and the
+driver's wait times live in `scripts/screenshots/config.json`; the row-recording hook it appends
+to the temporary extension copy is `scripts/screenshots/hook.cjs`.
 
 Manual fallback, e.g. on another OS or to capture a one-off variant:
 

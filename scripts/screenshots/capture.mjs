@@ -28,23 +28,8 @@ const TITLE_BAR_OFFSET_PT = 34; // below the native title bar, above the Activit
 const BOTTOM_SEARCH_MARGIN_PT = 40; // stays above the status bar when searching for content
 const CONTENT_BOTTOM_MARGIN_PT = 20; // breathing room kept below the last detected content row
 
-const QUIET_SETTINGS = {
-  'workbench.colorTheme': 'Dark Modern',
-  'workbench.startupEditor': 'none',
-  'window.zoomLevel': 0,
-  'workbench.tips.enabled': false,
-  'update.mode': 'none',
-  'telemetry.telemetryLevel': 'off',
-  'extensions.autoUpdate': 'off',
-  'security.workspace.trust.enabled': false,
-  'workbench.editor.showTabs': 'none',
-  'window.restoreWindows': 'none',
-  'workbench.secondarySideBar.defaultVisibility': 'hidden',
-  'chat.commandCenter.enabled': false,
-  'workbench.activityBar.location': 'default',
-  'workbench.sideBar.location': 'left',
-  'window.commandCenter': false,
-};
+// Settings shared with driver.cjs: user-data-dir settings and the driver's wait/target parameters.
+const CONFIG = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, 'config.json'), 'utf8'));
 
 // Reads the value that follows a flag, rejecting a missing value or one that is itself
 // another flag, so a typo like a trailing `--out` prints a usage error instead of a TypeError.
@@ -191,13 +176,11 @@ function buildInstrumentedExtension(extensionDir) {
     );
   }
   // nestro.pickVersion only accepts the tree's own PackageItem instances
-  // (resolvePackageItem() rejects anything else); this records them as the
+  // (resolvePackageItem() rejects anything else); hook.cjs records them as the
   // instrumented copy of the extension constructs them, so the driver can
   // pass a live one back into the command. The repository's own out/ is
   // never touched — only this temporary copy is patched.
-  const hook = '\nglobalThis.__nestroShots = { items: [] };\n'
-    + '{ const Base = PackageItem; PackageItem = class extends Base { '
-    + 'constructor(...args) { super(...args); globalThis.__nestroShots.items.push(this); } }; }\n';
+  const hook = `\n${fs.readFileSync(path.join(SCRIPT_DIR, 'hook.cjs'), 'utf8')}`;
   fs.writeFileSync(bundlePath, bundle + hook);
 }
 
@@ -205,7 +188,7 @@ function buildUserDataDir() {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-ud-'));
   const userDir = path.join(userDataDir, 'User');
   fs.mkdirSync(userDir, { recursive: true });
-  fs.writeFileSync(path.join(userDir, 'settings.json'), JSON.stringify(QUIET_SETTINGS, null, 2));
+  fs.writeFileSync(path.join(userDir, 'settings.json'), JSON.stringify(CONFIG.userSettings, null, 2));
   return userDataDir;
 }
 
@@ -489,14 +472,6 @@ async function main() {
       extensionTestsEnv: {
         NESTRO_CAPTURE_STATES: options.states.join(','),
         NESTRO_CAPTURE_MARKERS_DIR: markersDir,
-        NESTRO_CAPTURE_PARAMS: JSON.stringify({
-          updateWaitMs: 30000,
-          auditWaitMs: 30000,
-          filter: 'patch',
-          pickWaitMs: 8000,
-          rowDown: 4,
-          pickName: 'express',
-        }),
       },
     });
     // Aborts any in-progress marker wait as soon as VS Code exits, successfully or not, so a
