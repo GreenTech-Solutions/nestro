@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
 import { validatePrepareReleaseConfig } from './releaseAnalyzer';
+import { bundleFileName, bundleMemberNames, bundleUploadPaths, CANDIDATE_FILE, candidateKey, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET, registryDownloadUrl, RELEASE_CONTRACT } from './releaseContract';
 import { assertNoBuildOrCheckout, assertPublishSourceBoundary, SCRIPT_CHECKOUT_STEP_NAME } from './releasePublishSource';
 import { add, asRecord, asString, exactKeys, executableRun, findStep, hasAction, hasRun, isRecord, keys, normalizedRun, steps } from './releaseWorkflowSteps';
 import type { ReleaseWorkflowPolicyViolation, UnknownRecord } from './releaseWorkflowSteps';
@@ -26,14 +27,14 @@ const CANDIDATE_ACTIONS = {
 const PREPARE_TRIGGER = {
   workflow_run: {
     types: ['completed'],
-    workflows: ['Verify'],
+    workflows: [RELEASE_CONTRACT.workflows.verifyName],
   },
 } as const;
 const CANDIDATE_TRIGGER = PREPARE_TRIGGER;
 const DISPATCH_TRIGGER = {
   workflow_run: {
     types: ['completed'],
-    workflows: ['Release candidate'],
+    workflows: [RELEASE_CONTRACT.workflows.releaseCandidateName],
   },
 } as const;
 const PUBLISH_TRIGGER = {
@@ -98,18 +99,18 @@ const POST_PUBLISH_COMPARE_RUN = [
   '[[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]',
   '[[ "$VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]',
   'mkdir -p dist/published',
-  'marketplace_url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$name/$VERSION/vspackage"',
-  'openvsx_url="https://open-vsx.org/api/$publisher/$name/$VERSION/file/$publisher.$name-$VERSION.vsix"',
+  `marketplace_url="${registryDownloadUrl('marketplace', { name: '$name', publisher: '$publisher', version: '$VERSION' })}"`,
+  `openvsx_url="${registryDownloadUrl('openVsx', { name: '$name', publisher: '$publisher', version: '$VERSION' })}"`,
   'curl_args=(',
   '  --fail --silent --show-error --location --compressed',
   '  --proto \'=https\' --proto-redir \'=https\' --max-redirs 3',
-  '  --connect-timeout 10 --max-time 120 --max-filesize 1126757',
+  `  --connect-timeout 10 --max-time 120 --max-filesize ${COMPRESSED_SIZE_BUDGET_BYTES}`,
   '  --retry 45 --retry-delay 20 --retry-all-errors --retry-max-time 900',
   ')',
   'curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix',
   'curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix',
-  'test "$(wc -c < dist/published/marketplace.vsix)" -le 1126757',
-  'test "$(wc -c < dist/published/openvsx.vsix)" -le 1126757',
+  `test "$(wc -c < dist/published/marketplace.vsix)" -le ${COMPRESSED_SIZE_BUDGET_BYTES}`,
+  `test "$(wc -c < dist/published/openvsx.vsix)" -le ${COMPRESSED_SIZE_BUDGET_BYTES}`,
   'python3 - "$CANDIDATE_VSIX" dist/published/marketplace.vsix dist/published/openvsx.vsix <<\'PY\'',
   'import hashlib',
   'import json',
@@ -120,10 +121,10 @@ const POST_PUBLISH_COMPARE_RUN = [
   'import zipfile',
   '',
   'EXTENSION_PREFIX = "extension/"',
-  'MAX_PACKAGED_FILES = 26',
-  'MAX_COMPRESSED_BYTES = 1126757',
-  'MAX_ENTRY_BYTES = 5242880',
-  'MAX_UNCOMPRESSED_BYTES = 10485760',
+  `MAX_PACKAGED_FILES = ${PACKAGED_FILE_COUNT_BUDGET}`,
+  `MAX_COMPRESSED_BYTES = ${COMPRESSED_SIZE_BUDGET_BYTES}`,
+  `MAX_ENTRY_BYTES = ${RELEASE_CONTRACT.vsixBudget.maxEntryBytes}`,
+  `MAX_UNCOMPRESSED_BYTES = ${RELEASE_CONTRACT.vsixBudget.maxUncompressedBytes}`,
   '',
   'def fail(message):',
   '    raise SystemExit(message)',
@@ -199,24 +200,29 @@ const POST_PUBLISH_COMPARE_RUN = [
   'PY',
 ].join('\n');
 
+const CANDIDATE_DIRECTORY = 'dist/release-candidate';
+const candidateJq = (key: string): string => `.${candidateKey(key)}`;
+const referencesCandidateKeys = (run: string, keys: readonly string[]): boolean => keys.every(key => run.includes(candidateJq(key)));
+const shellWords = (names: readonly string[]): string => names.map(name => name.includes('$') ? `"${name}"` : name).join(' ');
+
 const FINALIZER_TAG_VERIFY_RUN = [
   'set -euo pipefail',
-  'candidate=dist/release-candidate/candidate.json',
-  'version="$(jq -r \'.version\' "$candidate")"',
-  'source_sha="$(jq -r \'.sourceSha\' "$candidate")"',
-  'vsix_file="$(jq -r \'.vsixFile\' "$candidate")"',
+  `candidate=${CANDIDATE_DIRECTORY}/${CANDIDATE_FILE}`,
+  `version="$(jq -r '${candidateJq('version')}' "$candidate")"`,
+  `source_sha="$(jq -r '${candidateJq('sourceSha')}' "$candidate")"`,
+  `vsix_file="$(jq -r '${candidateJq('vsixFile')}' "$candidate")"`,
   'test "$GITHUB_REF" = "refs/tags/v$version"',
   'tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"',
   'test "$(jq -r \'.object.type\' <<<"$tag_json")" = commit',
   'test "$(jq -r \'.object.sha\' <<<"$tag_json")" = "$source_sha"',
-  '(cd dist/release-candidate && sha256sum --check --strict "$vsix_file.sha256")',
-  'expected_members="$(printf \'%s\\n\' "$vsix_file" "$vsix_file.manifest.txt" "$vsix_file.sha256" sbom.json provenance.json candidate.json | sort)"',
+  `(cd ${CANDIDATE_DIRECTORY} && sha256sum --check --strict "${bundleFileName('digest', '$vsix_file')}")`,
+  `expected_members="$(printf '%s\\n' ${shellWords(bundleMemberNames('candidate', '$vsix_file'))} | sort)"`,
   'actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf \'%f\\n\' | sort)"',
   'test "$actual_members" = "$expected_members"',
-  'test "$(sha256sum "dist/release-candidate/$vsix_file.manifest.txt" | cut -d \' \' -f 1)" = "$(jq -r \'.manifestSha256\' "$candidate")"',
-  'test "$(sha256sum dist/release-candidate/sbom.json | cut -d \' \' -f 1)" = "$(jq -r \'.sbomSha256\' "$candidate")"',
-  'test "$(sha256sum dist/release-candidate/provenance.json | cut -d \' \' -f 1)" = "$(jq -r \'.provenanceSha256\' "$candidate")"',
-  'jq -r \'.notes\' "$candidate" > dist/release-candidate/notes.md',
+  `test "$(sha256sum "${CANDIDATE_DIRECTORY}/${bundleFileName('manifest', '$vsix_file')}" | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('manifestSha256')}' "$candidate")"`,
+  `test "$(sha256sum ${CANDIDATE_DIRECTORY}/${RELEASE_CONTRACT.bundle.sbom} | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('sbomSha256')}' "$candidate")"`,
+  `test "$(sha256sum ${CANDIDATE_DIRECTORY}/${RELEASE_CONTRACT.bundle.provenance} | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('provenanceSha256')}' "$candidate")"`,
+  `jq -r '${candidateJq('notes')}' "$candidate" > ${CANDIDATE_DIRECTORY}/notes.md`,
   '{',
   '  echo "tag=v$version"',
   '  echo "vsix-file=$vsix_file"',
@@ -230,13 +236,8 @@ const FINALIZER_CREATE_RELEASE_RUN = [
   '  exit 0',
   'fi',
   'gh release create "$TAG" \\',
-  '  "dist/release-candidate/$VSIX_FILE" \\',
-  '  "dist/release-candidate/$VSIX_FILE.manifest.txt" \\',
-  '  "dist/release-candidate/$VSIX_FILE.sha256" \\',
-  '  dist/release-candidate/sbom.json \\',
-  '  dist/release-candidate/provenance.json \\',
-  '  dist/release-candidate/candidate.json \\',
-  '  --notes-file dist/release-candidate/notes.md \\',
+  ...bundleMemberNames('candidate', '$VSIX_FILE').map(name => `  ${shellWords([`${CANDIDATE_DIRECTORY}/${name}`])} \\`),
+  `  --notes-file ${CANDIDATE_DIRECTORY}/notes.md \\`,
   '  --title "$TAG" \\',
   '  --verify-tag',
   'echo \'already-released=false\' >> "$GITHUB_OUTPUT"',
@@ -247,7 +248,7 @@ const FINALIZER_EXISTING_RELEASE_RUN = [
   'release="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG")"',
   'test "$(jq -r \'.tag_name\' <<<"$release")" = "$TAG"',
   'mkdir -p dist/existing-release',
-  'expected_names="$(printf \'%s\\n\' candidate.json "$VSIX_FILE" "$VSIX_FILE.manifest.txt" "$VSIX_FILE.sha256" sbom.json provenance.json | sort)"',
+  `expected_names="$(printf '%s\\n' ${shellWords([CANDIDATE_FILE, ...bundleMemberNames('candidate', '$VSIX_FILE').filter(name => name !== CANDIDATE_FILE)])} | sort)"`,
   'unexpected_names="$(jq -r \'.assets[].name\' <<<"$release" | sort | comm -23 - <(printf \'%s\\n\' "$expected_names"))"',
   'test -z "$unexpected_names"',
   'while IFS= read -r name; do',
@@ -292,16 +293,17 @@ function assertStepNames(
   }
 }
 
+const SECRET_NAMES = [RELEASE_CONTRACT.secrets.marketplace, RELEASE_CONTRACT.secrets.openVsx, ...RELEASE_CONTRACT.secrets.rejectedAliases];
+
 function hasSecretReference(value: unknown): boolean {
   if (typeof value === 'string') {
-    return /\bsecrets\.(?:VSCE_PAT|OVSX_PAT|VSCE_TOKEN|OPEN_VSX_TOKEN)\b/u.test(value);
+    return new RegExp(`\\bsecrets\\.(?:${SECRET_NAMES.join('|')})\\b`, 'u').test(value);
   }
   if (Array.isArray(value)) {
     return value.some(hasSecretReference);
   }
   if (isRecord(value)) {
-    return Object.entries(value).some(([key, entry]) => /^(?:VSCE_PAT|OVSX_PAT|VSCE_TOKEN|OPEN_VSX_TOKEN)$/u.test(key)
-      || hasSecretReference(entry));
+    return Object.entries(value).some(([key, entry]) => SECRET_NAMES.includes(key) || hasSecretReference(entry));
   }
   return false;
 }
@@ -519,7 +521,7 @@ export function evaluateReleaseCandidateWorkflowPolicy(source: string): ReleaseW
     return violations;
   }
   const root = parsed.root;
-  assertExactWorkflowRoot(root, 'Release candidate', ['env', 'jobs', 'name', 'on', 'permissions'], violations);
+  assertExactWorkflowRoot(root, RELEASE_CONTRACT.workflows.releaseCandidateName, ['env', 'jobs', 'name', 'on', 'permissions'], violations);
   assertTrigger(root, CANDIDATE_TRIGGER, violations);
   if (!isRecord(root.permissions) || keys(asRecord(root.permissions)).length !== 0) {
     add(violations, 'least-permissions', 'candidate workflow must start with no write permissions');
@@ -573,7 +575,7 @@ export function evaluateReleaseCandidateWorkflowPolicy(source: string): ReleaseW
   const downloadOptions = asRecord(download?.with);
   if (!exactKeys(downloadOptions, ['github-token', 'name', 'path', 'run-id'])
     || downloadOptions?.['run-id'] !== '${{ github.event.workflow_run.id }}'
-    || downloadOptions?.name !== 'verify-evidence-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}'
+    || downloadOptions?.name !== `${RELEASE_CONTRACT.artifactPrefixes.verifyEvidence}\${{ github.event.workflow_run.id }}-\${{ github.event.workflow_run.run_attempt }}`
     || downloadOptions?.path !== 'dist/ci') {
     add(violations, 'exact-artifact', 'candidate must download evidence from the exact completed verification run');
   }
@@ -592,7 +594,7 @@ export function evaluateReleaseCandidateWorkflowPolicy(source: string): ReleaseW
     || uploadOptions?.overwrite !== false
     || uploadOptions?.['retention-days'] !== 90
     || typeof uploadOptions?.name !== 'string'
-    || uploadOptions.path !== 'dist/release-candidate/*.vsix\ndist/release-candidate/*.vsix.manifest.txt\ndist/release-candidate/*.vsix.sha256\ndist/release-candidate/sbom.json\ndist/release-candidate/provenance.json\ndist/release-candidate/candidate.json\n') {
+    || uploadOptions.path !== bundleUploadPaths('candidate', CANDIDATE_DIRECTORY)) {
     add(violations, 'immutable-candidate', 'candidate upload must be immutable, retained and include the exact six-member provenance bundle');
   }
   if (hasRun(job, run => /\bpnpm run build\b|\btsdown\b/u.test(run))) {
@@ -652,7 +654,7 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
   if (artifactResolution === undefined
     || (!executableRun(artifactResolution).includes('/actions/runs/${{ github.event.workflow_run.id }}/artifacts')
       && !executableRun(artifactResolution).includes('/actions/runs/$CANDIDATE_RUN_ID/artifacts'))
-    || !executableRun(artifactResolution).includes('release-candidate-')
+    || !executableRun(artifactResolution).includes(RELEASE_CONTRACT.artifactPrefixes.releaseCandidate)
     || !executableRun(artifactResolution).includes('count')) {
     add(violations, 'exact-artifact', 'dispatch must resolve one candidate artifact from the exact completed candidate run');
   }
@@ -667,13 +669,7 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
   const verify = findStep(job, 'Verify the candidate and source run');
   if (verify === undefined
     || !isFailClosedShellStep(verify)
-    || !executableRun(verify).includes('.sourceSha')
-    || !executableRun(verify).includes('.ciRunId')
-    || !executableRun(verify).includes('.ciRunAttempt')
-    || !executableRun(verify).includes('.digest')
-    || !executableRun(verify).includes('.manifestSha256')
-    || !executableRun(verify).includes('.sbomSha256')
-    || !executableRun(verify).includes('.provenanceSha256')
+    || !referencesCandidateKeys(executableRun(verify), ['sourceSha', 'ciRunId', 'ciRunAttempt', 'digest', 'manifestSha256', 'sbomSha256', 'provenanceSha256'])
     || !executableRun(verify).includes('expected_members')
     || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')) {
     add(violations, 'candidate-integrity', 'dispatch must verify source, candidate run, CI run and every provenance member before tagging');
@@ -794,14 +790,7 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   const verify = findStep(publish, 'Verify the candidate manifest, tag and digest');
   if (verify === undefined
     || !isFailClosedShellStep(verify)
-    || !executableRun(verify).includes('.sourceSha')
-    || !executableRun(verify).includes('.ciRunId')
-    || !executableRun(verify).includes('.candidateRunId')
-    || !executableRun(verify).includes('.digest')
-    || !executableRun(verify).includes('.ciRunAttempt')
-    || !executableRun(verify).includes('.manifestSha256')
-    || !executableRun(verify).includes('.sbomSha256')
-    || !executableRun(verify).includes('.provenanceSha256')
+    || !referencesCandidateKeys(executableRun(verify), ['sourceSha', 'ciRunId', 'candidateRunId', 'digest', 'ciRunAttempt', 'manifestSha256', 'sbomSha256', 'provenanceSha256'])
     || !executableRun(verify).includes('expected_members')
     || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')
     || !executableRun(verify).includes('git/ref/tags/')
@@ -815,7 +804,7 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
     'gh attestation verify "$VSIX_PATH" \\',
     '  --repo "$GITHUB_REPOSITORY" \\',
-    '  --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" \\',
+    `  --signer-workflow "$GITHUB_REPOSITORY/${RELEASE_CONTRACT.workflows.signerPath}" \\`,
     '  --source-ref refs/heads/master \\',
     '  --source-digest "$SOURCE_SHA"',
   ].join('\n');
@@ -836,8 +825,8 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     || !exactKeys(asRecord(postPublish.env), ['CANDIDATE_VSIX', 'VERSION'])
     || asRecord(postPublish.env)?.CANDIDATE_VSIX !== '${{ steps.manifest.outputs.vsix-path }}'
     || asRecord(postPublish.env)?.VERSION !== '${{ steps.manifest.outputs.version }}'
-    || !postPublishRun.includes('marketplace.visualstudio.com')
-    || !postPublishRun.includes('open-vsx.org')
+    || !postPublishRun.includes(new URL(RELEASE_CONTRACT.registries.marketplace.url).hostname)
+    || !postPublishRun.includes(new URL(RELEASE_CONTRACT.registries.openVsx.url).hostname)
     || postPublishRun !== POST_PUBLISH_COMPARE_RUN
     || !postPublishRun.includes('normalized')
     || !postPublishRun.includes('identity')) {
@@ -845,10 +834,11 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   }
   const marketplace = findStep(publish, 'Publish to the Visual Studio Marketplace');
   const openVsx = findStep(publish, 'Publish to Open VSX');
-  if (marketplace === undefined || !exactKeys(asRecord(marketplace?.env), ['VSCE_PAT'])
-    || asRecord(marketplace.env)?.VSCE_PAT !== '${{ secrets.VSCE_PAT }}'
-    || openVsx === undefined || !exactKeys(asRecord(openVsx?.env), ['OVSX_PAT'])
-    || asRecord(openVsx.env)?.OVSX_PAT !== '${{ secrets.OVSX_PAT }}'
+  const { marketplace: marketplaceSecret, openVsx: openVsxSecret } = RELEASE_CONTRACT.secrets;
+  if (marketplace === undefined || !exactKeys(asRecord(marketplace?.env), [marketplaceSecret])
+    || asRecord(marketplace.env)?.[marketplaceSecret] !== `\${{ secrets.${marketplaceSecret} }}`
+    || openVsx === undefined || !exactKeys(asRecord(openVsx?.env), [openVsxSecret])
+    || asRecord(openVsx.env)?.[openVsxSecret] !== `\${{ secrets.${openVsxSecret} }}`
     || marketplace?.uses !== reviewedActionReference('HaaLeo/publish-vscode-extension')
     || openVsx?.uses !== reviewedActionReference('HaaLeo/publish-vscode-extension')) {
     add(violations, 'secret-boundary', 'registry credentials must be scoped to their individual publish steps');
@@ -857,13 +847,13 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   const openVsxWith = asRecord(openVsx?.with);
   if (!exactKeys(marketplaceWith, ['extensionFile', 'pat', 'registryUrl', 'skipDuplicate'])
     || marketplaceWith?.extensionFile !== '${{ steps.manifest.outputs.vsix-path }}'
-    || marketplaceWith?.pat !== '${{ env.VSCE_PAT }}'
-    || marketplaceWith?.registryUrl !== 'https://marketplace.visualstudio.com'
+    || marketplaceWith?.pat !== `\${{ env.${marketplaceSecret} }}`
+    || marketplaceWith?.registryUrl !== RELEASE_CONTRACT.registries.marketplace.url
     || marketplaceWith?.skipDuplicate !== true
     || !exactKeys(openVsxWith, ['extensionFile', 'pat', 'registryUrl', 'skipDuplicate'])
     || openVsxWith?.extensionFile !== '${{ steps.manifest.outputs.vsix-path }}'
-    || openVsxWith?.pat !== '${{ env.OVSX_PAT }}'
-    || openVsxWith?.registryUrl !== 'https://open-vsx.org'
+    || openVsxWith?.pat !== `\${{ env.${openVsxSecret} }}`
+    || openVsxWith?.registryUrl !== RELEASE_CONTRACT.registries.openVsx.url
     || openVsxWith?.skipDuplicate !== true) {
     add(violations, 'publish-bytes', 'both registries must use the reviewed publisher with the same downloaded VSIX and registry URL');
   }

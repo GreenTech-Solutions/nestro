@@ -11,13 +11,13 @@ import {
   readRuntimeDependencies,
   selectDeliveredRuntimeFiles,
 } from './artifactProvenance';
+import { bundleFileName, EVIDENCE_FILE, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
 import { normalizeArtifactOutDir } from './verifyVsix';
 import { readVsixArchive } from './vsixArchive';
 
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RUN_ID_PATTERN = /^[1-9]\d*$/u;
-const SAFE_VSIX_FILE_PATTERN = /^[A-Za-z0-9._-]+\.vsix$/u;
 
 export interface ArtifactProvenanceArgs {
   readonly artifactDir: string;
@@ -77,7 +77,7 @@ function requiredString(value: unknown, label: string): string {
 
 function parseEvidence(value: unknown): CiEvidence {
   if (!isRecord(value)) {
-    throw new Error('evidence.json must be an object');
+    throw new Error(`${EVIDENCE_FILE} must be an object`);
   }
   exactKeys(value, [
     'eventName',
@@ -89,31 +89,31 @@ function parseEvidence(value: unknown): CiEvidence {
     'sourceSha',
     'vsixFile',
     'vsixSha256',
-  ], 'evidence.json');
-  if (value.schemaVersion !== 1 || value.releaseEligible !== false) {
-    throw new Error('evidence.json must use schemaVersion 1 and releaseEligible=false');
+  ], EVIDENCE_FILE);
+  if (value.schemaVersion !== RELEASE_CONTRACT.schemaVersions.evidence || value.releaseEligible !== false) {
+    throw new Error(`${EVIDENCE_FILE} must use schemaVersion ${RELEASE_CONTRACT.schemaVersions.evidence} and releaseEligible=false`);
   }
   if (value.eventName !== 'push' && value.eventName !== 'pull_request' && value.eventName !== 'workflow_dispatch') {
-    throw new Error('evidence.json has an unsupported eventName');
+    throw new Error(`${EVIDENCE_FILE} has an unsupported eventName`);
   }
   const evidence: CiEvidence = {
-    sourceSha: requiredString(value.sourceSha, 'evidence.json sourceSha'),
-    runId: requiredString(value.runId, 'evidence.json runId'),
-    runAttempt: requiredString(value.runAttempt, 'evidence.json runAttempt'),
+    sourceSha: requiredString(value.sourceSha, `${EVIDENCE_FILE} sourceSha`),
+    runId: requiredString(value.runId, `${EVIDENCE_FILE} runId`),
+    runAttempt: requiredString(value.runAttempt, `${EVIDENCE_FILE} runAttempt`),
     eventName: value.eventName,
-    pullRequestHeadSha: value.pullRequestHeadSha === null ? null : requiredString(value.pullRequestHeadSha, 'evidence.json pullRequestHeadSha'),
-    vsixFile: requiredString(value.vsixFile, 'evidence.json vsixFile'),
-    vsixSha256: requiredString(value.vsixSha256, 'evidence.json vsixSha256'),
+    pullRequestHeadSha: value.pullRequestHeadSha === null ? null : requiredString(value.pullRequestHeadSha, `${EVIDENCE_FILE} pullRequestHeadSha`),
+    vsixFile: requiredString(value.vsixFile, `${EVIDENCE_FILE} vsixFile`),
+    vsixSha256: requiredString(value.vsixSha256, `${EVIDENCE_FILE} vsixSha256`),
     releaseEligible: false,
   };
   if (!COMMIT_SHA_PATTERN.test(evidence.sourceSha) || !RUN_ID_PATTERN.test(evidence.runId)
-    || !RUN_ID_PATTERN.test(evidence.runAttempt) || !SAFE_VSIX_FILE_PATTERN.test(evidence.vsixFile)
+    || !RUN_ID_PATTERN.test(evidence.runAttempt) || !VSIX_FILE_PATTERN.test(evidence.vsixFile)
     || !/^[0-9a-f]{64}$/u.test(evidence.vsixSha256)) {
-    throw new Error('evidence.json identity fields are malformed');
+    throw new Error(`${EVIDENCE_FILE} identity fields are malformed`);
   }
   if ((evidence.eventName === 'push' && evidence.pullRequestHeadSha !== null)
     || (evidence.eventName !== 'push' && !COMMIT_SHA_PATTERN.test(evidence.pullRequestHeadSha ?? ''))) {
-    throw new Error('evidence.json pull request identity does not match eventName');
+    throw new Error(`${EVIDENCE_FILE} pull request identity does not match eventName`);
   }
   return evidence;
 }
@@ -148,37 +148,37 @@ export async function writeArtifactProvenanceBundle(
 ): Promise<{ readonly sourceSha: string; readonly vsixFile: string }> {
   const resolvedDir = resolve(cwd, artifactDir);
   const entries = await readdir(resolvedDir);
-  const vsixFiles = entries.filter(entry => SAFE_VSIX_FILE_PATTERN.test(entry));
+  const vsixFiles = entries.filter(entry => VSIX_FILE_PATTERN.test(entry));
   if (vsixFiles.length !== 1) {
     throw new Error(`artifact directory must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = vsixFiles[0];
   const expectedBaseEntries = [
     vsixFile,
-    `${vsixFile}.manifest.txt`,
-    `${vsixFile}.sha256`,
-    'evidence.json',
+    bundleFileName('manifest', vsixFile),
+    bundleFileName('digest', vsixFile),
+    EVIDENCE_FILE,
   ].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
   const actualEntries = [...entries].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
   if (JSON.stringify(actualEntries) !== JSON.stringify(expectedBaseEntries)) {
     throw new Error('artifact directory must contain exactly the verified VSIX, evidence, normalized manifest and digest');
   }
 
-  const evidence = parseEvidence(parseJson(await readFile(join(resolvedDir, 'evidence.json')), 'evidence.json'));
+  const evidence = parseEvidence(parseJson(await readFile(join(resolvedDir, EVIDENCE_FILE)), EVIDENCE_FILE));
   if (evidence.vsixFile !== vsixFile) {
-    throw new Error('evidence.json VSIX filename does not match the artifact directory');
+    throw new Error(`${EVIDENCE_FILE} VSIX filename does not match the artifact directory`);
   }
   const vsixBytes = await readFile(join(resolvedDir, vsixFile));
   const artifactSha256 = sha256Hex(vsixBytes);
   if (artifactSha256 !== evidence.vsixSha256) {
-    throw new Error('VSIX bytes do not match evidence.json digest');
+    throw new Error(`VSIX bytes do not match ${EVIDENCE_FILE} digest`);
   }
-  const sidecarDigest = parseDigest(await readFile(join(resolvedDir, `${vsixFile}.sha256`), 'utf8'), vsixFile);
+  const sidecarDigest = parseDigest(await readFile(join(resolvedDir, bundleFileName('digest', vsixFile)), 'utf8'), vsixFile);
   if (sidecarDigest !== artifactSha256) {
     throw new Error('VSIX digest sidecar does not match the artifact bytes');
   }
   const archiveEntries = readVsixArchive(vsixBytes);
-  const manifestFile = `${vsixFile}.manifest.txt`;
+  const manifestFile = bundleFileName('manifest', vsixFile);
   const manifestContents = await readFile(join(resolvedDir, manifestFile), 'utf8');
   const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
   if (manifestViolation !== undefined) {
@@ -207,7 +207,7 @@ export async function writeArtifactProvenanceBundle(
   const ciRunAttempt = requireEnvironment(environment.ciRunAttempt, evidence.runAttempt, 'PROVENANCE_CI_RUN_ATTEMPT');
   const eventName = requireEnvironment(environment.eventName, evidence.eventName, 'PROVENANCE_EVENT_NAME');
   if (sourceSha !== evidence.sourceSha || ciRunId !== evidence.runId || ciRunAttempt !== evidence.runAttempt || eventName !== evidence.eventName) {
-    throw new Error('provenance metadata does not match evidence.json identity');
+    throw new Error(`provenance metadata does not match ${EVIDENCE_FILE} identity`);
   }
   if (eventName !== 'push' && eventName !== 'pull_request' && eventName !== 'workflow_dispatch') {
     throw new Error('PROVENANCE_EVENT_NAME must be push, pull_request or workflow_dispatch');
@@ -215,7 +215,7 @@ export async function writeArtifactProvenanceBundle(
   const repository = requireEnvironment(environment.repository, 'local/repository', 'PROVENANCE_REPOSITORY');
   const signerWorkflow = requireEnvironment(
     environment.signerWorkflow,
-    `${repository}/.github/workflows/ci.yml`,
+    `${repository}/${RELEASE_CONTRACT.workflows.signerPath}`,
     'PROVENANCE_SIGNER_WORKFLOW',
   );
   const provenance = buildArtifactProvenance({

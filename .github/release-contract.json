@@ -1,0 +1,68 @@
+{
+  "artifactPrefixes": {
+    "releaseCandidate": "release-candidate-",
+    "verifyEvidence": "verify-evidence-"
+  },
+  "bundle": {
+    "candidate": "candidate.json",
+    "candidateMembers": ["vsix", "manifest", "digest", "sbom", "provenance", "candidate"],
+    "digestSuffix": ".sha256",
+    "evidence": "evidence.json",
+    "manifestSuffix": ".manifest.txt",
+    "provenance": "provenance.json",
+    "sbom": "sbom.json",
+    "verifyMembers": ["vsix", "manifest", "digest", "evidence", "sbom", "provenance"],
+    "vsixExtension": ".vsix"
+  },
+  "candidateKeys": [
+    "candidateRunId",
+    "ciRunAttempt",
+    "ciRunId",
+    "digest",
+    "digestFile",
+    "manifestFile",
+    "manifestSha256",
+    "notes",
+    "provenanceFile",
+    "provenanceSha256",
+    "sbomFile",
+    "sbomSha256",
+    "schemaVersion",
+    "sourceSha",
+    "version",
+    "vsixFile"
+  ],
+  "registries": {
+    "marketplace": {
+      "downloadPath": "/_apis/public/gallery/publishers/{publisher}/vsextensions/{name}/{version}/vspackage",
+      "url": "https://marketplace.visualstudio.com"
+    },
+    "openVsx": {
+      "downloadPath": "/api/{publisher}/{name}/{version}/file/{publisher}.{name}-{version}.vsix",
+      "url": "https://open-vsx.org"
+    }
+  },
+  "schemaVersions": {
+    "candidate": 2,
+    "evidence": 1,
+    "provenance": 1
+  },
+  "secrets": {
+    "marketplace": "VSCE_PAT",
+    "openVsx": "OVSX_PAT",
+    "rejectedAliases": ["VSCE_TOKEN", "OPEN_VSX_TOKEN"]
+  },
+  "vsixBudget": {
+    "baselineCompressedBytes": 901406,
+    "baselinePackagedFileCount": 16,
+    "compressedHeadroomPercent": 25,
+    "maxEntryBytes": 5242880,
+    "maxUncompressedBytes": 10485760,
+    "packagedFileCountHeadroom": 10
+  },
+  "workflows": {
+    "releaseCandidateName": "Release candidate",
+    "signerPath": ".github/workflows/ci.yml",
+    "verifyName": "Verify"
+  }
+}

@@ -89,7 +89,7 @@ ref name alone:
 |---|---|---|---|
 | Verify evidence | `ci.yml` job `package`, into `$CI_ARTIFACT_DIR` (`dist/ci`) | `*.vsix`, `*.vsix.manifest.txt`, `*.vsix.sha256` (from `pnpm run check:vsce`), `evidence.json` (from `pnpm run ci:evidence`), `sbom.json` + `provenance.json` (from `pnpm run release:provenance`) | `verify-evidence-<run_id>-<run_attempt>`, retained 7 days |
 | GitHub attestation | `ci.yml` job `package`, step "Attest the exact VSIX subject" (`actions/attest-build-provenance`), only on `push` to `master` | a signed provenance attestation on the VSIX subject digest | attached to the workflow run, verified later with `gh attestation verify` |
-| Release candidate | `release-candidate.yml`, `pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version 2: `sourceSha`, `ciRunId`, `ciRunAttempt`, `version`, `vsixFile`, `digest`, `manifestSha256`, `sbomSha256`, `provenanceSha256`, `notes`, …) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
+| Release candidate | `release-candidate.yml`, `pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version and key list: `candidateKeys` and `schemaVersions` in `.github/release-contract.json`) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
 | GitHub Release | `release.yml` job `finalize` | `<name>.vsix`, `.manifest.txt`, `.sha256`, `sbom.json`, `provenance.json`, `candidate.json` | attached to the `v<version>` GitHub Release |
 
 Recompute and compare digests by hand instead of trusting the number in a JSON file:
@@ -108,14 +108,14 @@ it independently.
 ### Size and file-count budget
 
 `pnpm run check:vsce` (backed by `src/tools/vsixPolicy.ts`) rejects a package that exceeds the
-measured baseline plus headroom: compressed size budget `1126757` bytes (baseline `901406` bytes
-+ 25%), packaged file count budget `26` files (baseline `16` files + 10). It also runs the
+measured baseline plus headroom: the compressed size budget and the packaged file count budget are
+derived from `vsixBudget` in `.github/release-contract.json` (baseline plus headroom). It also runs the
 allowlist/forbidden-class/secret-pattern checks described in `src/tools/vsixPolicy.ts` over the
 exact package `vsce` produced. The post-publish comparison in §6 applies these same two budgets
 the same way: the file count is the entries under `extension/` (the two `vsce` metadata entries do
-not count) and the byte budget is the size of the `.vsix` file itself. Changing either budget
-number is a separate, reviewed commit that updates `src/tools/vsixPolicy.ts`, the `release.yml`
-comparison step and its copy in `src/tools/releaseWorkflowPolicy.ts` together, not something to
+not count) and the byte budget is the size of the `.vsix` file itself. Changing a budget is a
+separate, reviewed commit that edits `.github/release-contract.json` and the matching literals in
+the `release.yml` comparison step (`pnpm run ci:policy` fails until they agree), not something to
 adjust ad hoc during a release.
 
 ## 3. Audits and signatures

@@ -1,9 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
+import { bundleUploadPaths, RELEASE_CONTRACT } from './releaseContract';
 import { FULL_SHA_PATTERN, REVIEWED_REGISTRY, reviewedActionReference } from './reviewedActions';
 
 export const CODEOWNERS_PATH = '.github/CODEOWNERS';
-export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
+export const CI_WORKFLOW_PATH = RELEASE_CONTRACT.workflows.signerPath;
 export const DEPENDABOT_CONFIG_PATH = '.github/dependabot.yml';
 export const WORKFLOWS_DIRECTORY_PATH = '.github/workflows';
 
@@ -182,7 +183,7 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
       PROVENANCE_CI_RUN_ID: '${{ github.run_id }}',
       PROVENANCE_EVENT_NAME: '${{ github.event_name }}',
       PROVENANCE_REPOSITORY: '${{ github.repository }}',
-      PROVENANCE_SIGNER_WORKFLOW: '${{ github.repository }}/.github/workflows/ci.yml',
+      PROVENANCE_SIGNER_WORKFLOW: `\${{ github.repository }}/${RELEASE_CONTRACT.workflows.signerPath}`,
       PROVENANCE_SOURCE_SHA: '${{ env.EXPECTED_SHA }}',
     },
     name: 'Write deterministic provenance bundle',
@@ -208,9 +209,9 @@ const PACKAGE_STEPS: readonly UnknownRecord[] = [
     uses: reviewedActionReference('actions/upload-artifact'),
     with: {
       'if-no-files-found': 'error',
-      name: 'verify-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
+      name: `${RELEASE_CONTRACT.artifactPrefixes.verifyEvidence}\${{ github.run_id }}-\${{ github.run_attempt }}`,
       overwrite: false,
-      path: '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n${{ env.CI_ARTIFACT_DIR }}/sbom.json\n${{ env.CI_ARTIFACT_DIR }}/provenance.json\n',
+      path: bundleUploadPaths('verify', '${{ env.CI_ARTIFACT_DIR }}'),
       'retention-days': 7,
     },
   },
@@ -648,7 +649,7 @@ function assertPackage(job: UnknownRecord, violations: CiPolicyViolation[]): voi
   if (options['if-no-files-found'] !== 'error' || options.overwrite !== false || options['retention-days'] !== 7) {
     add(violations, 'immutable-artifact', 'upload must fail closed, forbid overwrite and retain evidence briefly');
   }
-  if (options.path !== '${{ env.CI_ARTIFACT_DIR }}/*.vsix\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.manifest.txt\n${{ env.CI_ARTIFACT_DIR }}/*.vsix.sha256\n${{ env.CI_ARTIFACT_DIR }}/evidence.json\n${{ env.CI_ARTIFACT_DIR }}/sbom.json\n${{ env.CI_ARTIFACT_DIR }}/provenance.json\n') {
+  if (options.path !== bundleUploadPaths('verify', '${{ env.CI_ARTIFACT_DIR }}')) {
     add(violations, 'artifact-members', 'upload must contain only the verified six-member provenance bundle');
   }
 }
@@ -735,8 +736,7 @@ export function evaluateCiWorkflowPolicy(source: string): CiPolicyViolation[] {
   }
   const violations: CiPolicyViolation[] = [];
   const root = asRecord(value, 'workflow', violations);
-  const rootKeys = Object.keys(root).sort((left, right) => left.localeCompare(right));
-  if (!isDeepStrictEqual(rootKeys, ['env', 'jobs', 'name', 'on', 'permissions']) || root.name !== 'Verify') {
+  if (!isDeepStrictEqual(Object.keys(root).sort((left, right) => left.localeCompare(right)), ['env', 'jobs', 'name', 'on', 'permissions']) || root.name !== RELEASE_CONTRACT.workflows.verifyName) {
     add(violations, 'workflow-contract', 'workflow must contain only the reviewed Verify keys');
   }
   if (root.defaults !== undefined) {

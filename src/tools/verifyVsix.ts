@@ -1,11 +1,10 @@
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { bundleFileName, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET } from './releaseContract';
 import {
   collectSymlinkCandidates,
   compareNormalizedPaths,
-  COMPRESSED_SIZE_BUDGET_BYTES,
   evaluateVsixPolicy,
-  PACKAGED_FILE_COUNT_BUDGET,
   VSIX_EXTENSION_PREFIX,
 } from './vsixPolicy';
 import type { PolicyViolation, VsixPolicyReport } from './vsixPolicy';
@@ -415,8 +414,8 @@ export async function verifyVsixPackage(io: VsixVerifierIo, options: VerifyVsixO
   const outDir = normalizeArtifactOutDir(options.outDir);
   const identity = readSourceExtensionIdentity(await io.readBinaryFile('package.json'));
   const vsixPath = path.posix.join(outDir, `${identity.name}-${identity.version}.vsix`);
-  const manifestPath = `${vsixPath}.manifest.txt`;
-  const digestPath = `${vsixPath}.sha256`;
+  const manifestPath = bundleFileName('manifest', vsixPath);
+  const digestPath = bundleFileName('digest', vsixPath);
   const artifactPaths = [vsixPath, manifestPath, digestPath];
   const lockPath = `${vsixPath}.lock`;
 

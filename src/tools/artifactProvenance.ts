@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { RELEASE_CONTRACT } from './releaseContract';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -9,10 +10,9 @@ const SAFE_WORKFLOW_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/\.github\/work
 const MANIFEST_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)$/u;
 const RUNTIME_FILE_PATTERN = /^extension\/(?:package\.json|out\/[A-Za-z0-9._$@-]+\.cjs)$/u;
 
-export const ARTIFACT_SBOM_FILE = 'sbom.json';
-export const ARTIFACT_PROVENANCE_FILE = 'provenance.json';
-export const ARTIFACT_PROVENANCE_SCHEMA_VERSION = 1 as const;
-export const RELEASE_CANDIDATE_SCHEMA_VERSION = 2 as const;
+export const ARTIFACT_SBOM_FILE = RELEASE_CONTRACT.bundle.sbom;
+export const ARTIFACT_PROVENANCE_FILE = RELEASE_CONTRACT.bundle.provenance;
+export const ARTIFACT_PROVENANCE_SCHEMA_VERSION = RELEASE_CONTRACT.schemaVersions.provenance;
 
 export interface ArtifactPackageIdentity {
   readonly name: string;
@@ -76,7 +76,7 @@ export interface ArtifactSbomExpectation {
 }
 
 export interface ArtifactProvenance {
-  readonly schemaVersion: typeof ARTIFACT_PROVENANCE_SCHEMA_VERSION;
+  readonly schemaVersion: number;
   readonly sourceSha: string;
   readonly ciRunId: string;
   readonly ciRunAttempt: string;
