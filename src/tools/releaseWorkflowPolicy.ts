@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
 import { validatePrepareReleaseConfig } from './releaseAnalyzer';
-import { bundleFileName, bundleMemberNames, bundleUploadPaths, CANDIDATE_FILE, candidateKey, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET, registryDownloadUrl, RELEASE_CONTRACT } from './releaseContract';
-import { assertNoBuildOrCheckout, assertPublishSourceBoundary, SCRIPT_CHECKOUT_STEP_NAME } from './releasePublishSource';
+import { bundleUploadPaths, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET, registryDownloadUrl, RELEASE_CONTRACT } from './releaseContract';
+import { assertScriptCheckoutBoundary, assertScriptStep, isReleaseScriptCall, releaseScriptRun, SCRIPT_CHECKOUT_STEP_NAME } from './releasePublishSource';
 import { add, asRecord, asString, exactKeys, executableRun, findStep, hasAction, hasRun, isRecord, keys, normalizedRun, steps } from './releaseWorkflowSteps';
 import type { ReleaseWorkflowPolicyViolation, UnknownRecord } from './releaseWorkflowSteps';
 import { reviewedActionReference } from './reviewedActions';
@@ -57,16 +57,17 @@ const PREPARE_RUN_FILTER = 'github.event.workflow_run.event == \'push\' && githu
 const CANDIDATE_RUN_FILTER = PREPARE_RUN_FILTER;
 const DISPATCH_RUN_FILTER = 'github.event.workflow_run.conclusion == \'success\' && github.event.workflow_run.head_branch == \'master\'';
 const PUBLISH_STEP_NAMES = [
+  SCRIPT_CHECKOUT_STEP_NAME,
   'Verify the candidate workflow run',
   'Resolve the exact candidate artifact',
   'Download the exact candidate artifact',
   'Verify the candidate manifest, tag and digest',
-  SCRIPT_CHECKOUT_STEP_NAME,
   'Verify protected candidate attestation',
   'Publish to the Visual Studio Marketplace',
   'Publish to Open VSX',
   'Compare post-publish registry copies',
 ] as const;
+const CANDIDATE_DIRECTORY = 'dist/release-candidate';
 const PUBLISH_RUN_FILTER = 'startsWith(github.ref, \'refs/tags/v\')';
 
 function assertToolchain(job: UnknownRecord | undefined, label: string, violations: ReleaseWorkflowPolicyViolation[]): void {
@@ -200,72 +201,11 @@ const POST_PUBLISH_COMPARE_RUN = [
   'PY',
 ].join('\n');
 
-const CANDIDATE_DIRECTORY = 'dist/release-candidate';
-const candidateJq = (key: string): string => `.${candidateKey(key)}`;
-const referencesCandidateKeys = (run: string, keys: readonly string[]): boolean => keys.every(key => run.includes(candidateJq(key)));
-const shellWords = (names: readonly string[]): string => names.map(name => name.includes('$') ? `"${name}"` : name).join(' ');
-
-const FINALIZER_TAG_VERIFY_RUN = [
-  'set -euo pipefail',
-  `candidate=${CANDIDATE_DIRECTORY}/${CANDIDATE_FILE}`,
-  `version="$(jq -r '${candidateJq('version')}' "$candidate")"`,
-  `source_sha="$(jq -r '${candidateJq('sourceSha')}' "$candidate")"`,
-  `vsix_file="$(jq -r '${candidateJq('vsixFile')}' "$candidate")"`,
-  'test "$GITHUB_REF" = "refs/tags/v$version"',
-  'tag_json="$(gh api "repos/${{ github.repository }}/git/ref/tags/v$version")"',
-  'test "$(jq -r \'.object.type\' <<<"$tag_json")" = commit',
-  'test "$(jq -r \'.object.sha\' <<<"$tag_json")" = "$source_sha"',
-  `(cd ${CANDIDATE_DIRECTORY} && sha256sum --check --strict "${bundleFileName('digest', '$vsix_file')}")`,
-  `expected_members="$(printf '%s\\n' ${shellWords(bundleMemberNames('candidate', '$vsix_file'))} | sort)"`,
-  'actual_members="$(find dist/release-candidate -maxdepth 1 -type f -printf \'%f\\n\' | sort)"',
-  'test "$actual_members" = "$expected_members"',
-  `test "$(sha256sum "${CANDIDATE_DIRECTORY}/${bundleFileName('manifest', '$vsix_file')}" | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('manifestSha256')}' "$candidate")"`,
-  `test "$(sha256sum ${CANDIDATE_DIRECTORY}/${RELEASE_CONTRACT.bundle.sbom} | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('sbomSha256')}' "$candidate")"`,
-  `test "$(sha256sum ${CANDIDATE_DIRECTORY}/${RELEASE_CONTRACT.bundle.provenance} | cut -d ' ' -f 1)" = "$(jq -r '${candidateJq('provenanceSha256')}' "$candidate")"`,
-  `jq -r '${candidateJq('notes')}' "$candidate" > ${CANDIDATE_DIRECTORY}/notes.md`,
-  '{',
-  '  echo "tag=v$version"',
-  '  echo "vsix-file=$vsix_file"',
-  '} >> "$GITHUB_OUTPUT"',
-].join('\n');
-
-const FINALIZER_CREATE_RELEASE_RUN = [
-  'set -euo pipefail',
-  'if gh release view "$TAG" >/dev/null 2>&1; then',
-  '  echo \'already-released=true\' >> "$GITHUB_OUTPUT"',
-  '  exit 0',
-  'fi',
-  'gh release create "$TAG" \\',
-  ...bundleMemberNames('candidate', '$VSIX_FILE').map(name => `  ${shellWords([`${CANDIDATE_DIRECTORY}/${name}`])} \\`),
-  `  --notes-file ${CANDIDATE_DIRECTORY}/notes.md \\`,
-  '  --title "$TAG" \\',
-  '  --verify-tag',
-  'echo \'already-released=false\' >> "$GITHUB_OUTPUT"',
-].join('\n');
-
-const FINALIZER_EXISTING_RELEASE_RUN = [
-  'set -euo pipefail',
-  'release="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG")"',
-  'test "$(jq -r \'.tag_name\' <<<"$release")" = "$TAG"',
-  'mkdir -p dist/existing-release',
-  `expected_names="$(printf '%s\\n' ${shellWords([CANDIDATE_FILE, ...bundleMemberNames('candidate', '$VSIX_FILE').filter(name => name !== CANDIDATE_FILE)])} | sort)"`,
-  'unexpected_names="$(jq -r \'.assets[].name\' <<<"$release" | sort | comm -23 - <(printf \'%s\\n\' "$expected_names"))"',
-  'test -z "$unexpected_names"',
-  'while IFS= read -r name; do',
-  '  if jq -e --arg name "$name" \'.assets[] | select(.name == $name)\' <<<"$release" >/dev/null; then',
-  '    gh release download "$TAG" --dir dist/existing-release --pattern "$name"',
-  '    cmp "dist/release-candidate/$name" "dist/existing-release/$name"',
-  '  else',
-  '    gh release upload "$TAG" "dist/release-candidate/$name"',
-  '  fi',
-  'done <<<"$expected_names"',
-  'release="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG")"',
-  'asset_names="$(jq -r \'.assets[].name\' <<<"$release" | sort)"',
-  'test "$asset_names" = "$expected_names"',
-].join('\n');
-
 function isFailClosedShellStep(step: UnknownRecord): boolean {
   const run = executableRun(step);
+  if (isReleaseScriptCall(run)) {
+    return true;
+  }
   const firstLine = run.split('\n').find(line => line.trim().length > 0)?.trim();
   return firstLine === 'set -euo pipefail'
     && !/\|\||\bset\s+\+[eu]\b|\bset\s+\+o\b|\btrap\b/u.test(run);
@@ -374,15 +314,18 @@ function assertExactWorkflowRoot(
   }
 }
 
+function assertRunFilter(job: UnknownRecord | undefined, expectedFilter: string, violations: ReleaseWorkflowPolicyViolation[]): void {
+  if (job?.if !== `\${{ ${expectedFilter} }}`) {
+    add(violations, 'release-run-identity', 'release jobs must run only for a successful master verification run');
+  }
+}
+
 function assertCompletedRunIdentity(
   job: UnknownRecord | undefined,
   expectedFilter: string,
   violations: ReleaseWorkflowPolicyViolation[],
-  expectedEvent = 'push',
 ): void {
-  if (job?.if !== `\${{ ${expectedFilter} }}`) {
-    add(violations, 'release-run-identity', 'release jobs must run only for a successful master verification run');
-  }
+  assertRunFilter(job, expectedFilter, violations);
   const check = steps(job).find(step => executableRun(step).includes('actions/runs/')
     && executableRun(step).includes('.head_sha')
     && executableRun(step).includes('.head_branch')
@@ -393,7 +336,7 @@ function assertCompletedRunIdentity(
     return;
   }
   const run = executableRun(check);
-  if (!run.includes('SOURCE_SHA') || !run.includes('master') || !run.includes(expectedEvent) || !run.includes('success')) {
+  if (!run.includes('SOURCE_SHA') || !run.includes('master') || !run.includes('push') || !run.includes('success')) {
     add(violations, 'release-run-identity', 'release API checks must bind the exact source, branch, event and conclusion');
   }
 }
@@ -487,7 +430,7 @@ export function evaluateReleasePrepareWorkflowPolicy(source: string): ReleaseWor
   }
   const analyze = findStep(job, 'Analyze and prepare the next release');
   if (analyze === undefined || normalizedRun(analyze) !== 'pnpm run release:prepare --out-dir dist/release'
-    || asRecord(analyze.env)?.RELEASE_CONFIG !== RELEASE_CONFIG_PATH) {
+    || analyze.env !== undefined) {
     add(violations, 'isolated-analysis', 'preparation must use the isolated analyze-and-notes configuration');
   }
   if (!hasRun(job, run => run.includes('git add package.json CHANGELOG.md') && run.includes('git commit -m "ci(release): prepare v$version"'))) {
@@ -638,9 +581,10 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
     })) {
     add(violations, 'job-contract', 'dispatch must use the least scoped write-capable job');
   }
-  assertCompletedRunIdentity(job, DISPATCH_RUN_FILTER, violations, 'workflow_run');
+  assertRunFilter(job, DISPATCH_RUN_FILTER, violations);
   assertNoForbiddenSecrets(root, violations);
   assertStepNames(job, [
+    SCRIPT_CHECKOUT_STEP_NAME,
     'Verify the candidate workflow run',
     'Resolve the exact candidate artifact',
     'Download the exact candidate artifact',
@@ -648,8 +592,9 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
     'Create or verify the exact source tag',
     'Dispatch protected publish on the tag',
   ], 'step-allowlist', violations);
-  assertNoBuildOrCheckout(job, violations);
+  assertScriptCheckoutBoundary(job, violations);
   assertFailClosedShellSteps(job, 'fail-closed-shell', violations);
+  assertScriptStep(findStep(job, 'Verify the candidate workflow run'), { run: releaseScriptRun('verify-run', '"$SOURCE_SHA"') }, 'release-run-identity', 'dispatch must re-check the completed candidate run through the reviewed script, bound to the workflow_run source SHA', violations);
   const artifactResolution = findStep(job, 'Resolve the exact candidate artifact');
   if (artifactResolution === undefined
     || (!executableRun(artifactResolution).includes('/actions/runs/${{ github.event.workflow_run.id }}/artifacts')
@@ -666,14 +611,7 @@ export function evaluateReleaseDispatchWorkflowPolicy(source: string): ReleaseWo
     || downloadOptions?.path !== 'dist/release-candidate') {
     add(violations, 'exact-artifact', 'dispatch must download the resolved candidate by immutable artifact ID and run ID');
   }
-  const verify = findStep(job, 'Verify the candidate and source run');
-  if (verify === undefined
-    || !isFailClosedShellStep(verify)
-    || !referencesCandidateKeys(executableRun(verify), ['sourceSha', 'ciRunId', 'ciRunAttempt', 'digest', 'manifestSha256', 'sbomSha256', 'provenanceSha256'])
-    || !executableRun(verify).includes('expected_members')
-    || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')) {
-    add(violations, 'candidate-integrity', 'dispatch must verify source, candidate run, CI run and every provenance member before tagging');
-  }
+  assertScriptStep(findStep(job, 'Verify the candidate and source run'), { id: 'candidate', run: releaseScriptRun('verify-candidate', 'dispatch') }, 'candidate-integrity', 'dispatch must verify source, candidate run, CI run and every provenance member through the reviewed script before tagging', violations);
   const tag = findStep(job, 'Create or verify the exact source tag');
   const tagRun = tag === undefined ? '' : executableRun(tag);
   if (tag === undefined
@@ -752,25 +690,23 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
   }
   assertStepNames(publish, PUBLISH_STEP_NAMES, 'step-allowlist', violations);
   assertStepNames(finalize, [
+    SCRIPT_CHECKOUT_STEP_NAME,
     'Download the exact published candidate',
     'Verify the exact source tag',
     'Create the GitHub release if absent',
     'Verify an existing GitHub release safely',
   ], 'step-allowlist', violations);
-  assertPublishSourceBoundary(publish, violations);
-  assertNoBuildOrCheckout(finalize, violations);
+  assertScriptCheckoutBoundary(publish, violations);
+  assertScriptCheckoutBoundary(finalize, violations);
   assertFailClosedShellSteps(publish, 'fail-closed-shell', violations);
   assertFailClosedShellSteps(finalize, 'finalizer-boundary', violations);
   if (hasRun(finalize, run => /\bgit\s+(?:push|commit)\b|git\/refs\b.*(?:POST|create)/u.test(run))) {
     add(violations, 'finalizer-boundary', 'finalizer must use the GitHub API without mutating source history or creating tags');
   }
-  const dispatchIdentity = findStep(publish, 'Verify the candidate workflow run');
-  const dispatchIdentityEnv = asRecord(dispatchIdentity?.env);
-  if (dispatchIdentity === undefined
-    || dispatchIdentityEnv?.CANDIDATE_RUN_ID !== '${{ inputs.candidate_run_id }}'
-    || !normalizedRun(dispatchIdentity).includes('actions/runs/')) {
-    add(violations, 'dispatch-identity', 'release must validate the exact candidate workflow run input');
-  }
+  assertScriptStep(findStep(publish, 'Verify the candidate workflow run'), {
+    env: { CANDIDATE_RUN_ID: '${{ inputs.candidate_run_id }}', GH_TOKEN: '${{ github.token }}' },
+    run: releaseScriptRun('verify-run'),
+  }, 'dispatch-identity', 'release must validate the exact candidate workflow run input through the reviewed script', violations);
   const artifactResolution = findStep(publish, 'Resolve the exact candidate artifact');
   if (artifactResolution === undefined
     || !isFailClosedShellStep(artifactResolution)
@@ -787,36 +723,19 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     || downloadOptions?.path !== 'dist/release-candidate') {
     add(violations, 'exact-artifact', 'release must download the dispatched artifact by immutable ID and run ID');
   }
-  const verify = findStep(publish, 'Verify the candidate manifest, tag and digest');
-  if (verify === undefined
-    || !isFailClosedShellStep(verify)
-    || !referencesCandidateKeys(executableRun(verify), ['sourceSha', 'ciRunId', 'candidateRunId', 'digest', 'ciRunAttempt', 'manifestSha256', 'sbomSha256', 'provenanceSha256'])
-    || !executableRun(verify).includes('expected_members')
-    || !executableRun(verify).includes('(cd dist/release-candidate && sha256sum --check --strict "$digest_file")')
-    || !executableRun(verify).includes('git/ref/tags/')
-    || !executableRun(verify).includes('GITHUB_REF')
-    || !executableRun(verify).includes('refs/tags/v')) {
-    add(violations, 'candidate-integrity', 'release must verify source, tag, candidate run, CI run and every provenance member before using credentials');
-  }
-  const attestation = findStep(publish, 'Verify protected candidate attestation');
-  const expectedAttestationRun = [
-    'set -euo pipefail',
-    '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    'gh attestation verify "$VSIX_PATH" \\',
-    '  --repo "$GITHUB_REPOSITORY" \\',
-    `  --signer-workflow "$GITHUB_REPOSITORY/${RELEASE_CONTRACT.workflows.signerPath}" \\`,
-    '  --source-ref refs/heads/master \\',
-    '  --source-digest "$SOURCE_SHA"',
-  ].join('\n');
-  if (attestation === undefined
-    || attestation.shell !== 'bash'
-    || !exactKeys(asRecord(attestation.env), ['GH_TOKEN', 'SOURCE_SHA', 'VSIX_PATH'])
-    || asRecord(attestation.env)?.GH_TOKEN !== '${{ github.token }}'
-    || asRecord(attestation.env)?.VSIX_PATH !== '${{ steps.manifest.outputs.vsix-path }}'
-    || asRecord(attestation.env)?.SOURCE_SHA !== '${{ steps.manifest.outputs.source-sha }}'
-    || executableRun(attestation) !== expectedAttestationRun) {
-    add(violations, 'attestation', 'protected publish must verify the exact VSIX attestation with repository, signer workflow and source commit constraints');
-  }
+  assertScriptStep(findStep(publish, 'Verify the candidate manifest, tag and digest'), {
+    env: { CANDIDATE_RUN_ID: '${{ inputs.candidate_run_id }}', GH_TOKEN: '${{ github.token }}' },
+    id: 'manifest',
+    run: releaseScriptRun('verify-candidate', 'publish'),
+  }, 'candidate-integrity', 'release must verify source, tag, candidate run, CI run and every provenance member through the reviewed script before using credentials', violations);
+  assertScriptStep(findStep(publish, 'Verify protected candidate attestation'), {
+    env: {
+      GH_TOKEN: '${{ github.token }}',
+      SOURCE_SHA: '${{ steps.manifest.outputs.source-sha }}',
+      VSIX_PATH: '${{ steps.manifest.outputs.vsix-path }}',
+    },
+    run: releaseScriptRun('verify-attestation'),
+  }, 'attestation', 'protected publish must verify the exact VSIX attestation through the reviewed script', violations);
   const postPublish = findStep(publish, 'Compare post-publish registry copies');
   const postPublishRun = postPublish === undefined ? '' : executableRun(postPublish);
   if (postPublish === undefined
@@ -868,30 +787,10 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     || finalizerDownloadOptions?.path !== 'dist/release-candidate') {
     add(violations, 'finalizer-artifact', 'finalizer must consume the exact dispatched artifact already verified and published');
   }
-  const tagVerify = findStep(finalize, 'Verify the exact source tag');
-  const tagVerifyRun = tagVerify === undefined ? '' : executableRun(tagVerify);
-  if (tagVerify === undefined
-    || !isFailClosedShellStep(tagVerify)
-    || tagVerify.shell !== 'bash'
-    || tagVerifyRun !== FINALIZER_TAG_VERIFY_RUN) {
-    add(violations, 'finalizer-boundary', 'finalizer must verify the pre-created tag points at the candidate source SHA');
-  }
-  const createRelease = findStep(finalize, 'Create the GitHub release if absent');
-  const createReleaseRun = createRelease === undefined ? '' : executableRun(createRelease);
-  if (createRelease === undefined
-    || !isFailClosedShellStep(createRelease)
-    || createRelease.shell !== 'bash'
-    || createReleaseRun !== FINALIZER_CREATE_RELEASE_RUN) {
-    add(violations, 'finalizer-boundary', 'finalizer must attach the same VSIX and candidate manifest to the GitHub release');
-  }
-  const existingRelease = findStep(finalize, 'Verify an existing GitHub release safely');
-  const existingReleaseRun = existingRelease === undefined ? '' : executableRun(existingRelease);
-  if (existingRelease === undefined
-    || !isFailClosedShellStep(existingRelease)
-    || existingRelease.shell !== 'bash'
-    || existingReleaseRun !== FINALIZER_EXISTING_RELEASE_RUN) {
-    add(violations, 'retry-safety', 'finalizer must safely verify existing assets and repair a partially-created release');
-  }
+  const releaseInputs = { TAG: '${{ steps.release.outputs.tag }}', VSIX_FILE: '${{ steps.release.outputs.vsix-file }}' };
+  assertScriptStep(findStep(finalize, 'Verify the exact source tag'), { id: 'release', run: releaseScriptRun('finalize-release', 'verify') }, 'finalizer-boundary', 'finalizer must verify the pre-created tag points at the candidate source SHA through the reviewed script', violations);
+  assertScriptStep(findStep(finalize, 'Create the GitHub release if absent'), { env: releaseInputs, id: 'create', run: releaseScriptRun('finalize-release', 'create') }, 'finalizer-boundary', 'finalizer must attach the same VSIX and candidate manifest to the GitHub release through the reviewed script', violations);
+  assertScriptStep(findStep(finalize, 'Verify an existing GitHub release safely'), { env: releaseInputs, run: releaseScriptRun('finalize-release', 'reconcile') }, 'retry-safety', 'finalizer must safely verify existing assets and repair a partially-created release through the reviewed script', violations);
   return violations;
 }
 

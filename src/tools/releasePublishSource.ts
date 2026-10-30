@@ -1,26 +1,32 @@
 import { isDeepStrictEqual } from 'node:util';
-import { add, exactKeys, hasRun, steps } from './releaseWorkflowSteps';
+import { RELEASE_CONTRACT_PATH } from './releaseContract';
+import { add, asRecord, exactKeys, hasRun, normalizedRun, steps } from './releaseWorkflowSteps';
 import type { ReleaseWorkflowPolicyViolation, UnknownRecord } from './releaseWorkflowSteps';
 import { reviewedActionReference } from './reviewedActions';
 
 export const SCRIPT_CHECKOUT_STEP_NAME = 'Check out the reviewed scripts';
 
-const MANIFEST_STEP_NAME = 'Verify the candidate manifest, tag and digest';
+const SCRIPT_DIRECTORY = 'reviewed-source/.github/scripts/release';
+const SCRIPT_CALL_PATTERN = /^bash reviewed-source\/\.github\/scripts\/release\/[a-z][a-z-]*\.sh(?: [a-z]+| "\$[A-Z_]+")?$/u;
 const SCRIPT_CHECKOUT_OPTIONS = {
   'fetch-depth': 1,
   path: 'reviewed-source',
   'persist-credentials': false,
-  ref: '${{ steps.manifest.outputs.source-sha }}',
-  'sparse-checkout': '.github/scripts',
+  ref: '${{ github.sha }}',
+  'sparse-checkout': `.github/scripts\n${RELEASE_CONTRACT_PATH}\n`,
   'sparse-checkout-cone-mode': false,
 } as const;
 
-function isCheckoutStep(step: UnknownRecord): boolean {
-  return typeof step.uses === 'string' && /^actions\/checkout(?:@|$)/iu.test(step.uses.trim());
+export function releaseScriptRun(script: string, argument?: string): string {
+  return `bash ${SCRIPT_DIRECTORY}/${script}.sh${argument === undefined ? '' : ` ${argument}`}`;
 }
 
-function referencesSecret(step: UnknownRecord): boolean {
-  return JSON.stringify(step).includes('secrets.');
+export function isReleaseScriptCall(run: string): boolean {
+  return SCRIPT_CALL_PATTERN.test(run);
+}
+
+function isCheckoutStep(step: UnknownRecord): boolean {
+  return typeof step.uses === 'string' && /^actions\/checkout(?:@|$)/iu.test(step.uses.trim());
 }
 
 export function assertNoBuildOrCheckout(job: UnknownRecord | undefined, violations: ReleaseWorkflowPolicyViolation[]): void {
@@ -31,29 +37,38 @@ export function assertNoBuildOrCheckout(job: UnknownRecord | undefined, violatio
     || run.includes('tsdown')
     || /\b(?:git\s+checkout|git\s+clone)\b/u.test(run);
   if (steps(job).some(isCheckoutStep) || hasRun(job, hasForbiddenOperation)) {
-    add(violations, 'publish-boundary', 'protected publish and finalizer jobs must not checkout, install or build');
+    add(violations, 'publish-boundary', 'protected release jobs must not checkout, install or build');
   }
 }
 
 function assertScriptCheckout(job: UnknownRecord | undefined, violations: ReleaseWorkflowPolicyViolation[]): void {
-  const all = steps(job);
-  const index = all.findIndex(step => step.name === SCRIPT_CHECKOUT_STEP_NAME);
-  const manifestIndex = all.findIndex(step => step.name === MANIFEST_STEP_NAME);
-  const firstSecretIndex = all.findIndex(referencesSecret);
-  const step = all[index];
-  if (step === undefined
+  const [step] = steps(job);
+  if (step?.name !== SCRIPT_CHECKOUT_STEP_NAME
     || step.uses !== reviewedActionReference('actions/checkout')
     || !exactKeys(step, ['name', 'uses', 'with'])
-    || !isDeepStrictEqual(step.with, SCRIPT_CHECKOUT_OPTIONS)
-    || manifestIndex < 0
-    || index < manifestIndex
-    || (firstSecretIndex >= 0 && index > firstSecretIndex)) {
-    add(violations, 'script-checkout', 'publish must check out only .github/scripts at the verified candidate source SHA, without persisted credentials, after the manifest check and before any credential step');
+    || !isDeepStrictEqual(step.with, SCRIPT_CHECKOUT_OPTIONS)) {
+    add(violations, 'script-checkout', 'release jobs must start by checking out only the reviewed release scripts and contract at the workflow commit, without persisted credentials');
   }
 }
 
-export function assertPublishSourceBoundary(job: UnknownRecord | undefined, violations: ReleaseWorkflowPolicyViolation[]): void {
+export function assertScriptCheckoutBoundary(job: UnknownRecord | undefined, violations: ReleaseWorkflowPolicyViolation[]): void {
   const otherSteps = steps(job).filter(step => step.name !== SCRIPT_CHECKOUT_STEP_NAME);
   assertNoBuildOrCheckout({ steps: otherSteps }, violations);
   assertScriptCheckout(job, violations);
+}
+
+export function assertScriptStep(
+  step: UnknownRecord | undefined,
+  expected: { readonly run: string; readonly env?: Readonly<Record<string, string>>; readonly id?: string },
+  rule: string,
+  message: string,
+  violations: ReleaseWorkflowPolicyViolation[],
+): void {
+  if (step === undefined
+    || step.shell !== 'bash'
+    || step.id !== expected.id
+    || normalizedRun(step) !== expected.run
+    || !isDeepStrictEqual(asRecord(step.env) ?? {}, expected.env ?? {})) {
+    add(violations, rule, message);
+  }
 }

@@ -111,8 +111,6 @@ jobs:
       - name: Analyze and prepare the next release
         if: ${{ steps.existing.outputs.is-existing == 'false' }}
         id: prepare
-        env:
-          RELEASE_CONFIG: .releaserc.json
         run: pnpm run release:prepare --out-dir dist/release
       - name: Create the version pull request
         if: ${{ steps.existing.outputs.is-existing == 'false' && steps.prepare.outputs.release-needed == 'true' }}

@@ -82,6 +82,10 @@ ref name alone:
   creating (or verifying an existing) tag `v<version>` pointing at that exact `source_sha`.
 - `release.yml` (`publish` job) re-derives the candidate from `candidate.json` and checks
   `GITHUB_REF = refs/tags/v<version>` plus the tag's target commit against `sourceSha`.
+- The candidate check is one script, `.github/scripts/release/verify-candidate.sh`, shared by the
+  dispatch (`dispatch` mode) and publish (`publish` mode) jobs; the `finalize` job reuses its bundle
+  checks through `candidate-lib.sh`. All values (bundle file names, key list, schema versions,
+  workflow names, signer path) come from `.github/release-contract.json`.
 
 ### Artifacts and where they come from
 
@@ -165,10 +169,15 @@ mid-publish and cannot cancel one in flight.
 
 What the `publish` job does today, once approved:
 
-1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then checks out only
-   `.github/scripts` (sparse, non-cone) into `reviewed-source/` at the verified `sourceSha` with
-   `persist-credentials: false` — the only checkout in the job, before any credential step — and
-   runs `gh attestation verify` against the GitHub attestation created in `ci.yml`.
+1. Checks out only `.github/scripts` and `.github/release-contract.json` (sparse, non-cone) into
+   `reviewed-source/` at `github.sha` — the commit of the tag the workflow was dispatched on, the
+   same commit that defines the workflow file itself — with `persist-credentials: false`. It is the
+   only checkout in the job and its first step, so it precedes every credential step. The shell steps
+   then run as `bash reviewed-source/.github/scripts/release/<script>.sh`: `verify-run.sh` re-verifies
+   the candidate run, `verify-candidate.sh publish` re-verifies the artifact and `candidate.json` (§2;
+   it also asserts that `github.sha` equals the manifest's `sourceSha`, i.e. the scripts that ran are
+   the released commit), and `verify-attestation.sh` runs `gh attestation verify` against the GitHub
+   attestation created in `ci.yml`. None of these steps receives `VSCE_PAT` or `OVSX_PAT`.
 2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension`
    (SHA and tag pinned in `.github/reviewed-actions.json`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
    secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:
@@ -177,6 +186,11 @@ What the `publish` job does today, once approved:
    secrets.OVSX_PAT }}`, `with: pat: ${{ env.OVSX_PAT }}`), `registryUrl: https://open-vsx.org`,
    `skipDuplicate: true`.
 4. Downloads both freshly published copies and compares them against the candidate (§6).
+
+`release-dispatch.yml` and the `finalize` job take the same first-step sparse checkout at `github.sha`
+(`persist-credentials: false`). The scripts therefore come from the commit that defines the running workflow
+file, which is no less trusted than the workflow itself, and never from a commit that is still being
+validated. The checkout is the only place a release job fetches repository content.
 
 Dated facts about the credentials in use, current as of 2026-09-18:
 

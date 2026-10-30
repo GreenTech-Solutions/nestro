@@ -18,6 +18,7 @@ import {
   evaluateVsixPolicy,
   loadReviewedActionsRegistry,
   PACKAGED_FILE_COUNT_BUDGET,
+  RELEASE_CONTRACT,
   reviewedActionReference,
 } from '../tools';
 import type { ReleaseCandidateEvidence } from '../tools';
@@ -29,6 +30,10 @@ const dispatchSource = readFileSync(resolve(repositoryRoot, '.github/workflows/r
 const releaseSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
 const releaseConfigSource = readFileSync(resolve(repositoryRoot, '.releaserc.json'), 'utf8');
 const staleSha = 'e'.repeat(40);
+
+function scriptSource(name: string): string {
+  return readFileSync(resolve(repositoryRoot, '.github/scripts/release', name), 'utf8');
+}
 
 function mutate(source: string, mutator: (workflow: Record<string, unknown>) => void): string {
   const workflow = parse(source, { uniqueKeys: true }) as Record<string, unknown>;
@@ -146,21 +151,8 @@ describe('release workflow policies', () => {
     })), 'dispatch-identity');
   });
 
-  it('rejects a regression of the sha256sum cwd fix in dispatch and publish', () => {
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
-      verify!.run = String(verify!.run).replace(
-        '(cd dist/release-candidate && sha256sum --check --strict "$digest_file")',
-        'sha256sum --check --strict "dist/release-candidate/$digest_file"',
-      );
-    })), 'candidate-integrity');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const verify = steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest');
-      verify!.run = String(verify!.run).replace(
-        '(cd dist/release-candidate && sha256sum --check --strict "$digest_file")',
-        'sha256sum --check --strict "dist/release-candidate/$digest_file"',
-      );
-    })), 'candidate-integrity');
+  it('keeps the sidecar digest check relative to the bundle directory in the shared script library', () => {
+    expect(scriptSource('candidate-lib.sh')).toContain('(cd "$1" && sha256sum --check --strict "$digest_file")');
   });
 
   it('rejects source, version, digest and secret boundary substitutions in publish', () => {
@@ -184,52 +176,39 @@ describe('release workflow policies', () => {
     })), 'exact-artifact');
   });
 
-  it('requires the publish job to check out only the reviewed scripts at the verified source SHA', () => {
+  it.each(['dispatch', 'publish', 'finalize'] as const)('requires the %s job to check out only the reviewed scripts and contract at the workflow commit', (job) => {
+    const source = job === 'dispatch' ? dispatchSource : releaseSource;
+    const evaluate = job === 'dispatch' ? evaluateReleaseDispatchWorkflowPolicy : evaluateReleaseWorkflowPolicy;
     const scriptCheckout = (workflow: Record<string, unknown>): Record<string, unknown> =>
-      steps(workflow, 'publish').find(step => step.name === 'Check out the reviewed scripts')!;
+      steps(workflow, job).find(step => step.name === 'Check out the reviewed scripts')!;
     const withOptions = (workflow: Record<string, unknown>): Record<string, unknown> =>
       scriptCheckout(workflow).with as Record<string, unknown>;
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      delete withOptions(workflow)['persist-credentials'];
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      withOptions(workflow)['persist-credentials'] = true;
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      withOptions(workflow).ref = '${{ github.sha }}';
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      delete withOptions(workflow).ref;
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      withOptions(workflow)['sparse-checkout'] = '.';
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      delete withOptions(workflow)['sparse-checkout'];
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      withOptions(workflow)['sparse-checkout-cone-mode'] = true;
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      scriptCheckout(workflow).uses = 'actions/checkout@v7';
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      jobs(workflow).publish.steps = steps(workflow, 'publish').filter(step => step.name !== 'Check out the reviewed scripts');
-    })), 'script-checkout');
+    const mutations: ((workflow: Record<string, unknown>) => void)[] = [
+      (workflow) => { delete withOptions(workflow)['persist-credentials']; },
+      (workflow) => { withOptions(workflow)['persist-credentials'] = true; },
+      (workflow) => { withOptions(workflow).ref = '${{ steps.manifest.outputs.source-sha }}'; },
+      (workflow) => { delete withOptions(workflow).ref; },
+      (workflow) => { withOptions(workflow)['sparse-checkout'] = '.'; },
+      (workflow) => { withOptions(workflow)['sparse-checkout'] = '.github/scripts\n'; },
+      (workflow) => { delete withOptions(workflow)['sparse-checkout']; },
+      (workflow) => { withOptions(workflow)['sparse-checkout-cone-mode'] = true; },
+      (workflow) => { withOptions(workflow).path = '.'; },
+      (workflow) => { scriptCheckout(workflow).uses = 'actions/checkout@v7'; },
+      (workflow) => { jobs(workflow)[job].steps = steps(workflow, job).filter(step => step.name !== 'Check out the reviewed scripts'); },
+    ];
+    expect(evaluate(source)).toEqual([]);
+    for (const mutation of mutations) {
+      expectViolation(evaluate(mutate(source, mutation)), 'script-checkout');
+    }
   });
 
-  it('rejects a script checkout that precedes the manifest check or follows a credential step', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const publishSteps = steps(workflow, 'publish');
-      const index = publishSteps.findIndex(step => step.name === 'Check out the reviewed scripts');
-      const [checkout] = publishSteps.splice(index, 1);
-      publishSteps.unshift(checkout);
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const publishSteps = steps(workflow, 'publish');
-      const index = publishSteps.findIndex(step => step.name === 'Check out the reviewed scripts');
-      const [checkout] = publishSteps.splice(index, 1);
-      publishSteps.splice(publishSteps.findIndex(step => step.name === 'Publish to Open VSX'), 0, checkout);
+  it.each(['dispatch', 'publish', 'finalize'] as const)('rejects a script checkout that is not the first %s step', (job) => {
+    const source = job === 'dispatch' ? dispatchSource : releaseSource;
+    const evaluate = job === 'dispatch' ? evaluateReleaseDispatchWorkflowPolicy : evaluateReleaseWorkflowPolicy;
+    expectViolation(evaluate(mutate(source, (workflow) => {
+      const jobSteps = steps(workflow, job);
+      const [checkout] = jobSteps.splice(0, 1);
+      jobSteps.splice(1, 0, checkout);
     })), 'script-checkout');
   });
 
@@ -351,35 +330,37 @@ describe('release workflow policies', () => {
     })), 'candidate-integrity');
   });
 
-  it('requires fail-closed finalizer shell steps', () => {
+  it.each([
+    ['Verify the exact source tag', 'finalizer-boundary', 'finalize-release.sh verify'],
+    ['Create the GitHub release if absent', 'finalizer-boundary', 'finalize-release.sh create'],
+    ['Verify an existing GitHub release safely', 'retry-safety', 'finalize-release.sh reconcile'],
+  ])('requires %s to be exactly the reviewed fail-closed script call', (name, rule, call) => {
+    const withRun = (run: string): string => mutate(releaseSource, (workflow) => {
+      steps(workflow, 'finalize').find(step => step.name === name)!.run = run;
+    });
+    const script = `bash reviewed-source/.github/scripts/release/${call}`;
+    expect(evaluateReleaseWorkflowPolicy(withRun(script))).toEqual([]);
+    for (const run of [`${script} || true`, `set -euo pipefail\n${script}`, `${script}\ntrue`, 'set -euo pipefail\ntrue', `${script.replace(call.split(' ')[1], 'other')}`, `bash ./${call.split(' ')[0]}`]) {
+      expectViolation(evaluateReleaseWorkflowPolicy(withRun(run)), rule);
+    }
+  });
+
+  it('rejects script steps that receive a different environment', () => {
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
-      tag!.run = 'set -euo pipefail\ntrue';
+      (steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest')!.env as Record<string, unknown>).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
+    })), 'candidate-integrity');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      delete (steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation')!.env as Record<string, unknown>).GH_TOKEN;
+    })), 'attestation');
+    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent')!.env = { TAG: 'v0.0.0' };
     })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const create = steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent');
-      create!.run = `${String(create!.run)}\ntrue || true`;
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const existing = steps(workflow, 'finalize').find(step => step.name === 'Verify an existing GitHub release safely');
-      existing!.run = String(existing!.run).replace('set -euo pipefail', 'set -euo pipefail\nset +e');
-    })), 'retry-safety');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
-      tag!.run = String(tag!.run).replace('set -euo pipefail', 'set -euo pipefail\ntrap \'true\' EXIT');
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const tag = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
-      tag!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s\\n" "git/ref/tags/" ".sourceSha" "refs/tags/v"';
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const create = steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent');
-      create!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s %s\\n" "gh release create" "candidate.json" "$VSIX_FILE" "--verify-tag"';
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const existing = steps(workflow, 'finalize').find(step => step.name === 'Verify an existing GitHub release safely');
-      existing!.run = 'set -euo pipefail\ntrue\nprintf "%s %s %s %s %s\\n" "release download" "release upload" "cmp " "expected_names" "asset_names"';
-    })), 'retry-safety');
+  });
+
+  it('rejects an analyze step that overrides the release configuration path', () => {
+    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
+      steps(workflow, 'prepare').find(step => step.name === 'Analyze and prepare the next release')!.env = { RELEASE_CONFIG: 'other.json' };
+    })), 'isolated-analysis');
   });
 
   it('rejects non-literal workflow documents and forbidden preparation side effects', () => {
@@ -438,7 +419,7 @@ describe('release workflow policies', () => {
       .toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'trigger-contract' })]));
   });
 
-  it('checks the candidate manifest keys against the codepoint-sorted key list release:candidate actually writes', () => {
+  it('lists in the contract exactly the candidate keys release:candidate writes, in codepoint order', () => {
     const sourceSha = 'a'.repeat(40);
     const digest = 'b'.repeat(64);
     const artifact = {
@@ -475,11 +456,76 @@ describe('release workflow policies', () => {
     // jq sorts by codepoint; an explicit codepoint comparator matches that for this all-ASCII key set.
     const byCodepoint = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
     const expectedKeyOrder = Object.keys(outcome.manifest).sort(byCodepoint).join(',');
-    const literalPattern = /test "\$\(jq -r 'keys \| sort \| join\(","\)' "\$candidate"\)" = '([^']*)'/u;
-    const dispatchLiteral = literalPattern.exec(dispatchSource)?.[1];
-    const releaseLiteral = literalPattern.exec(releaseSource)?.[1];
-    expect(dispatchLiteral).toBe(expectedKeyOrder);
-    expect(releaseLiteral).toBe(expectedKeyOrder);
+    expect(RELEASE_CONTRACT.candidateKeys.join(',')).toBe(expectedKeyOrder);
+  });
+});
+
+describe('release workflow shell scripts', () => {
+  const scriptDirectory = resolve(repositoryRoot, '.github/scripts/release');
+  const executableScripts = ['verify-run.sh', 'verify-candidate.sh', 'verify-attestation.sh', 'finalize-release.sh'];
+  const allScripts = [...executableScripts, 'candidate-lib.sh'];
+  const scriptCalls = [
+    [releaseSource, 'publish', 'Verify the candidate workflow run', 'verify-run.sh', ''],
+    [releaseSource, 'publish', 'Verify the candidate manifest, tag and digest', 'verify-candidate.sh', ' publish'],
+    [releaseSource, 'publish', 'Verify protected candidate attestation', 'verify-attestation.sh', ''],
+    [releaseSource, 'finalize', 'Verify the exact source tag', 'finalize-release.sh', ' verify'],
+    [releaseSource, 'finalize', 'Create the GitHub release if absent', 'finalize-release.sh', ' create'],
+    [releaseSource, 'finalize', 'Verify an existing GitHub release safely', 'finalize-release.sh', ' reconcile'],
+    [dispatchSource, 'dispatch', 'Verify the candidate workflow run', 'verify-run.sh', ' "$SOURCE_SHA"'],
+    [dispatchSource, 'dispatch', 'Verify the candidate and source run', 'verify-candidate.sh', ' dispatch'],
+  ] as const;
+
+  it('has every release script on disk and keeps the executable ones strict and free of workflow expressions', () => {
+    for (const name of allScripts) {
+      expect(existsSync(join(scriptDirectory, name)), name).toBe(true);
+      expect(scriptSource(name), name).not.toContain('${{');
+    }
+    for (const name of executableScripts) {
+      expect(scriptSource(name).startsWith('#!/usr/bin/env bash\n'), name).toBe(true);
+      expect(scriptSource(name), name).toMatch(/^set -euo pipefail$/mu);
+    }
+  });
+
+  it.each(scriptCalls)('runs %#: %s step %s through one reviewed script call', (source, job, name, script, argument) => {
+    const workflow = parse(source) as Record<string, unknown>;
+    const step = steps(workflow, job).find(candidate => candidate.name === name);
+    expect(step?.run).toBe(`bash reviewed-source/.github/scripts/release/${script}${argument}`);
+    expect(existsSync(join(scriptDirectory, script))).toBe(true);
+  });
+
+  it('hands no registry credential to any step that runs a release script', () => {
+    for (const source of [releaseSource, dispatchSource]) {
+      const workflow = parse(source) as Record<string, unknown>;
+      for (const job of Object.keys(jobs(workflow))) {
+        for (const step of steps(workflow, job).filter(candidate => String(candidate.run ?? '').includes('.github/scripts/release/'))) {
+          expect(JSON.stringify(step), String(step.name)).not.toContain('secrets.');
+        }
+        expect(JSON.stringify(jobs(workflow)[job].env ?? {}), job).not.toContain('secrets.');
+      }
+    }
+  });
+
+  it('takes bundle names, workflow names and the signer path from the contract', () => {
+    const { bundle, workflows } = RELEASE_CONTRACT;
+    const sources = allScripts.map(scriptSource).join('\n');
+    for (const literal of [bundle.candidate, bundle.sbom, bundle.provenance, bundle.manifestSuffix, workflows.signerPath, workflows.releaseCandidateName, workflows.verifyName]) {
+      expect(sources, literal).not.toContain(literal);
+    }
+    expect(sources).toContain('release-contract.json');
+  });
+
+  it('reads every contract candidate key from the candidate manifest', () => {
+    const sources = allScripts.map(scriptSource).join('\n');
+    for (const key of RELEASE_CONTRACT.candidateKeys) {
+      expect(sources, key).toContain(`.${key}`);
+    }
+  });
+
+  it('keeps release workflow shell text out of src/tools except the post-publish comparison', () => {
+    const toolsSource = readFileSync(resolve(repositoryRoot, 'src/tools/releaseWorkflowPolicy.ts'), 'utf8');
+    for (const fragment of ['gh release', 'gh attestation', 'sha256sum', 'comm -23']) {
+      expect(toolsSource, fragment).not.toContain(fragment);
+    }
   });
 });
 
