@@ -6,12 +6,12 @@ import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchPackageMetadataFromRegistry,
-  parseClassicYarnConfig,
   parseNpmRegistryMetadata,
-  parseYarnModernConfig,
   resolvePackageRegistryUrl,
   selectVersionsForPicker,
 } from '../utils/registryClient';
+import { parseClassicYarnConfig } from '../utils/registry/yarnrc';
+import { parseYarnModernConfig } from '../utils/registry/yarnrcYml';
 import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry, parseBunConfig } from '../utils';
 import type { MetadataAdapter } from '../utils';
 
