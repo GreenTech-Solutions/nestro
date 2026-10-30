@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { isConcreteSemver, WORKSPACE_PROTOCOL } from '../shared';
 
 export type DependencySpecRange = 'exact' | 'caret' | 'tilde';
 export type DependencySpecProtocol = 'plain' | 'workspace';
@@ -19,17 +20,9 @@ export interface UnsupportedDependencySpec {
 
 export type ParsedDependencySpec = PinnableDependencySpec | UnsupportedDependencySpec;
 
-const NUMERIC_IDENTIFIER = '(?:0|[1-9]\\d*)';
-const PRERELEASE_IDENTIFIER = `(?:${NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
-const CONCRETE_SEMVER = new RegExp(
-  `^${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}`
-  + `(?:-${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*)?`
-  + '(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$',
-);
 // Node-semver X-ranges: one to three numeric/wildcard components with at least one wildcard.
 // Deliberately does not match a dist-tag that merely contains the letter x.
 const WILDCARD_COMPONENTS = /^(?:\d+|\*|[xX])(?:\.(?:\d+|\*|[xX])){0,2}$/;
-const WORKSPACE_PROTOCOL = 'workspace:';
 
 /**
  * Parses a raw `package.json` dependency spec as a tagged union: only exact, caret, and
@@ -68,13 +61,13 @@ export function formatDependencySpec(spec: PinnableDependencySpec, pin: boolean)
 }
 
 function parsePlainRange(spec: string): { range: DependencySpecRange; version: string } | undefined {
-  if (CONCRETE_SEMVER.test(spec)) {
+  if (isConcreteSemver(spec)) {
     return { range: 'exact', version: spec };
   }
-  if (spec.startsWith('^') && CONCRETE_SEMVER.test(spec.slice(1))) {
+  if (spec.startsWith('^') && isConcreteSemver(spec.slice(1))) {
     return { range: 'caret', version: spec.slice(1) };
   }
-  if (spec.startsWith('~') && CONCRETE_SEMVER.test(spec.slice(1))) {
+  if (spec.startsWith('~') && isConcreteSemver(spec.slice(1))) {
     return { range: 'tilde', version: spec.slice(1) };
   }
   return undefined;

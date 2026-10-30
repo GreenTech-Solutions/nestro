@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
-import { isRecord, sanitizeInlineText } from '../shared';
+import { extractRangePrefix, isRecord, sanitizeInlineText } from '../shared';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
 
@@ -74,12 +74,7 @@ export function parsePackageJson(raw: string): PackageJsonDocument {
 }
 
 export function extractVersionPrefix(versionString: string): string {
-  if (versionString.startsWith('workspace:')) {
-    return '';
-  }
-
-  const match = /^([~^]|>=|>|<=|<)/.exec(versionString);
-  return match?.[1] ?? '';
+  return extractRangePrefix(versionString);
 }
 
 export function serializePackageJson(raw: string, json: PackageJsonDocument): string {

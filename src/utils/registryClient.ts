@@ -19,7 +19,7 @@ import type {
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
-import { isPathWithin, isRecord } from '../shared';
+import { isPathWithin, isRecord, stripVersionDecorations } from '../shared';
 
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 const MAX_REGISTRY_REDIRECTS = 3;
@@ -1415,7 +1415,7 @@ export function selectVersionsForPicker(
   currentVersion: string,
   includePreReleases: boolean,
 ): string[] {
-  const normalizedCurrent = currentVersion.replace(/^workspace:/, '').replace(/^([~^]|>=|>|<=|<)/, '');
+  const normalizedCurrent = stripVersionDecorations(currentVersion);
   const selected = new Set([normalizedCurrent]);
 
   return allVersions

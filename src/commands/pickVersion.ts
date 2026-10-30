@@ -11,6 +11,7 @@ import {
   showError,
 } from '../utils';
 import type { ReleaseAgeState } from '../utils';
+import { stripVersionDecorations } from '../shared';
 import { runResolvedPackageVersion } from './installUpdate';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
 
@@ -174,7 +175,7 @@ async function handleVersionSelection(
 }
 
 function normalizeCurrentVersion(currentVersion: string): string {
-  return currentVersion.replace(/^workspace:/, '').replace(/^([~^]|>=|>|<=|<)/, '');
+  return stripVersionDecorations(currentVersion);
 }
 
 function showVersionPickerError(packageName: string, err: unknown): void {

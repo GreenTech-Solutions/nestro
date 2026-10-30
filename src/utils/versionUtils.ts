@@ -1,15 +1,12 @@
+import { parseVersionString, rangeBaseVersion, unwrapNpmAlias } from '../shared';
+import type { ParsedSemver } from '../shared';
+
 export type UpdateType = 'none' | 'patch' | 'minor' | 'breaking';
 
-interface ParsedVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  preRelease: string[];
-}
-
 export function getUpdateType(current: string, latest: string): UpdateType {
-  const currentVersion = parseVersion(current);
-  const latestVersion = parseVersion(latest);
+  const currentSpec = unwrapNpmAlias(current);
+  const currentVersion = parseVersionString(currentSpec) ?? rangeBaseVersion(currentSpec);
+  const latestVersion = parseVersionString(latest);
 
   if (currentVersion === undefined || latestVersion === undefined) {
     return 'none';
@@ -29,10 +26,10 @@ export function isVersionOutdated(current: string, latest: string): boolean {
 }
 
 export function getGreatestVersion(versions: string[], includePreReleases: boolean): string | undefined {
-  let greatest: { raw: string; parsed: ParsedVersion } | undefined;
+  let greatest: { raw: string; parsed: ParsedSemver } | undefined;
 
   for (const raw of versions) {
-    const parsed = parseVersion(raw);
+    const parsed = parseVersionString(raw);
     if (parsed === undefined || (!includePreReleases && parsed.preRelease.length > 0)) {
       continue;
     }
@@ -46,8 +43,8 @@ export function getGreatestVersion(versions: string[], includePreReleases: boole
 }
 
 export function compareRawVersions(left: string, right: string): number {
-  const leftVersion = parseVersion(left);
-  const rightVersion = parseVersion(right);
+  const leftVersion = parseVersionString(left);
+  const rightVersion = parseVersionString(right);
 
   if (leftVersion === undefined && rightVersion === undefined) {
     return left.localeCompare(right);
@@ -63,24 +60,10 @@ export function compareRawVersions(left: string, right: string): number {
 }
 
 export function isPreReleaseVersion(raw: string): boolean {
-  return (parseVersion(raw)?.preRelease.length ?? 0) > 0;
+  return (parseVersionString(raw)?.preRelease.length ?? 0) > 0;
 }
 
-function parseVersion(raw: string): ParsedVersion | undefined {
-  const match = raw.trim().match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?/);
-  if (match === null) {
-    return undefined;
-  }
-
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    preRelease: match[4]?.split('.') ?? [],
-  };
-}
-
-function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
+function compareVersions(a: ParsedSemver, b: ParsedSemver): number {
   const major = compareNumbers(a.major, b.major);
   if (major !== 0) { return major; }
 
@@ -97,7 +80,7 @@ function compareNumbers(a: number, b: number): number {
   return a === b ? 0 : a > b ? 1 : -1;
 }
 
-function comparePreRelease(a: string[], b: string[]): number {
+function comparePreRelease(a: readonly string[], b: readonly string[]): number {
   if (a.length === 0 && b.length === 0) { return 0; }
   if (a.length === 0) { return 1; }
   if (b.length === 0) { return -1; }
