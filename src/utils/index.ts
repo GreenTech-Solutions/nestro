@@ -27,7 +27,7 @@ export { DependencyTypeConflictError, extractVersionPrefix, parsePackageJson, pr
 export type { PackageFileDependencyUpdates, PackageJsonDocument } from './packageTransforms';
 export { getWindowsTaskkillPath, runBoundedProcess } from './processRunner';
 export { selectVersionsForPicker } from './registryClient';
-export { classifyVersionReleaseAge, DEFAULT_MINIMUM_RELEASE_AGE_DAYS, MAX_MINIMUM_RELEASE_AGE_DAYS, readMinimumReleaseAgeDays, resolveUpdateReleaseAge } from './releaseAge';
+export { classifyVersionReleaseAge, resolveUpdateReleaseAge } from './releaseAge';
 export type { ReleaseAgeState } from './releaseAge';
 export { runRootOperations, startRootOperations } from './rootOperation';
 export { formatShellTaskCommandForLog, formatShellTaskFailureMessage, runShellTaskAndWait } from './shellTask';

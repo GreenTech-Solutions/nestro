@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
+import { FILTER_TYPES, isFilterType } from '../shared';
+import type { FilterType } from '../shared';
 
-export const FILTER_TYPES = ['all', 'hasUpdates', 'patch', 'minor', 'breaking'] as const;
-
-export type FilterType = typeof FILTER_TYPES[number];
+export { FILTER_TYPES, isFilterType };
+export type { FilterType };
 
 export interface FilterCounts extends Record<FilterType, number> {}
 
@@ -13,10 +14,6 @@ const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
   minor: { label: vscode.l10n.t('Minor'), color: 'charts.yellow' },
   breaking: { label: vscode.l10n.t('Breaking'), color: 'charts.red' },
 };
-
-export function isFilterType(value: unknown): value is FilterType {
-  return typeof value === 'string' && (FILTER_TYPES as readonly string[]).includes(value);
-}
 
 export function getFilterLabel(filterType: FilterType): string {
   return FILTER_CONFIG[filterType].label;

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { getConfirmBulkUpdate, getDeferInstallAfterUpdate } from '../config';
 import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import {
   getLocalizedPackageLabelFormatting,
@@ -313,15 +314,11 @@ export async function updateAllVisibleCommand(provider: PackagesProvider): Promi
 }
 
 function isDeferredInstallEnabled(): boolean {
-  return vscode.workspace
-    .getConfiguration('nestro')
-    .get<boolean>('deferInstallAfterUpdate', false);
+  return getDeferInstallAfterUpdate();
 }
 
 function isBulkUpdateConfirmationEnabled(): boolean {
-  return vscode.workspace
-    .getConfiguration('nestro')
-    .get<boolean>('confirmBulkUpdate', true);
+  return getConfirmBulkUpdate();
 }
 
 async function confirmRiskyUpdates(

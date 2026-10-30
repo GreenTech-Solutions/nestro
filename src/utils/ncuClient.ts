@@ -1,9 +1,7 @@
-import {
-  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
-  readMinimumReleaseAgeDays,
-} from './releaseAge';
+import { DEFAULT_MINIMUM_RELEASE_AGE_DAYS, readMinimumReleaseAgeDays } from '../shared';
+import type { UpdateTarget } from '../shared';
 
-export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
+export type NcuUpdateTarget = UpdateTarget;
 
 const NCU_TIMEOUT_MS = 60_000;
 

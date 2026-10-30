@@ -1,11 +1,9 @@
 /* eslint-disable @stylistic/eol-last */
 
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_MINIMUM_RELEASE_AGE_DAYS, MAX_MINIMUM_RELEASE_AGE_DAYS, readMinimumReleaseAgeDays } from '../shared';
 import {
   classifyVersionReleaseAge,
-  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
-  MAX_MINIMUM_RELEASE_AGE_DAYS,
-  readMinimumReleaseAgeDays,
   resolveUpdateReleaseAge,
 } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';

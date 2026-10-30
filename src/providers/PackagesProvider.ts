@@ -2,17 +2,15 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
+import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
 import { uniqueStrings } from '../shared';
 import {
   createCheckCoordinator,
-  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   formatAuditSeverityLabel,
   formatUpdateTypeLabel,
   getUpdateType,
   logger,
-  NcuUpdateTarget,
   OperationCoordinator,
-  readMinimumReleaseAgeDays,
   resolveYarnFamily,
   showError,
 } from '../utils';
@@ -941,14 +939,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
             if (token.isCancellationRequested) {
               this.cancelCheckUpdates();
             }
-            const config = vscode.workspace.getConfiguration('nestro');
-            const forceAlways = config.get<boolean>('checkUpdatesForceAlways', false);
-            const includePreReleases = config.get<boolean>('includePreReleases', false);
-            const target = config.get<NcuUpdateTarget>('updateTarget', 'latest');
-            const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
-              config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
-            );
-            const debounceSeconds = config.get<number>('checkUpdatesDebounce', 60);
+            const forceAlways = getCheckUpdatesForceAlways();
+            const { includePreReleases, minimumReleaseAgeDays, target } = getUpdatePolicySettings();
+            const debounceSeconds = getCheckUpdatesDebounce();
             const source = this.allEntries.length > 0
               ? this.allEntries.map(e => ({
                   name: e.item.packageName,
@@ -1087,14 +1080,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   /** Reads the update policy live, so a fetch in flight can detect a setting changed mid-check. */
   private currentUpdatePolicy(): UpdateFingerprintPolicy {
-    const config = vscode.workspace.getConfiguration('nestro');
-    return {
-      target: config.get<NcuUpdateTarget>('updateTarget', 'latest'),
-      includePreReleases: config.get<boolean>('includePreReleases', false),
-      minimumReleaseAgeDays: readMinimumReleaseAgeDays(
-        config.get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
-      ),
-    };
+    return getUpdatePolicySettings();
   }
 
   /** Cancels the in-flight update check and discards its late result. */

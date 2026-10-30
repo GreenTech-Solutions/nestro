@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
+import { getCheckUpdatesOnStartup, getDefaultFilter, getMonorepoGlob, getRunAuditOnStartup } from './config';
 import { FilterManager, isFilterType, PackagesProvider } from './providers';
-import type { FilterType } from './providers';
 import {
   copyPackageNameCommand,
   installUpdateCommand,
@@ -20,10 +20,7 @@ import { logger } from './utils';
 export function activate(context: vscode.ExtensionContext): void {
   logger.info('Extension activated.');
 
-  const config = vscode.workspace.getConfiguration('nestro');
-  const configuredDefaultFilter = config.get<unknown>('defaultFilter', 'all');
-  const defaultFilter: FilterType = isFilterType(configuredDefaultFilter) ? configuredDefaultFilter : 'all';
-  const filterManager = new FilterManager(defaultFilter);
+  const filterManager = new FilterManager(getDefaultFilter());
   const provider = new PackagesProvider(filterManager);
   const auditReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Security Audit'));
   const statusReportOutput = vscode.window.createOutputChannel(vscode.l10n.t('Nestro Diagnostics'));
@@ -32,8 +29,8 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
   provider.attachTreeView(treeView);
-  const checkUpdatesOnStartup = config.get<boolean>('checkUpdatesOnStartup', false);
-  const runAuditOnStartup = config.get<boolean>('runAuditOnStartup', false);
+  const checkUpdatesOnStartup = getCheckUpdatesOnStartup();
+  const runAuditOnStartup = getRunAuditOnStartup();
 
   context.subscriptions.push(
     treeView,
@@ -125,7 +122,7 @@ export function registerPackageJsonWatcher(
   };
 
   const createWatchers = (): vscode.Disposable[] => {
-    const glob = vscode.workspace.getConfiguration('nestro').get<string>('monorepoGlob', '**/package.json');
+    const glob = getMonorepoGlob();
     const folders = vscode.workspace.workspaceFolders ?? [];
 
     return folders.flatMap((folder) => {
@@ -165,9 +162,7 @@ export function registerConfigurationWatcher(
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('nestro.defaultFilter')) {
-        const raw = vscode.workspace.getConfiguration('nestro').get<unknown>('defaultFilter', 'all');
-        const next: FilterType = isFilterType(raw) ? raw : 'all';
-        provider.setFilter(next);
+        provider.setFilter(getDefaultFilter());
       }
       if (
         e.affectsConfiguration('nestro.updateTarget')

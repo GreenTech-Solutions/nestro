@@ -7,21 +7,23 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const srcRoot = path.join(repoRoot, 'src');
 
 /** Subsystem directories under `src/` that own a barrel. */
-const SUBSYSTEMS = ['shared', 'providers', 'utils', 'clients', 'commands', 'tools'] as const;
+const SUBSYSTEMS = ['shared', 'config', 'providers', 'utils', 'clients', 'commands', 'tools'] as const;
 type Subsystem = typeof SUBSYSTEMS[number];
 
 /**
  * Layer order: a subsystem may freely import a lower-ranked subsystem's barrel.
  * `shared` is the bottom layer and imports no subsystem (checked separately).
+ * `config` sits directly above `shared` and below `utils`: `utils` reads settings, so `config` can import `shared` only.
  * `tools` has no rank — it may import only the `shared` barrel and is checked separately.
  * `commands` and `extension.ts` sit above every ranked subsystem.
  */
 const LAYER_RANK: Record<Exclude<Subsystem, 'tools'>, number> = {
   shared: 0,
-  utils: 1,
-  clients: 2,
-  providers: 3,
-  commands: 4,
+  config: 1,
+  utils: 2,
+  clients: 3,
+  providers: 4,
+  commands: 5,
 };
 
 /**

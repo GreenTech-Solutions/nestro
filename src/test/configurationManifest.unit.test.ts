@@ -1,8 +1,19 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import { isRecord } from '../shared';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
+import {
+  getCheckUpdatesDebounce,
+  getConfirmBulkUpdate,
+  getDefaultFilter,
+  getMinimumReleaseAgeDays,
+  getMonorepoGlob,
+  getUpdatePolicySettings,
+  getUpdateTarget,
+  SETTING_DEFAULTS,
+} from '../config';
+import { FILTER_TYPES, isRecord, MAX_MINIMUM_RELEASE_AGE_DAYS, UPDATE_TARGETS } from '../shared';
 
 interface ConfigurationSetting {
   readonly default: boolean | number | string;
@@ -217,5 +228,104 @@ describe('extension configuration manifest', () => {
       default: false,
       description: 'After the initial package scan completes, run one detected-package-manager security audit for each resolved project on every extension activation. This is independent of update checks and is disabled by default.',
     });
+  });
+});
+
+/** Settings whose module default differs from the manifest default, or that exist on only one side. */
+function findDefaultMismatches(
+  properties: Readonly<Record<string, ConfigurationSetting>>,
+  defaultValues: object,
+): string[] {
+  const defaults: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(defaultValues));
+  const manifestKeys = Object.keys(properties).map(key => key.replace(/^nestro\./, ''));
+  const mismatches = manifestKeys
+    .filter(key => !Object.hasOwn(defaults, key) || defaults[key] !== properties[`nestro.${key}`].default)
+    .map(key => `${key}: module ${String(defaults[key])} vs manifest ${String(properties[`nestro.${key}`].default)}`);
+  const missingFromManifest = Object.keys(defaults).filter(key => !manifestKeys.includes(key));
+  return [...mismatches, ...missingFromManifest.map(key => `${key}: not declared in the manifest`)];
+}
+
+function mockSettings(values: Record<string, unknown>): void {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: vi.fn((key: string, defaultValue: unknown) => (
+      Object.hasOwn(values, key) ? values[key] : defaultValue
+    )),
+  } as unknown as vscode.WorkspaceConfiguration);
+}
+
+describe('typed settings module', () => {
+  const properties = manifest.contributes.configuration.properties;
+
+  beforeEach(() => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReset();
+    mockSettings({});
+  });
+
+  it('declares the same defaults as the manifest for every setting', () => {
+    expect(findDefaultMismatches(properties, SETTING_DEFAULTS)).toEqual([]);
+  });
+
+  it('reports a default that diverges from the manifest, or a setting missing on either side', () => {
+    expect(findDefaultMismatches(properties, { ...SETTING_DEFAULTS, confirmBulkUpdate: false }))
+      .toEqual(['confirmBulkUpdate: module false vs manifest true']);
+    expect(findDefaultMismatches(properties, { ...SETTING_DEFAULTS, extra: 1 }))
+      .toEqual(['extra: not declared in the manifest']);
+    const withoutGlob = Object.fromEntries(Object.entries(SETTING_DEFAULTS).filter(([key]) => key !== 'monorepoGlob'));
+    expect(findDefaultMismatches(properties, withoutGlob))
+      .toEqual(['monorepoGlob: module undefined vs manifest **/package.json']);
+  });
+
+  it('keeps the shared enum values and numeric bound equal to the manifest', () => {
+    expect([...UPDATE_TARGETS]).toEqual(properties['nestro.updateTarget'].enum);
+    expect([...FILTER_TYPES]).toEqual(properties['nestro.defaultFilter'].enum);
+    expect(MAX_MINIMUM_RELEASE_AGE_DAYS).toBe(properties['nestro.minimumReleaseAgeDays'].maximum);
+  });
+
+  it('returns the manifest defaults when nothing is configured', () => {
+    expect(getUpdatePolicySettings()).toEqual({
+      target: 'latest',
+      includePreReleases: false,
+      minimumReleaseAgeDays: 7,
+    });
+    expect(getDefaultFilter()).toBe('all');
+    expect(getConfirmBulkUpdate()).toBe(true);
+    expect(getCheckUpdatesDebounce()).toBe(60);
+    expect(getMonorepoGlob()).toBe('**/package.json');
+  });
+
+  it('reads the namespace live on every call', () => {
+    mockSettings({ confirmBulkUpdate: false });
+    expect(getConfirmBulkUpdate()).toBe(false);
+    mockSettings({ confirmBulkUpdate: true });
+    expect(getConfirmBulkUpdate()).toBe(true);
+    expect(vscode.workspace.getConfiguration).toHaveBeenLastCalledWith('nestro');
+  });
+
+  it.each([
+    ['patch', 'patch'],
+    ['sideways', 'latest'],
+    [42, 'latest'],
+  ])('maps updateTarget %j to %j', (configured, expected) => {
+    mockSettings({ updateTarget: configured });
+    expect(getUpdateTarget()).toBe(expected);
+  });
+
+  it.each([
+    ['hasUpdates', 'hasUpdates'],
+    ['everything', 'all'],
+    [undefined, 'all'],
+  ])('maps defaultFilter %j to %j', (configured, expected) => {
+    mockSettings({ defaultFilter: configured });
+    expect(getDefaultFilter()).toBe(expected);
+  });
+
+  it.each([
+    [30, 30],
+    [0, 0],
+    [-1, 7],
+    ['30', 7],
+  ])('reads minimumReleaseAgeDays %j as %j', (configured, expected) => {
+    mockSettings({ minimumReleaseAgeDays: configured });
+    expect(getMinimumReleaseAgeDays()).toBe(expected);
   });
 });

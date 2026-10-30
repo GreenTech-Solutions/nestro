@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
+import { getIncludePreReleases, getMinimumReleaseAgeDays } from '../config';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import {
   classifyVersionReleaseAge,
-  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
   fetchPackageMetadata,
   formatHeldBackDate,
   logger,
-  readMinimumReleaseAgeDays,
   selectVersionsForPicker,
   showError,
 } from '../utils';
@@ -80,14 +79,8 @@ export async function pickVersionCommand(item: unknown, provider: PackagesProvid
     current = capability.item;
     const pickerCapability = fetchedCapability;
 
-    const includePreReleases = vscode.workspace
-      .getConfiguration('nestro')
-      .get<boolean>('includePreReleases', false);
-    const minimumReleaseAgeDays = readMinimumReleaseAgeDays(
-      vscode.workspace
-        .getConfiguration('nestro')
-        .get<unknown>('minimumReleaseAgeDays', DEFAULT_MINIMUM_RELEASE_AGE_DAYS),
-    );
+    const includePreReleases = getIncludePreReleases();
+    const minimumReleaseAgeDays = getMinimumReleaseAgeDays();
     const selectedVersions = selectVersionsForPicker(
       versions,
       tags,

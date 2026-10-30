@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { getMonorepoGlob } from '../config';
 import { logger } from './logger';
 import { describeError } from '../shared';
 
@@ -72,9 +73,7 @@ export async function findWorkspacePackageJsonFiles(glob?: string): Promise<vsco
     return [];
   }
 
-  const configuredGlob = glob ?? vscode.workspace
-    .getConfiguration('nestro')
-    .get<string>('monorepoGlob', '**/package.json');
+  const configuredGlob = glob ?? getMonorepoGlob();
   return await vscode.workspace.findFiles(configuredGlob, '**/node_modules/**');
 }
 

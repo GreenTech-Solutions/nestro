@@ -7,12 +7,12 @@ import typescriptEslint from 'typescript-eslint';
 // maxLines caps the file, maxFunctionLines caps its longest function; delete a key once the file fits the default.
 const SIZE_LIMIT_EXCEPTIONS = {
   'src/clients/projectResolver.ts': { maxLines: 321 },
-  'src/commands/installUpdate.ts': { maxLines: 591, maxFunctionLines: 96 },
-  'src/commands/pickVersion.ts': { maxFunctionLines: 116 },
+  'src/commands/installUpdate.ts': { maxLines: 588, maxFunctionLines: 96 },
+  'src/commands/pickVersion.ts': { maxFunctionLines: 110 },
   'src/commands/removePackage.ts': { maxFunctionLines: 62 },
-  'src/extension.ts': { maxFunctionLines: 67 },
+  'src/extension.ts': { maxFunctionLines: 64 },
   'src/providers/PackageItem.ts': { maxFunctionLines: 90 },
-  'src/providers/PackagesProvider.ts': { maxLines: 1617, maxFunctionLines: 173 },
+  'src/providers/PackagesProvider.ts': { maxLines: 1603, maxFunctionLines: 168 },
   'src/providers/auditOrchestrationService.ts': { maxLines: 615, maxFunctionLines: 132 },
   'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
   'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },

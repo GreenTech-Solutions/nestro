@@ -97,7 +97,8 @@ public-surface declaration, not a re-statement of every file in the directory.
 ```
 tools        (isolated — imports nothing from providers/utils/clients/commands, only the shared barrel)
 shared       (bottom — imports only Node built-ins: no vscode, no other subsystem)
-utils        (above shared)
+config       (above shared — typed `nestro.*` settings; may import vscode, imports no other subsystem but shared)
+utils        (above config)
 clients      (above utils)
 providers    (above utils and clients)
 commands, extension.ts   (above everything)

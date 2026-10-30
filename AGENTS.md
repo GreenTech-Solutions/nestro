@@ -91,7 +91,7 @@ Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension D
 - `ncuClient.ts` — thin wrapper around `npm-check-updates` (dynamic `import('npm-check-updates')` to avoid bundling issues); caches the imported `run()` function and returns `Map<name, latestVersion>`; `UpdateOrchestrationService` owns the update-result cache
 - `metadataRunner.ts` — runs bounded HTTPS metadata requests with typed schema, transport, timeout, cancellation, truncation, and overflow outcomes; enforces a 15s timeout and 5MiB response limit
 - `metadataRegistry.ts` — resolves package-manager-aware metadata adapters in tier order (native CLI, config-aware HTTPS, public npm), exposes a credential-free resolved-registry key for bounded deduplication, and uses native CLI for npm/pnpm and both Yarn family commands before the config-aware HTTPS fallback
-- `releaseAge.ts` — validates the minimum release-age setting and classifies versions using absolute UTC publish instants
+- `releaseAge.ts` — classifies versions against the minimum release-age setting (validated by `readMinimumReleaseAgeDays()` in `shared`) using absolute UTC publish instants
 - `nativeMetadataClient.ts` — runs bounded `npm view` / `pnpm view` requests from the package root, validates the full metadata document, and maps process outcomes to the metadata taxonomy
 - `yarnMetadataClient.ts` — runs bounded Yarn Classic and Modern metadata commands after `resolveYarnFamily()` selects the matching command shape, validates each JSON document, and maps process outcomes to the metadata taxonomy
 - `yarnFamily.ts` — `resolveYarnFamily()` picks Yarn Classic vs Modern for one project root: explicit `packageManager` metadata first, then same-root markers, then a bounded `yarn --version` probe as last resort; nothing defaults to Classic
@@ -124,7 +124,13 @@ Bottom layer: imports only Node built-ins — never `vscode` or another subsyste
 - `guards.ts` — `isRecord()` (non-null, non-array object), `asString()`, `readRequiredString()` (non-blank string or `undefined`), `hasExactKeys()` (order-independent own-key match)
 - `errors.ts` — `describeError()` (an `Error`'s message, otherwise `String(value)`) and `describeStderr()` (`; stderr: …` suffix, empty for blank stderr)
 - `text.ts` — the single text sanitizer and secret redactor: `sanitizeMultilineText()` (ANSI escapes and control characters stripped, line breaks normalized to LF, tabs to spaces; used by the logger), `sanitizeInlineText()` (single-line surfaces: controls and line-break runs become spaces, cut to 240 characters by default; used by tree items, audit report and conflict messages), and `redactCredentials()` (URL user info, `Authorization` values, credential assignments in plain, quoted and JSON form, npm tokens; generic `token`/`api-key` values are masked from a minimum length, 16 by default, and trailing `)`/`]` stay outside the masked value)
+- `settingValues.ts` — the vscode-free knowledge behind `nestro.*` settings: `UPDATE_TARGETS`, `FILTER_TYPES` (with `isUpdateTarget()` / `isFilterType()`), the minimum release-age default and maximum, and `readMinimumReleaseAgeDays()` (a whole number in range is kept, anything else becomes the default); `config`, `providers` and `utils` import these instead of redefining them
 - `index.ts` — barrel exports for shared
+
+### Config (`src/config/`)
+Typed `nestro.*` settings: the only place that calls `vscode.workspace.getConfiguration()`. Sits between `shared` and `utils` (it may import `vscode` and `shared`; `utils` reads settings, so it cannot sit above `utils`). Every `get*()` reads the setting live at call time and never caches; `SETTING_DEFAULTS` mirrors `contributes.configuration` in `package.json`, checked by `src/test/configurationManifest.unit.test.ts`.
+- `settings.ts` — `SETTING_DEFAULTS`, one getter per setting, and `getUpdatePolicySettings()` (target, pre-release flag, minimum release age); an out-of-enum `updateTarget` / `defaultFilter` or an invalid `minimumReleaseAgeDays` falls back to the default
+- `index.ts` — barrel exports for config
 
 ### Tools (`src/tools/`)
 Release/CI/VSIX tooling, isolated from `providers`/`utils`/`clients`/`commands` and allowed to import only the `src/shared` barrel (enforced by `src/test/importContract.unit.test.ts`); never bundled into the extension. Each CLI entry point runs as compiled JS from a `package.json` script that runs `test:compile` first — `node out/tools/<Name>Cli.js`.
