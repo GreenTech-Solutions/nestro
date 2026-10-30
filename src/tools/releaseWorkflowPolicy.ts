@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
 import { validatePrepareReleaseConfig } from './releaseAnalyzer';
-import { bundleUploadPaths, COMPRESSED_SIZE_BUDGET_BYTES, PACKAGED_FILE_COUNT_BUDGET, registryDownloadUrl, RELEASE_CONTRACT } from './releaseContract';
+import { bundleUploadPaths, RELEASE_CONTRACT } from './releaseContract';
 import { assertScriptCheckoutBoundary, assertScriptStep, isReleaseScriptCall, releaseScriptRun, SCRIPT_CHECKOUT_STEP_NAME } from './releasePublishSource';
 import { add, asRecord, asString, exactKeys, executableRun, findStep, hasAction, hasRun, isRecord, keys, normalizedRun, steps } from './releaseWorkflowSteps';
 import type { ReleaseWorkflowPolicyViolation, UnknownRecord } from './releaseWorkflowSteps';
@@ -90,116 +90,6 @@ function assertToolchain(job: UnknownRecord | undefined, label: string, violatio
     add(violations, 'toolchain', `${label} must use the reviewed setup-node with .nvmrc and the lockfile-scoped pnpm cache`);
   }
 }
-
-const POST_PUBLISH_COMPARE_RUN = [
-  'set -euo pipefail',
-  'package_json="$(unzip -p "$CANDIDATE_VSIX" extension/package.json)"',
-  'publisher="$(jq -er \'.publisher\' <<<"$package_json")"',
-  'name="$(jq -er \'.name\' <<<"$package_json")"',
-  '[[ "$publisher" =~ ^[A-Za-z0-9._-]+$ ]]',
-  '[[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]',
-  '[[ "$VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]',
-  'mkdir -p dist/published',
-  `marketplace_url="${registryDownloadUrl('marketplace', { name: '$name', publisher: '$publisher', version: '$VERSION' })}"`,
-  `openvsx_url="${registryDownloadUrl('openVsx', { name: '$name', publisher: '$publisher', version: '$VERSION' })}"`,
-  'curl_args=(',
-  '  --fail --silent --show-error --location --compressed',
-  '  --proto \'=https\' --proto-redir \'=https\' --max-redirs 3',
-  `  --connect-timeout 10 --max-time 120 --max-filesize ${COMPRESSED_SIZE_BUDGET_BYTES}`,
-  '  --retry 45 --retry-delay 20 --retry-all-errors --retry-max-time 900',
-  ')',
-  'curl "${curl_args[@]}" "$marketplace_url" --output dist/published/marketplace.vsix',
-  'curl "${curl_args[@]}" "$openvsx_url" --output dist/published/openvsx.vsix',
-  `test "$(wc -c < dist/published/marketplace.vsix)" -le ${COMPRESSED_SIZE_BUDGET_BYTES}`,
-  `test "$(wc -c < dist/published/openvsx.vsix)" -le ${COMPRESSED_SIZE_BUDGET_BYTES}`,
-  'python3 - "$CANDIDATE_VSIX" dist/published/marketplace.vsix dist/published/openvsx.vsix <<\'PY\'',
-  'import hashlib',
-  'import json',
-  'import os',
-  'import stat',
-  'import sys',
-  'import xml.etree.ElementTree as ET',
-  'import zipfile',
-  '',
-  'EXTENSION_PREFIX = "extension/"',
-  `MAX_PACKAGED_FILES = ${PACKAGED_FILE_COUNT_BUDGET}`,
-  `MAX_COMPRESSED_BYTES = ${COMPRESSED_SIZE_BUDGET_BYTES}`,
-  `MAX_ENTRY_BYTES = ${RELEASE_CONTRACT.vsixBudget.maxEntryBytes}`,
-  `MAX_UNCOMPRESSED_BYTES = ${RELEASE_CONTRACT.vsixBudget.maxUncompressedBytes}`,
-  '',
-  'def fail(message):',
-  '    raise SystemExit(message)',
-  '',
-  'def inspect(path):',
-  '    try:',
-  '        with zipfile.ZipFile(path) as archive:',
-  '            entries = []',
-  '            seen = set()',
-  '            infos = archive.infolist()',
-  '            packaged_files = [info for info in infos if info.filename.startswith(EXTENSION_PREFIX)]',
-  '            if len(packaged_files) > MAX_PACKAGED_FILES:',
-  '                fail(f"published VSIX has too many packaged files: {len(packaged_files)}")',
-  '            uncompressed_total = sum(info.file_size for info in infos)',
-  '            if os.path.getsize(path) > MAX_COMPRESSED_BYTES:',
-  '                fail(f"published VSIX compressed payload exceeds {MAX_COMPRESSED_BYTES} bytes")',
-  '            if uncompressed_total > MAX_UNCOMPRESSED_BYTES:',
-  '                fail(f"published VSIX expanded payload exceeds {MAX_UNCOMPRESSED_BYTES} bytes")',
-  '            for info in infos:',
-  '                if info.file_size > MAX_ENTRY_BYTES:',
-  '                    fail(f"published VSIX entry is too large: {info.filename}")',
-  '                name = info.filename',
-  '                if (not name or name.startswith("/") or "\\\\" in name',
-  '                        or any(part in ("", "..") for part in name.split("/"))',
-  '                        or name.endswith("/")):',
-  '                    fail(f"unsafe published archive path: {name}")',
-  '                if name in seen:',
-  '                    fail(f"duplicate published archive path: {name}")',
-  '                seen.add(name)',
-  '                mode = (info.external_attr >> 16) & 0xffff',
-  '                if stat.S_IFMT(mode) == stat.S_IFLNK:',
-  '                    fail(f"published archive contains a symlink: {name}")',
-  '                entries.append((name, archive.read(info)))',
-  '    except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as error:',
-  '        fail(f"unsafe published VSIX: {error}")',
-  '    by_name = dict(entries)',
-  '    try:',
-  '        package = json.loads(by_name["extension/package.json"])',
-  '    except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as error:',
-  '        fail(f"published package manifest is invalid: {error}")',
-  '    identity = tuple(package.get(key) for key in ("name", "version", "publisher"))',
-  '    if any(not isinstance(value, str) or not value for value in identity):',
-  '        fail("published package manifest identity is incomplete")',
-  '    outer = by_name.get("extension.vsixmanifest")',
-  '    if outer is None or b"<!DOCTYPE" in outer.upper() or b"<!ENTITY" in outer.upper():',
-  '        fail("published outer manifest is missing or contains forbidden declarations")',
-  '    try:',
-  '        root = ET.fromstring(outer)',
-  '        metadata = next(child for child in root if child.tag.rsplit("}", 1)[-1] == "Metadata")',
-  '        identity_node = next(child for child in metadata if child.tag.rsplit("}", 1)[-1] == "Identity")',
-  '    except (ET.ParseError, StopIteration) as error:',
-  '        fail(f"published outer manifest identity is invalid: {error}")',
-  '    outer_identity = (identity_node.attrib.get("Id"), identity_node.attrib.get("Version"), identity_node.attrib.get("Publisher"))',
-  '    if outer_identity != identity:',
-  '        fail("published VSIX package and outer identities differ")',
-  '    normalized = "".join(',
-  '        f"{hashlib.sha256(content).hexdigest()}  {name}\\n"',
-  '        for name, content in sorted(entries)',
-  '    )',
-  '    with open(path, "rb") as handle:',
-  '        raw = handle.read()',
-  '    return raw, identity, normalized',
-  '',
-  'candidate, candidate_identity, candidate_manifest = inspect(sys.argv[1])',
-  'for registry_path in sys.argv[2:]:',
-  '    published, published_identity, published_manifest = inspect(registry_path)',
-  '    if published == candidate:',
-  '        print(f"{registry_path}: exact candidate bytes")',
-  '    elif published_identity == candidate_identity and published_manifest == candidate_manifest:',
-  '        print(f"{registry_path}: accepted explicit registry re-pack")',
-  '    else:',
-  '        fail(f"{registry_path}: registry copy does not match candidate identity and normalized manifest")',
-  'PY',
-].join('\n');
 
 function isFailClosedShellStep(step: UnknownRecord): boolean {
   const run = executableRun(step);
@@ -736,21 +626,10 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     },
     run: releaseScriptRun('verify-attestation'),
   }, 'attestation', 'protected publish must verify the exact VSIX attestation through the reviewed script', violations);
-  const postPublish = findStep(publish, 'Compare post-publish registry copies');
-  const postPublishRun = postPublish === undefined ? '' : executableRun(postPublish);
-  if (postPublish === undefined
-    || postPublish.shell !== 'bash'
-    || !isFailClosedShellStep(postPublish)
-    || !exactKeys(asRecord(postPublish.env), ['CANDIDATE_VSIX', 'VERSION'])
-    || asRecord(postPublish.env)?.CANDIDATE_VSIX !== '${{ steps.manifest.outputs.vsix-path }}'
-    || asRecord(postPublish.env)?.VERSION !== '${{ steps.manifest.outputs.version }}'
-    || !postPublishRun.includes(new URL(RELEASE_CONTRACT.registries.marketplace.url).hostname)
-    || !postPublishRun.includes(new URL(RELEASE_CONTRACT.registries.openVsx.url).hostname)
-    || postPublishRun !== POST_PUBLISH_COMPARE_RUN
-    || !postPublishRun.includes('normalized')
-    || !postPublishRun.includes('identity')) {
-    add(violations, 'post-publish', 'publish must download and safely compare both registry copies, allowing only an explicit normalized re-pack');
-  }
+  assertScriptStep(findStep(publish, 'Compare post-publish registry copies'), {
+    env: { CANDIDATE_VSIX: '${{ steps.manifest.outputs.vsix-path }}', VERSION: '${{ steps.manifest.outputs.version }}' },
+    run: releaseScriptRun('compare-published'),
+  }, 'post-publish', 'publish must download and safely compare both registry copies through the reviewed script, allowing only an explicit normalized re-pack', violations);
   const marketplace = findStep(publish, 'Publish to the Visual Studio Marketplace');
   const openVsx = findStep(publish, 'Publish to Open VSX');
   const { marketplace: marketplaceSecret, openVsx: openVsxSecret } = RELEASE_CONTRACT.secrets;

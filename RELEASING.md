@@ -238,12 +238,10 @@ that nothing changed afterward:
 
 1. Re-download both URLs above (`curl -L --compressed -o marketplace.vsix ...`, `curl -L --compressed -o openvsx.vsix ...`)
    and `shasum -a 256` them against the GitHub Release asset.
-2. `src/tools/publishedArtifact.ts` exports `comparePublishedVsix()`, which implements exactly
-   the identity/normalized-manifest comparison above in code — **it has no CLI or `package.json`
-   script yet**. Until one exists, replicate it by hand rather than inventing a command that does
-   not exist: `unzip -l` both files, diff the member lists, `shasum -a 256` each member, and
-   compare `extension/package.json`'s `name`/`version`/`publisher` and
-   `extension.vsixmanifest`'s `Identity` attributes between the two archives and the candidate.
+2. `.github/scripts/release/compare-published.py` implements exactly the identity/normalized-manifest
+   comparison above (stdlib only). Run it against the files from step 1:
+   `python3 -I .github/scripts/release/compare-published.py compare <candidate.vsix> marketplace.vsix openvsx.vsix`
+   — it exits non-zero with the reason on any mismatch.
 3. Open both listing pages and check: the published version number, the rendered README, all
    four screenshots, and the repository/issues/homepage links.
 4. Check the README `Verify` badge (`https://img.shields.io/github/actions/workflow/status/GreenTech-Solutions/nestro/ci.yml?branch=master&label=verify`)

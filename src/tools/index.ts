@@ -13,7 +13,6 @@ export { CI_WORKFLOW_PATH, CODEOWNERS_PATH, DEPENDABOT_CONFIG_PATH, evaluateCiWo
 export { createNodeCiPolicyCliDependencies, runCiPolicyCli } from './ciPolicyCli';
 export type { CiPolicyCliDependencies, WorkflowPolicySource } from './ciPolicyCli';
 export { CI_WORKFLOW_CONTRACT } from './ciWorkflowContract';
-export { comparePublishedVsix } from './publishedArtifact';
 export { analyzeReleaseBump, computeNextVersion, generateReleaseNotes, parsePrepareReleaseConfig, releaseNotesBody, renderChangelogEntry, validatePrepareReleaseConfig } from './releaseAnalyzer';
 export type { PrepareReleaseConfig, RawCommit } from './releaseAnalyzer';
 export { buildReleaseCandidate, findManifestViolation, isWellFormedManifest } from './releaseCandidate';

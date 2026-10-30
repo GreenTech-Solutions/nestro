@@ -1,23 +1,16 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { archiveEntry, buildZipFixture, CLEAN_TRACKED_SOURCE_PATHS, cleanVsixFixtureEntries } from './fixtures';
-import type { ZipFixtureEntry } from './fixtures/vsixFixtures';
 import {
   buildReleaseCandidate,
-  COMPRESSED_SIZE_BUDGET_BYTES,
   evaluateCiWorkflowPolicy,
   evaluateReleaseCandidateWorkflowPolicy,
   evaluateReleaseConfigPolicy,
   evaluateReleaseDispatchWorkflowPolicy,
   evaluateReleasePrepareWorkflowPolicy,
   evaluateReleaseWorkflowPolicy,
-  evaluateVsixPolicy,
   loadReviewedActionsRegistry,
-  PACKAGED_FILE_COUNT_BUDGET,
   RELEASE_CONTRACT,
   reviewedActionReference,
 } from '../tools';
@@ -261,34 +254,20 @@ describe('release workflow policies', () => {
     })), 'candidate-integrity');
   });
 
-  it('builds the Open VSX download URL in the form the registry actually serves', () => {
-    const workflow = parse(releaseSource, { uniqueKeys: true }) as Record<string, unknown>;
-    const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-    const template = String(comparison?.run).match(/openvsx_url="([^"]+)"/)?.[1] ?? '';
-    const built = template.replaceAll('$publisher', 'greentech-solutions').replaceAll('$name', 'nestro').replaceAll('$VERSION', '0.4.2');
-    // Matches the `files.download` field the registry's own API returns for this release.
-    expect(built).toBe('https://open-vsx.org/api/greentech-solutions/nestro/0.4.2/file/greentech-solutions.nestro-0.4.2.vsix');
+  it.each([
+    ['a different script', 'bash reviewed-source/.github/scripts/release/other.sh'],
+    ['a suppressed failure', 'bash reviewed-source/.github/scripts/release/compare-published.sh || true'],
+    ['an inline body', 'set -euo pipefail\ntrue'],
+    ['a local copy', 'bash ./compare-published.sh'],
+  ])('requires the post-publish comparison to be exactly the reviewed script call, not %s', (_label, run) => {
+    expect(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
+      steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies')!.run = run;
+    }))).toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'post-publish' })]));
   });
 
-  it('rejects the Open VSX URL form the registry does not serve', () => {
+  it('requires the post-publish comparison to receive only the candidate and its version', () => {
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run).replace('file/$publisher.$name-$VERSION.vsix', 'file/$name-$VERSION.vsix');
-    })), 'post-publish');
-  });
-
-  it('decompresses both registry downloads before comparing them', () => {
-    const workflow = parse(releaseSource, { uniqueKeys: true }) as Record<string, unknown>;
-    const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-    const curlArgs = String(comparison?.run).match(/curl_args=\(([\s\S]*?)\)/)?.[1] ?? '';
-    // Marketplace always answers content-encoding: gzip; without this flag curl saves the raw gzip stream.
-    expect(curlArgs).toMatch(/--compressed\b/);
-  });
-
-  it('rejects a post-publish comparison that skips decompression', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run).replace('--location --compressed', '--location');
+      (steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies')!.env as Record<string, unknown>).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
     })), 'post-publish');
   });
 
@@ -301,29 +280,6 @@ describe('release workflow policies', () => {
       const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');
       attestation!.run = `set -euo pipefail\n# ${String(attestation!.run).replaceAll('\n', '\n# ')}`;
     })), 'attestation');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = 'set -euo pipefail\ntrue';
-    })), 'post-publish');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run).replace('--proto \'=https\' --proto-redir \'=https\' --max-redirs 3', '--location');
-    })), 'post-publish');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run)
-        .replace('MAX_PACKAGED_FILES = 26', 'MAX_PACKAGED_FILES = 1')
-        .replace('def fail(message):', 'MAX_PACKAGED_FILES = 26\n\ndef fail(message):');
-    })), 'post-publish');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run)
-        .replace('MAX_UNCOMPRESSED_BYTES = 10485760', 'MAX_UNCOMPRESSED_BYTES = 10485760\n\nglobals().update(MAX_PACKAGED_FILES=1)');
-    })), 'post-publish');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const comparison = steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies');
-      comparison!.run = String(comparison!.run).replace('def inspect(path):', 'fail = lambda message: None\n\ndef inspect(path):');
-    })), 'post-publish');
     expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
       const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
       verify!.run = `${String(verify!.run)} || true`;
@@ -462,12 +418,13 @@ describe('release workflow policies', () => {
 
 describe('release workflow shell scripts', () => {
   const scriptDirectory = resolve(repositoryRoot, '.github/scripts/release');
-  const executableScripts = ['verify-run.sh', 'verify-candidate.sh', 'verify-attestation.sh', 'finalize-release.sh'];
+  const executableScripts = ['verify-run.sh', 'verify-candidate.sh', 'verify-attestation.sh', 'finalize-release.sh', 'compare-published.sh'];
   const allScripts = [...executableScripts, 'candidate-lib.sh'];
   const scriptCalls = [
     [releaseSource, 'publish', 'Verify the candidate workflow run', 'verify-run.sh', ''],
     [releaseSource, 'publish', 'Verify the candidate manifest, tag and digest', 'verify-candidate.sh', ' publish'],
     [releaseSource, 'publish', 'Verify protected candidate attestation', 'verify-attestation.sh', ''],
+    [releaseSource, 'publish', 'Compare post-publish registry copies', 'compare-published.sh', ''],
     [releaseSource, 'finalize', 'Verify the exact source tag', 'finalize-release.sh', ' verify'],
     [releaseSource, 'finalize', 'Create the GitHub release if absent', 'finalize-release.sh', ' create'],
     [releaseSource, 'finalize', 'Verify an existing GitHub release safely', 'finalize-release.sh', ' reconcile'],
@@ -521,117 +478,10 @@ describe('release workflow shell scripts', () => {
     }
   });
 
-  it('keeps release workflow shell text out of src/tools except the post-publish comparison', () => {
+  it('keeps release workflow shell and Python text out of src/tools', () => {
     const toolsSource = readFileSync(resolve(repositoryRoot, 'src/tools/releaseWorkflowPolicy.ts'), 'utf8');
-    for (const fragment of ['gh release', 'gh attestation', 'sha256sum', 'comm -23']) {
+    for (const fragment of ['gh release', 'gh attestation', 'sha256sum', 'comm -23', 'curl_args', 'python3', 'zipfile']) {
       expect(toolsSource, fragment).not.toContain(fragment);
-    }
-  });
-});
-
-describe('post-publish comparison budget', () => {
-  const comparisonRun = String(steps(parse(releaseSource) as Record<string, unknown>, 'publish')
-    .find(step => step.name === 'Compare post-publish registry copies')!.run);
-  const pythonSource = /<<'PY'\n([\s\S]*?)\nPY\n?$/u.exec(comparisonRun)![1];
-  const python3 = ['/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3'].find(candidate => existsSync(candidate));
-
-  interface BoundaryArchive {
-    readonly bytes: Uint8Array;
-    readonly entries: readonly ZipFixtureEntry[];
-  }
-
-  function numbersFor(pattern: RegExp): number[] {
-    return [...comparisonRun.matchAll(pattern)].map(match => Number(match[1]));
-  }
-
-  function toBoundaryArchive(entries: readonly ZipFixtureEntry[]): BoundaryArchive {
-    return { bytes: buildZipFixture(entries), entries };
-  }
-
-  function policyRejects(archive: BoundaryArchive, kind: 'file-count-budget' | 'size-budget'): boolean {
-    return evaluateVsixPolicy({
-      entries: archive.entries.map(entry => archiveEntry(entry.path, entry.content)),
-      compressedBytes: archive.bytes.length,
-      trackedSourcePaths: CLEAN_TRACKED_SOURCE_PATHS,
-      symlinkSourcePaths: [],
-      modifiedTrackedPaths: [],
-      untrackedWorktreePaths: [],
-      requireCleanWorktree: false,
-    }).violations.some(violation => violation.kind === kind);
-  }
-
-  function comparisonStep(archive: BoundaryArchive): { readonly rejected: boolean; readonly stderr: string } {
-    const root = mkdtempSync(join(tmpdir(), 'nestro-post-publish-'));
-    try {
-      const scriptDir = join(root, 'script');
-      const archiveDir = join(root, 'archives');
-      mkdirSync(scriptDir);
-      mkdirSync(archiveDir);
-      const script = join(scriptDir, 'compare.py');
-      writeFileSync(script, pythonSource);
-      const paths = ['candidate', 'marketplace', 'openvsx'].map(name => join(archiveDir, `${name}.vsix`));
-      for (const path of paths) {
-        writeFileSync(path, archive.bytes);
-      }
-      const result = spawnSync(python3!, ['-I', script, ...paths], { encoding: 'utf8', input: '' });
-      return { rejected: result.status !== 0, stderr: result.stderr };
-    }
-    finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }
-
-  function archiveWithExtensionFiles(count: number): BoundaryArchive {
-    const base = cleanVsixFixtureEntries();
-    const baseCount = base.filter(entry => entry.path.startsWith('extension/')).length;
-    const extras = Array.from(
-      { length: count - baseCount },
-      (_unused, index): ZipFixtureEntry => ({ path: `extension/images/shot-${index}.png`, content: 'png' }),
-    );
-    return toBoundaryArchive([...base, ...extras]);
-  }
-
-  function archiveWithSize(bytes: number): BoundaryArchive {
-    const padded = (length: number): BoundaryArchive => toBoundaryArchive([
-      ...cleanVsixFixtureEntries(),
-      { path: 'extension/images/padding.bin', content: new Uint8Array(length).fill(0x41), method: 'stored' },
-    ]);
-    return padded(bytes - padded(1).bytes.length + 1);
-  }
-
-  it('states the same budgets as the VSIX policy', () => {
-    expect(numbersFor(/MAX_PACKAGED_FILES = (\d+)/gu)).toEqual([PACKAGED_FILE_COUNT_BUDGET]);
-    expect(numbersFor(/MAX_COMPRESSED_BYTES = (\d+)/gu)).toEqual([COMPRESSED_SIZE_BUDGET_BYTES]);
-    expect(numbersFor(/--max-filesize (\d+)/gu)).toEqual([COMPRESSED_SIZE_BUDGET_BYTES]);
-    expect(numbersFor(/-le (\d+)/gu)).toEqual([COMPRESSED_SIZE_BUDGET_BYTES, COMPRESSED_SIZE_BUDGET_BYTES]);
-  });
-
-  it.skipIf(python3 === undefined).each([
-    [PACKAGED_FILE_COUNT_BUDGET, false],
-    [PACKAGED_FILE_COUNT_BUDGET + 1, true],
-  ])('gives the VSIX policy verdict for %i extension files', (count, rejected) => {
-    const archive = archiveWithExtensionFiles(count);
-    const python = comparisonStep(archive);
-
-    expect(policyRejects(archive, 'file-count-budget')).toBe(rejected);
-    expect(python.rejected).toBe(rejected);
-    if (rejected) {
-      expect(python.stderr).toContain('too many packaged files');
-    }
-  });
-
-  it.skipIf(python3 === undefined).each([
-    [COMPRESSED_SIZE_BUDGET_BYTES, false],
-    [COMPRESSED_SIZE_BUDGET_BYTES + 1, true],
-  ])('gives the VSIX policy verdict for a %i byte package', (bytes, rejected) => {
-    const archive = archiveWithSize(bytes);
-    const python = comparisonStep(archive);
-
-    expect(archive.bytes).toHaveLength(bytes);
-    expect(policyRejects(archive, 'size-budget')).toBe(rejected);
-    expect(python.rejected).toBe(rejected);
-    if (rejected) {
-      expect(python.stderr).toContain('compressed');
     }
   });
 });
