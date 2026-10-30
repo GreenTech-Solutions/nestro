@@ -27,8 +27,12 @@ const MAX_DETAIL_LENGTH = 2000;
 const FILE_URI_PATTERN = /\bfile:\/\/[^\s"'`<>(){}[\],;!?]+/giu;
 const ABSOLUTE_PATH_PATTERN = /(^|[\s("'`=])((?:\/(?!\/)|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>(){}[\],;:!?]*)/g;
 const REPORT_CREDENTIAL_PATTERN = /(\b(?:password|passwd|_password|_authToken|_auth|token|api-key|api_key|apikey)\b\s*[:=]\s*)\S+/giu;
+const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
+const CSI_8BIT = String.fromCharCode(155);
+// OSC (ESC ] ... BEL or ESC \), 7-bit CSI (ESC [ ...) and 8-bit CSI.
 const ANSI_ESCAPE_PATTERN = new RegExp(
-  `${String.fromCharCode(27)}(?:\\\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\\\\\)|\\\\[[0-?]*[ -/]*[@-~]|${String.fromCharCode(155)}[0-?]*[ -/]*[@-~])`,
+  `${ESC}(?:\\](?:[^${BEL}${ESC}]|${ESC}(?!\\\\))*(?:${BEL}|${ESC}\\\\)|\\[[0-?]*[ -/]*[@-~])|${CSI_8BIT}[0-?]*[ -/]*[@-~]`,
   'g',
 );
 

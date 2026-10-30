@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openStatusReportCommand } from '../commands';
 import { formatStatusReport } from '../utils';
 import type { StatusReportSnapshot } from '../utils';
@@ -114,6 +114,45 @@ describe('status diagnostics report', () => {
     expect(report).not.toContain('Package read failures');
     expect(report).not.toContain('Update check failures');
     expect(report).not.toContain('Security audit failures');
+  });
+});
+
+describe('status report ANSI stripping', () => {
+  afterEach(() => {
+    vi.doUnmock('../utils/logger');
+    vi.resetModules();
+  });
+
+  async function formatWithoutLoggerSanitizer(detail: string): Promise<string> {
+    vi.resetModules();
+    vi.doMock('../utils/logger', () => ({ sanitizeLogText: (value: string): string => value }));
+    const { formatStatusReport: format } = await import('../utils/statusReport');
+    return format(snapshot({
+      updateFailures: [{ packageFilePaths: [], detail }],
+    }));
+  }
+
+  it('strips CSI sequences without relying on the logger sanitizer', async () => {
+    const report = await formatWithoutLoggerSanitizer('a\u001b[31mred\u001b[0m b\u001b[1;32;4mgreen\u001b[m c');
+    expect(report).toContain('Details: ared bgreen c');
+    expect(report).not.toContain('\u001b');
+    expect(report).not.toContain('[31m');
+    expect(report).not.toContain('[0m');
+  });
+
+  it('strips 8-bit CSI sequences', async () => {
+    const report = await formatWithoutLoggerSanitizer('a\u009b31mred\u009b0m b');
+    expect(report).toContain('Details: ared b');
+  });
+
+  it('strips OSC sequences terminated by BEL or ST', async () => {
+    const report = await formatWithoutLoggerSanitizer(
+      'a\u001b]0;window title\u0007b\u001b]8;;https://example.test\u001b\\link\u001b]8;;\u001b\\c',
+    );
+    expect(report).toContain('Details: ablinkc');
+    expect(report).not.toContain('window title');
+    expect(report).not.toContain(']0;');
+    expect(report).not.toContain(']8;;');
   });
 });
 
