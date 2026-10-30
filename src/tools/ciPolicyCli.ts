@@ -53,7 +53,7 @@ interface LocatedViolation extends WorkflowViolation {
   readonly path: string;
 }
 
-const RELEASE_WORKFLOW_POLICIES: ReadonlyMap<string, (source: string) => readonly WorkflowViolation[]> = new Map([
+const RELEASE_WORKFLOW_POLICIES: ReadonlyMap<string, (source: string, registry: ReviewedActionsRegistry) => readonly WorkflowViolation[]> = new Map([
   [RELEASE_PREPARE_WORKFLOW_PATH, evaluateReleasePrepareWorkflowPolicy],
   [RELEASE_CANDIDATE_WORKFLOW_PATH, evaluateReleaseCandidateWorkflowPolicy],
   [RELEASE_DISPATCH_WORKFLOW_PATH, evaluateReleaseDispatchWorkflowPolicy],
@@ -101,8 +101,8 @@ function workflowViolations(
       if (path === CI_WORKFLOW_PATH) {
         violations.push(...evaluateCiWorkflowPolicy(source, registry));
       }
+      violations.push(...RELEASE_WORKFLOW_POLICIES.get(path)?.(source, registry) ?? []);
     }
-    violations.push(...RELEASE_WORKFLOW_POLICIES.get(path)?.(source) ?? []);
     return locate(path, violations);
   });
 }

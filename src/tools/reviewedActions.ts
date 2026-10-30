@@ -78,10 +78,12 @@ export function loadReviewedActionsRegistry(rootDirectory: string = REPOSITORY_R
   return parseReviewedActionsRegistry(readFileSync(resolve(rootDirectory, REVIEWED_ACTIONS_PATH), 'utf8'));
 }
 
-export const REVIEWED_REGISTRY = loadReviewedActionsRegistry();
+let repositoryRegistry: ReviewedActionsRegistry | undefined;
 
+/** Loads the repository registry on first use, so a malformed file fails the caller instead of the import. */
 export function reviewedActionReference(locator: string): string {
-  const action = Object.hasOwn(REVIEWED_REGISTRY.actions, locator) ? REVIEWED_REGISTRY.actions[locator] : undefined;
+  repositoryRegistry ??= loadReviewedActionsRegistry();
+  const action = Object.hasOwn(repositoryRegistry.actions, locator) ? repositoryRegistry.actions[locator] : undefined;
   if (action === undefined) {
     throw registryError(`${locator} is not a reviewed action`);
   }

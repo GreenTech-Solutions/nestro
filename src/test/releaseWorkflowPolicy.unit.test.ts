@@ -14,134 +14,240 @@ import {
   RELEASE_CONTRACT,
   reviewedActionReference,
 } from '../tools';
-import type { ReleaseCandidateEvidence } from '../tools';
+import type { ReleaseCandidateEvidence, ReviewedActionsRegistry, WorkflowViolation } from '../tools';
+
+type Workflow = Record<string, unknown>;
+type Mapping = Record<string, unknown>;
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
-const prepareSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release-prepare.yml'), 'utf8');
-const candidateSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release-candidate.yml'), 'utf8');
-const dispatchSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release-dispatch.yml'), 'utf8');
-const releaseSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
+const registry = loadReviewedActionsRegistry(repositoryRoot);
+const readWorkflow = (name: string): string => readFileSync(resolve(repositoryRoot, '.github/workflows', name), 'utf8');
+const prepareSource = readWorkflow('release-prepare.yml');
+const candidateSource = readWorkflow('release-candidate.yml');
+const dispatchSource = readWorkflow('release-dispatch.yml');
+const releaseSource = readWorkflow('release.yml');
 const releaseConfigSource = readFileSync(resolve(repositoryRoot, '.releaserc.json'), 'utf8');
 const staleSha = 'e'.repeat(40);
+
+const evaluatePrepare = (source: string): WorkflowViolation[] => evaluateReleasePrepareWorkflowPolicy(source, registry);
+const evaluateCandidate = (source: string): WorkflowViolation[] => evaluateReleaseCandidateWorkflowPolicy(source, registry);
+const evaluateDispatch = (source: string): WorkflowViolation[] => evaluateReleaseDispatchWorkflowPolicy(source, registry);
+const evaluateRelease = (source: string): WorkflowViolation[] => evaluateReleaseWorkflowPolicy(source, registry);
 
 function scriptSource(name: string): string {
   return readFileSync(resolve(repositoryRoot, '.github/scripts/release', name), 'utf8');
 }
 
-function mutate(source: string, mutator: (workflow: Record<string, unknown>) => void): string {
-  const workflow = parse(source, { uniqueKeys: true }) as Record<string, unknown>;
+function mutate(source: string, mutator: (workflow: Workflow) => void): string {
+  const workflow = parse(source, { uniqueKeys: true }) as Workflow;
   mutator(workflow);
   return stringify(workflow);
 }
 
-function jobs(workflow: Record<string, unknown>): Record<string, Record<string, unknown>> {
-  return workflow.jobs as Record<string, Record<string, unknown>>;
+function jobs(workflow: Workflow): Record<string, Mapping> {
+  return workflow.jobs as Record<string, Mapping>;
 }
 
-function steps(workflow: Record<string, unknown>, job: string): Record<string, unknown>[] {
-  return jobs(workflow)[job].steps as Record<string, unknown>[];
+function steps(workflow: Workflow, job: string): Mapping[] {
+  return jobs(workflow)[job].steps as Mapping[];
+}
+
+function stepNamed(workflow: Workflow, job: string, name: string): Mapping {
+  const found = steps(workflow, job).find(step => step.name === name);
+  if (found === undefined) {
+    throw new Error(`${job} has no step named ${name}`);
+  }
+  return found;
+}
+
+function removeStep(workflow: Workflow, job: string, name: string): void {
+  jobs(workflow)[job].steps = steps(workflow, job).filter(step => step.name !== name);
+}
+
+function mapping(value: unknown): Mapping {
+  return value as Mapping;
 }
 
 function expectViolation(violations: readonly { readonly rule: string }[], rule: string): void {
   expect(violations).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
 }
 
+const ECHO_ONLY_RUN = 'echo actions/runs/ .head_sha master push success';
+const SCRIPT_CHECKOUT = 'Check out the reviewed scripts';
+
+const WORKFLOWS = [
+  ['release-prepare.yml', prepareSource, evaluatePrepare],
+  ['release-candidate.yml', candidateSource, evaluateCandidate],
+  ['release-dispatch.yml', dispatchSource, evaluateDispatch],
+  ['release.yml', releaseSource, evaluateRelease],
+] as const;
+
 describe('release workflow policies', () => {
   it('accepts the reviewed preparation, candidate, dispatch, publish/finalizer and config contracts', () => {
-    expect(evaluateReleasePrepareWorkflowPolicy(prepareSource)).toEqual([]);
-    expect(evaluateReleaseCandidateWorkflowPolicy(candidateSource)).toEqual([]);
-    expect(evaluateReleaseDispatchWorkflowPolicy(dispatchSource)).toEqual([]);
-    expect(evaluateReleaseWorkflowPolicy(releaseSource)).toEqual([]);
+    expect(evaluatePrepare(prepareSource)).toEqual([]);
+    expect(evaluateCandidate(candidateSource)).toEqual([]);
+    expect(evaluateDispatch(dispatchSource)).toEqual([]);
+    expect(evaluateRelease(releaseSource)).toEqual([]);
     expect(evaluateReleaseConfigPolicy(releaseConfigSource)).toEqual([]);
   });
 
+  it.each(WORKFLOWS)('rejects an echo that merely mentions the run-identity words in place of a step of %s', (_name, source, evaluate) => {
+    const workflow = parse(source) as Workflow;
+    for (const [jobId, job] of Object.entries(jobs(workflow))) {
+      for (const step of job.steps as Mapping[]) {
+        if (typeof step.run === 'string') {
+          const violations = evaluate(mutate(source, (mutated) => {
+            stepNamed(mutated, jobId, String(step.name)).run = ECHO_ONLY_RUN;
+          }));
+          expectViolation(violations, 'step-contract');
+        }
+      }
+    }
+  });
+
+  it('rejects a run-identity check that only names the run, in preparation and candidate jobs', () => {
+    for (const [source, evaluate, job] of [[prepareSource, evaluatePrepare, 'prepare'], [candidateSource, evaluateCandidate, 'candidate']] as const) {
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        stepNamed(workflow, job, 'Verify the completed verification run').run = 'gh api actions/runs/42';
+      })), 'step-contract');
+    }
+  });
+
+  it.each(WORKFLOWS)('pins every field of every step of %s', (_name, source, evaluate) => {
+    const workflow = parse(source) as Workflow;
+    for (const [jobId, job] of Object.entries(jobs(workflow))) {
+      for (const [index, step] of (job.steps as Mapping[]).entries()) {
+        const mutations: [string, (mutated: Workflow) => void][] = [
+          ['removal', (mutated) => { steps(mutated, jobId).splice(index, 1); }],
+          ['continue-on-error', (mutated) => { steps(mutated, jobId)[index]['continue-on-error'] = true; }],
+          ['an extra variable', (mutated) => { steps(mutated, jobId)[index].env = { ...mapping(steps(mutated, jobId)[index].env), EXTRA: 'x' }; }],
+          ['a swap with the next step', (mutated) => {
+            const list = steps(mutated, jobId);
+            [list[index], list[(index + 1) % list.length]] = [list[(index + 1) % list.length], list[index]];
+          }],
+          ...Object.keys(step).map((key): [string, (mutated: Workflow) => void] => [`deleting ${key}`, (mutated) => { delete steps(mutated, jobId)[index][key]; }]),
+          ...Object.keys(step).map((key): [string, (mutated: Workflow) => void] => [`rewriting ${key}`, (mutated) => { steps(mutated, jobId)[index][key] = 'forged'; }]),
+        ];
+        for (const [label, mutation] of mutations) {
+          expect(evaluate(mutate(source, mutation)), `${jobId} step ${index + 1}: ${label}`).not.toEqual([]);
+        }
+      }
+    }
+  });
+
+  it.each(WORKFLOWS)('pins every header key and job control of %s', (_name, source, evaluate) => {
+    const workflow = parse(source) as Workflow;
+    for (const key of Object.keys(workflow).filter(name => name !== 'jobs')) {
+      expect(evaluate(mutate(source, (mutated) => { delete mutated[key]; })), `deleting ${key}`).not.toEqual([]);
+    }
+    expectViolation(evaluate(mutate(source, (mutated) => { mutated.defaults = { run: { shell: 'bash -n {0}' } }; })), 'workflow-contract');
+    for (const [jobId, job] of Object.entries(jobs(workflow))) {
+      for (const key of Object.keys(job).filter(name => name !== 'steps')) {
+        expectViolation(evaluate(mutate(source, (mutated) => { delete jobs(mutated)[jobId][key]; })), 'job-contract');
+      }
+      expectViolation(evaluate(mutate(source, (mutated) => { jobs(mutated)[jobId]['timeout-minutes'] = 1; })), 'job-contract');
+      expectViolation(evaluate(mutate(source, (mutated) => { jobs(mutated)[jobId]['continue-on-error'] = true; })), 'job-contract');
+    }
+    expectViolation(evaluate(mutate(source, (mutated) => { jobs(mutated).extra = { 'runs-on': 'ubuntu-latest', steps: [] }; })), 'job-allowlist');
+  });
+
+  it('rejects an action locator that is not in the reviewed registry', () => {
+    const withoutPnpm: ReviewedActionsRegistry = {
+      ...registry,
+      actions: Object.fromEntries(Object.entries(registry.actions).filter(([locator]) => locator !== 'pnpm/setup')),
+    };
+    expectViolation(evaluateReleasePrepareWorkflowPolicy(prepareSource, withoutPnpm), 'reviewed-action');
+  });
+
   it('rejects implicit triggers and privilege changes in preparation', () => {
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      (workflow.on as Record<string, unknown>).push = { branches: ['master'] };
-    })), 'release-trigger');
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      (workflow.permissions as Record<string, unknown>).issues = 'write';
-    })), 'least-permissions');
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      (jobs(workflow).prepare.env as Record<string, unknown>).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
-    })), 'secret-boundary');
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      (workflow.on as Mapping).push = { branches: ['master'] };
+    })), 'trigger-contract');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      (workflow.permissions as Mapping).issues = 'write';
+    })), 'permissions-contract');
+    const withSecret = evaluatePrepare(mutate(prepareSource, (workflow) => {
+      (jobs(workflow).prepare.env as Mapping).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
+    }));
+    expectViolation(withSecret, 'secret-boundary');
+    expectViolation(withSecret, 'job-contract');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
       steps(workflow, 'prepare').push({ name: 'Unexpected side effect', run: 'gh api --method DELETE' });
     })), 'step-allowlist');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      (workflow.env as Mapping).SOURCE_SHA = 'master';
+    })), 'env-contract');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      workflow.concurrency = { 'cancel-in-progress': true, group: 'release-prepare' };
+    })), 'workflow-contract');
   });
 
   it('rejects stale master, duplicate version pull requests and forged dispatch identity', () => {
-    const withoutStaleCheck = mutate(prepareSource, (workflow) => {
-      jobs(workflow).prepare.steps = steps(workflow, 'prepare')
-        .filter(step => step.name !== 'Assert checkout identity');
-    });
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(withoutStaleCheck), 'exact-checkout');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      removeStep(workflow, 'prepare', 'Assert checkout identity');
+    })), 'step-allowlist');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      removeStep(workflow, 'prepare', 'Reject a stale master');
+    })), 'step-allowlist');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      removeStep(workflow, 'prepare', 'Reject competing release pull requests');
+    })), 'step-allowlist');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      const competing = stepNamed(workflow, 'prepare', 'Reject competing release pull requests');
+      competing.run = String(competing.run).replace('$(jq -r \'.parents[0].sha\' <<<"$commit")', 'forged-parent');
+    })), 'step-contract');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      stepNamed(workflow, 'prepare', 'Dispatch exact-head verification for the version pull request').run = 'gh workflow run ci.yml --ref "$PR_BRANCH" -f "pr_number=$OTHER"';
+    })), 'step-contract');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      const resolvePullRequest = stepNamed(workflow, 'prepare', 'Resolve the exact version pull request');
+      resolvePullRequest.run = String(resolvePullRequest.run).replace('test "$head_sha" = "$EXISTING_HEAD_SHA"', 'test -n "$head_sha"');
+    })), 'step-contract');
+  });
 
-    const withoutDuplicateCheck = mutate(prepareSource, (workflow) => {
-      jobs(workflow).prepare.steps = steps(workflow, 'prepare')
-        .filter(step => step.name !== 'Reject competing release pull requests');
-    });
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(withoutDuplicateCheck), 'duplicate-version-pr');
-
-    const withoutCurrentMasterParent = mutate(prepareSource, (workflow) => {
-      const competing = steps(workflow, 'prepare').find(step => step.name === 'Reject competing release pull requests');
-      competing!.run = String(competing!.run).replace('$(jq -r \'.parents[0].sha\' <<<"$commit")', 'forged-parent');
-    });
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(withoutCurrentMasterParent), 'duplicate-version-pr');
-
-    const forgedDispatch = mutate(prepareSource, (workflow) => {
-      const dispatch = steps(workflow, 'prepare').find(step => step.name === 'Dispatch exact-head verification for the version pull request');
-      if (dispatch !== undefined) {
-        dispatch.run = 'gh workflow run ci.yml --ref "$PR_BRANCH" -f "pr_number=$OTHER"';
-      }
-    });
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(forgedDispatch), 'dispatch-identity');
-
-    const changedHeadAfterValidation = mutate(prepareSource, (workflow) => {
-      const resolvePullRequest = steps(workflow, 'prepare').find(step => step.name === 'Resolve the exact version pull request');
-      resolvePullRequest!.run = String(resolvePullRequest!.run)
-        .replace('test "$head_sha" = "$EXISTING_HEAD_SHA"', 'test -n "$head_sha"');
-    });
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(changedHeadAfterValidation), 'dispatch-identity');
+  it('rejects an analyze step that overrides the release configuration path', () => {
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      stepNamed(workflow, 'prepare', 'Analyze and prepare the next release').env = { RELEASE_CONFIG: 'other.json' };
+    })), 'step-contract');
   });
 
   it('rejects candidate artifacts that are not frozen to the exact run', () => {
-    expectViolation(evaluateReleaseCandidateWorkflowPolicy(mutate(candidateSource, (workflow) => {
-      const download = steps(workflow, 'candidate').find(step => step.name === 'Download the exact verified evidence');
-      (download?.with as Record<string, unknown>)['run-id'] = '42';
-    })), 'exact-artifact');
-    expectViolation(evaluateReleaseCandidateWorkflowPolicy(mutate(candidateSource, (workflow) => {
-      const checkout = steps(workflow, 'candidate').find(step => String(step.uses).startsWith('actions/checkout@'));
-      (checkout?.with as Record<string, unknown>).ref = 'master';
-    })), 'exact-checkout');
-    expectViolation(evaluateReleaseCandidateWorkflowPolicy(mutate(candidateSource, (workflow) => {
-      steps(workflow, 'candidate').find(step => step.name === 'Build the candidate manifest')!.run = 'pnpm run build';
-    })), 'single-build');
-    expectViolation(evaluateReleaseCandidateWorkflowPolicy(mutate(candidateSource, (workflow) => {
-      (jobs(workflow).candidate.permissions as Record<string, unknown>).contents = 'write';
+    expectViolation(evaluateCandidate(mutate(candidateSource, (workflow) => {
+      mapping(stepNamed(workflow, 'candidate', 'Download the exact verified evidence').with)['run-id'] = '42';
+    })), 'step-contract');
+    expectViolation(evaluateCandidate(mutate(candidateSource, (workflow) => {
+      mapping(stepNamed(workflow, 'candidate', 'Checkout the exact versioned commit').with).ref = 'master';
+    })), 'step-contract');
+    expectViolation(evaluateCandidate(mutate(candidateSource, (workflow) => {
+      stepNamed(workflow, 'candidate', 'Build the candidate manifest').run = 'pnpm run build';
+    })), 'step-contract');
+    expectViolation(evaluateCandidate(mutate(candidateSource, (workflow) => {
+      (jobs(workflow).candidate.permissions as Mapping).contents = 'write';
     })), 'job-contract');
+    expectViolation(evaluateCandidate(mutate(candidateSource, (workflow) => {
+      mapping(stepNamed(workflow, 'candidate', 'Upload the immutable candidate').with).overwrite = true;
+    })), 'step-contract');
   });
 
   it('rejects dispatches that substitute the candidate run, artifact, source tag or publish ref', () => {
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      delete (jobs(workflow).dispatch.env as Record<string, unknown>).GH_REPO;
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      delete (jobs(workflow).dispatch.env as Mapping).GH_REPO;
     })), 'job-contract');
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const resolveArtifact = steps(workflow, 'dispatch').find(step => step.name === 'Resolve the exact candidate artifact');
-      resolveArtifact!.run = 'artifacts="$(gh api repos/example/actions/runs/42/artifacts)"\ncount=0';
-    })), 'exact-artifact');
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
-      verify!.run = 'test "$(jq -r \'.head_sha\' <<<"$ci_run")" = forged';
-    })), 'candidate-integrity');
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const tag = steps(workflow, 'dispatch').find(step => step.name === 'Create or verify the exact source tag');
-      tag!.run = 'gh api --method POST repos/example/git/refs -f ref=refs/tags/v0.5.0 -f sha=forged';
-    })), 'exact-tag');
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const dispatch = steps(workflow, 'dispatch').find(step => step.name === 'Dispatch protected publish on the tag');
-      dispatch!.run = 'gh workflow run release.yml --ref "$OTHER_TAG" -f "candidate_run_id=$OTHER" -f "artifact_id=$OTHER"';
-    })), 'dispatch-identity');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      stepNamed(workflow, 'dispatch', 'Resolve the exact candidate artifact').run = 'artifacts="$(gh api repos/example/actions/runs/42/artifacts)"\ncount=0';
+    })), 'step-contract');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      stepNamed(workflow, 'dispatch', 'Verify the candidate and source run').run = 'test "$(jq -r \'.head_sha\' <<<"$ci_run")" = forged';
+    })), 'step-contract');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      stepNamed(workflow, 'dispatch', 'Create or verify the exact source tag').run = 'gh api --method POST repos/example/git/refs -f ref=refs/tags/v0.5.0 -f sha=forged';
+    })), 'step-contract');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      stepNamed(workflow, 'dispatch', 'Dispatch protected publish on the tag').run = 'gh workflow run release.yml --ref "$OTHER_TAG" -f "candidate_run_id=$OTHER" -f "artifact_id=$OTHER"';
+    })), 'step-contract');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      mapping(stepNamed(workflow, 'dispatch', 'Download the exact candidate artifact').with)['artifact-ids'] = 'forged';
+    })), 'step-contract');
   });
 
   it('keeps the sidecar digest check relative to the bundle directory in the shared script library', () => {
@@ -149,34 +255,65 @@ describe('release workflow policies', () => {
   });
 
   it('rejects source, version, digest and secret boundary substitutions in publish', () => {
-    const source = releaseSource;
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
       delete jobs(workflow).publish.environment;
-    })), 'protected-environment');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
+    })), 'job-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
       steps(workflow, 'publish').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
     })), 'step-allowlist');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      const verify = steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest');
-      verify!.run = 'test -n candidate.json';
-    })), 'candidate-integrity');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'publish', 'Verify the candidate manifest, tag and digest').run = 'test -n candidate.json';
+    })), 'step-contract');
+    const inheritedSecret = evaluateRelease(mutate(releaseSource, (workflow) => {
       jobs(workflow).publish.env = { OVSX_PAT: '${{ secrets.OVSX_PAT }}' };
+    }));
+    expectViolation(inheritedSecret, 'secret-boundary');
+    expectViolation(inheritedSecret, 'job-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Download the exact candidate artifact').with)['artifact-ids'] = 'forged';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      workflow.permissions = { contents: 'write' };
+    })), 'permissions-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      workflow.concurrency = { 'cancel-in-progress': true, group: 'release' };
+    })), 'workflow-contract');
+  });
+
+  it('confines registry credentials to the two publish-action steps', () => {
+    const secretOn = (job: string, name: string): string => mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, job, name).env = { VSCE_PAT: '${{ secrets.VSCE_PAT }}' };
+    });
+    expectViolation(evaluateRelease(secretOn('publish', 'Verify protected candidate attestation')), 'secret-boundary');
+    expectViolation(evaluateRelease(secretOn('publish', 'Compare post-publish registry copies')), 'secret-boundary');
+    expectViolation(evaluateRelease(secretOn('finalize', 'Create the GitHub release if absent')), 'secret-boundary');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      workflow.env = { PAT: '${{ secrets.OVSX_PAT }}' };
     })), 'secret-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      const download = steps(workflow, 'publish').find(step => step.name === 'Download the exact candidate artifact');
-      (download?.with as Record<string, unknown>)['artifact-ids'] = 'forged';
-    })), 'exact-artifact');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      jobs(workflow).finalize.env = { GH_TOKEN: '${{ secrets.VSCE_PAT }}' };
+    })), 'secret-boundary');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'publish', 'Verify protected candidate attestation').with = { inputs: ['${{ secrets.OVSX_PAT }}'] };
+    })), 'secret-boundary');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'finalize', 'Create the GitHub release if absent').env).VSCE_PAT = 'forged';
+    })), 'secret-boundary');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      jobs(workflow).publish = 'forged' as unknown as Mapping;
+    })), 'workflow-shape');
+    for (const [source, evaluate] of [[candidateSource, evaluateCandidate], [dispatchSource, evaluateDispatch]] as const) {
+      expectViolation(evaluate(mutate(source, (workflow) => {
+        workflow.env = { ...mapping(workflow.env), TOKEN: '${{ secrets.OVSX_PAT }}' };
+      })), 'secret-boundary');
+    }
   });
 
   it.each(['dispatch', 'publish', 'finalize'] as const)('requires the %s job to check out only the reviewed scripts and contract at the workflow commit', (job) => {
     const source = job === 'dispatch' ? dispatchSource : releaseSource;
-    const evaluate = job === 'dispatch' ? evaluateReleaseDispatchWorkflowPolicy : evaluateReleaseWorkflowPolicy;
-    const scriptCheckout = (workflow: Record<string, unknown>): Record<string, unknown> =>
-      steps(workflow, job).find(step => step.name === 'Check out the reviewed scripts')!;
-    const withOptions = (workflow: Record<string, unknown>): Record<string, unknown> =>
-      scriptCheckout(workflow).with as Record<string, unknown>;
-    const mutations: ((workflow: Record<string, unknown>) => void)[] = [
+    const evaluate = job === 'dispatch' ? evaluateDispatch : evaluateRelease;
+    const withOptions = (workflow: Workflow): Mapping => mapping(stepNamed(workflow, job, SCRIPT_CHECKOUT).with);
+    const mutations: ((workflow: Workflow) => void)[] = [
       (workflow) => { delete withOptions(workflow)['persist-credentials']; },
       (workflow) => { withOptions(workflow)['persist-credentials'] = true; },
       (workflow) => { withOptions(workflow).ref = '${{ steps.manifest.outputs.source-sha }}'; },
@@ -186,72 +323,69 @@ describe('release workflow policies', () => {
       (workflow) => { delete withOptions(workflow)['sparse-checkout']; },
       (workflow) => { withOptions(workflow)['sparse-checkout-cone-mode'] = true; },
       (workflow) => { withOptions(workflow).path = '.'; },
-      (workflow) => { scriptCheckout(workflow).uses = 'actions/checkout@v7'; },
-      (workflow) => { jobs(workflow)[job].steps = steps(workflow, job).filter(step => step.name !== 'Check out the reviewed scripts'); },
+      (workflow) => { stepNamed(workflow, job, SCRIPT_CHECKOUT).uses = 'actions/checkout@v7'; },
+      (workflow) => { stepNamed(workflow, job, SCRIPT_CHECKOUT).run = 'pnpm install'; },
     ];
     expect(evaluate(source)).toEqual([]);
     for (const mutation of mutations) {
-      expectViolation(evaluate(mutate(source, mutation)), 'script-checkout');
+      expectViolation(evaluate(mutate(source, mutation)), 'step-contract');
     }
+    expectViolation(evaluate(mutate(source, workflow => removeStep(workflow, job, SCRIPT_CHECKOUT))), 'step-allowlist');
   });
 
   it.each(['dispatch', 'publish', 'finalize'] as const)('rejects a script checkout that is not the first %s step', (job) => {
     const source = job === 'dispatch' ? dispatchSource : releaseSource;
-    const evaluate = job === 'dispatch' ? evaluateReleaseDispatchWorkflowPolicy : evaluateReleaseWorkflowPolicy;
+    const evaluate = job === 'dispatch' ? evaluateDispatch : evaluateRelease;
     expectViolation(evaluate(mutate(source, (workflow) => {
       const jobSteps = steps(workflow, job);
       const [checkout] = jobSteps.splice(0, 1);
       jobSteps.splice(1, 0, checkout);
-    })), 'script-checkout');
+    })), 'step-contract');
   });
 
-  it('rejects a second checkout, or a checkout with a shell body, in the publish job', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'publish').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
-    })), 'publish-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'publish').find(step => step.name === 'Check out the reviewed scripts')!.run = 'pnpm install';
-    })), 'script-checkout');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'finalize').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
-    })), 'publish-boundary');
+  it('rejects a second checkout, install or build in the publish and finalize jobs', () => {
+    for (const job of ['publish', 'finalize']) {
+      for (const extra of [
+        { name: 'Checkout source', uses: reviewedActionReference('actions/checkout') },
+        { name: 'Build again', run: 'pnpm run build' },
+        { name: 'Install', run: 'pnpm install' },
+      ]) {
+        expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+          steps(workflow, job).push(extra);
+        })), 'step-allowlist');
+      }
+    }
   });
 
-  it('rejects finalizer checkout/build, tag substitution, missing retry and malformed YAML', () => {
-    const source = releaseSource;
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      steps(workflow, 'finalize').push({ name: 'Build again', run: 'pnpm run build' });
-    })), 'step-allowlist');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      const tagStep = steps(workflow, 'finalize').find(step => step.name === 'Verify the exact source tag');
-      tagStep!.run = 'gh api --method POST git/refs -f ref=refs/tags/v0.5.0 -f sha=forged';
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
+  it('rejects finalizer tag substitution, missing retry and malformed YAML', () => {
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'finalize', 'Verify the exact source tag').run = 'gh api --method POST git/refs -f ref=refs/tags/v0.5.0 -f sha=forged';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
       jobs(workflow).finalize.permissions = { contents: 'write' };
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      delete (jobs(workflow).finalize.env as Record<string, unknown>).GH_REPO;
-    })), 'finalizer-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      jobs(workflow).finalize.steps = steps(workflow, 'finalize')
-        .filter(step => step.name !== 'Verify an existing GitHub release safely');
-    })), 'retry-safety');
-    expectViolation(evaluateReleaseWorkflowPolicy('name: Release\nname: forged\n'), 'yaml');
+    })), 'job-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      delete (jobs(workflow).finalize.env as Mapping).GH_REPO;
+    })), 'job-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      removeStep(workflow, 'finalize', 'Verify an existing GitHub release safely');
+    })), 'step-allowlist');
+    expectViolation(evaluateRelease('name: Release\nname: forged\n'), 'yaml');
   });
 
   it('rejects publish actions that rebuild or publish a different VSIX', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const marketplace = steps(workflow, 'publish').find(step => step.name === 'Publish to the Visual Studio Marketplace');
-      (marketplace!.with as Record<string, unknown>).extensionFile = 'dist/other.vsix';
-    })), 'publish-bytes');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const openVsx = steps(workflow, 'publish').find(step => step.name === 'Publish to Open VSX');
-      openVsx!.uses = 'HaaLeo/publish-vscode-extension@v2';
-    })), 'secret-boundary');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const verify = steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest');
-      verify!.run = 'pnpm run build';
-    })), 'candidate-integrity');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Publish to the Visual Studio Marketplace').with).extensionFile = 'dist/other.vsix';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'publish', 'Publish to Open VSX').uses = 'HaaLeo/publish-vscode-extension@v2';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Publish to Open VSX').with).registryUrl = RELEASE_CONTRACT.registries.marketplace.url;
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'publish', 'Verify the candidate manifest, tag and digest').run = 'pnpm run build';
+    })), 'step-contract');
   });
 
   it.each([
@@ -260,116 +394,92 @@ describe('release workflow policies', () => {
     ['an inline body', 'set -euo pipefail\ntrue'],
     ['a local copy', 'bash ./compare-published.sh'],
   ])('requires the post-publish comparison to be exactly the reviewed script call, not %s', (_label, run) => {
-    expect(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies')!.run = run;
-    }))).toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'post-publish' })]));
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'publish', 'Compare post-publish registry copies').run = run;
+    })), 'step-contract');
   });
 
   it('requires the post-publish comparison to receive only the candidate and its version', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      (steps(workflow, 'publish').find(step => step.name === 'Compare post-publish registry copies')!.env as Record<string, unknown>).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
-    })), 'post-publish');
+    const violations = evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Compare post-publish registry copies').env).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
+    }));
+    expectViolation(violations, 'step-contract');
+    expectViolation(violations, 'secret-boundary');
   });
 
   it('rejects suppressed, commented-out and unbounded provenance checks', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');
-      attestation!.run = `${String(attestation!.run)} || true`;
-    })), 'attestation');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      const attestation = steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation');
-      attestation!.run = `set -euo pipefail\n# ${String(attestation!.run).replaceAll('\n', '\n# ')}`;
-    })), 'attestation');
-    expectViolation(evaluateReleaseDispatchWorkflowPolicy(mutate(dispatchSource, (workflow) => {
-      const verify = steps(workflow, 'dispatch').find(step => step.name === 'Verify the candidate and source run');
-      verify!.run = `${String(verify!.run)} || true`;
-    })), 'candidate-integrity');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      const attestation = stepNamed(workflow, 'publish', 'Verify protected candidate attestation');
+      attestation.run = `${String(attestation.run)} || true`;
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      const attestation = stepNamed(workflow, 'publish', 'Verify protected candidate attestation');
+      attestation.run = `set -euo pipefail\n# ${String(attestation.run).replaceAll('\n', '\n# ')}`;
+    })), 'step-contract');
+    expectViolation(evaluateDispatch(mutate(dispatchSource, (workflow) => {
+      const verify = stepNamed(workflow, 'dispatch', 'Verify the candidate and source run');
+      verify.run = `${String(verify.run)} || true`;
+    })), 'step-contract');
   });
 
   it.each([
-    ['Verify the exact source tag', 'finalizer-boundary', 'finalize-release.sh verify'],
-    ['Create the GitHub release if absent', 'finalizer-boundary', 'finalize-release.sh create'],
-    ['Verify an existing GitHub release safely', 'retry-safety', 'finalize-release.sh reconcile'],
-  ])('requires %s to be exactly the reviewed fail-closed script call', (name, rule, call) => {
+    ['Verify the exact source tag', 'finalize-release.sh verify'],
+    ['Create the GitHub release if absent', 'finalize-release.sh create'],
+    ['Verify an existing GitHub release safely', 'finalize-release.sh reconcile'],
+  ])('requires %s to be exactly the reviewed script call', (name, call) => {
     const withRun = (run: string): string => mutate(releaseSource, (workflow) => {
-      steps(workflow, 'finalize').find(step => step.name === name)!.run = run;
+      stepNamed(workflow, 'finalize', name).run = run;
     });
     const script = `bash reviewed-source/.github/scripts/release/${call}`;
-    expect(evaluateReleaseWorkflowPolicy(withRun(script))).toEqual([]);
+    expect(evaluateRelease(withRun(script))).toEqual([]);
     for (const run of [`${script} || true`, `set -euo pipefail\n${script}`, `${script}\ntrue`, 'set -euo pipefail\ntrue', `${script.replace(call.split(' ')[1], 'other')}`, `bash ./${call.split(' ')[0]}`]) {
-      expectViolation(evaluateReleaseWorkflowPolicy(withRun(run)), rule);
+      expectViolation(evaluateRelease(withRun(run)), 'step-contract');
     }
   });
 
   it('rejects script steps that receive a different environment', () => {
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      (steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest')!.env as Record<string, unknown>).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
-    })), 'candidate-integrity');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      delete (steps(workflow, 'publish').find(step => step.name === 'Verify protected candidate attestation')!.env as Record<string, unknown>).GH_TOKEN;
-    })), 'attestation');
-    expectViolation(evaluateReleaseWorkflowPolicy(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'finalize').find(step => step.name === 'Create the GitHub release if absent')!.env = { TAG: 'v0.0.0' };
-    })), 'finalizer-boundary');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Verify the candidate manifest, tag and digest').env).VSCE_PAT = '${{ secrets.VSCE_PAT }}';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      delete mapping(stepNamed(workflow, 'publish', 'Verify protected candidate attestation').env).GH_TOKEN;
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      stepNamed(workflow, 'finalize', 'Create the GitHub release if absent').env = { TAG: 'v0.0.0' };
+    })), 'step-contract');
   });
 
-  it('rejects an analyze step that overrides the release configuration path', () => {
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      steps(workflow, 'prepare').find(step => step.name === 'Analyze and prepare the next release')!.env = { RELEASE_CONFIG: 'other.json' };
-    })), 'isolated-analysis');
-  });
-
-  it('rejects non-literal workflow documents and forbidden preparation side effects', () => {
-    expectViolation(evaluateReleasePrepareWorkflowPolicy('name: Release\njobs: &jobs {}\n'), 'yaml');
-    expectViolation(evaluateReleasePrepareWorkflowPolicy('- Release\n'), 'workflow-shape');
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      steps(workflow, 'prepare').find(step => step.name === 'Verify the completed verification run')!.run = 'gh pr merge "$PR_NUMBER"';
-    })), 'no-merge');
+  it('rejects non-literal workflow documents and an invalid release config', () => {
+    expectViolation(evaluatePrepare('name: Release\njobs: &jobs {}\n'), 'yaml');
+    expectViolation(evaluatePrepare('- Release\n'), 'workflow-shape');
+    expectViolation(evaluatePrepare(mutate(prepareSource, (workflow) => {
+      stepNamed(workflow, 'prepare', 'Verify the completed verification run').run = 'gh pr merge "$PR_NUMBER"';
+    })), 'step-contract');
     expectViolation(evaluateReleaseConfigPolicy('{'), 'release-config');
-  });
-
-  it('requires exact source identity checks in preparation and candidate jobs', () => {
-    expectViolation(evaluateReleasePrepareWorkflowPolicy(mutate(prepareSource, (workflow) => {
-      const verify = steps(workflow, 'prepare').find(step => step.name === 'Verify the completed verification run');
-      verify!.run = 'gh api actions/runs/42';
-    })), 'release-run-identity');
-    expectViolation(evaluateReleaseCandidateWorkflowPolicy(mutate(candidateSource, (workflow) => {
-      const verify = steps(workflow, 'candidate').find(step => step.name === 'Verify the completed verification run');
-      verify!.run = 'gh api actions/runs/42';
-    })), 'release-run-identity');
   });
 
   it('requires the reviewed pnpm and Node.js setup in preparation and candidate jobs', () => {
     for (const [source, evaluate, job] of [
-      [prepareSource, evaluateReleasePrepareWorkflowPolicy, 'prepare'],
-      [candidateSource, evaluateReleaseCandidateWorkflowPolicy, 'candidate'],
+      [prepareSource, evaluatePrepare, 'prepare'],
+      [candidateSource, evaluateCandidate, 'candidate'],
     ] as const) {
-      const setupOptions = (workflow: Record<string, unknown>, name: string): Record<string, unknown> =>
-        steps(workflow, job).find(step => step.name === name)!.with as Record<string, unknown>;
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        delete setupOptions(workflow, 'Prepare pnpm')['node-version-file'];
-      })), 'toolchain');
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        setupOptions(workflow, 'Prepare pnpm').cache = true;
-      })), 'toolchain');
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        setupOptions(workflow, 'Prepare pnpm').install = true;
-      })), 'toolchain');
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        steps(workflow, job).find(step => step.name === 'Prepare pnpm')!.uses = `pnpm/setup@${staleSha}`;
-      })), 'toolchain');
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        setupOptions(workflow, 'Setup Node.js')['node-version'] = '22.0.0';
-      })), 'toolchain');
-      expectViolation(evaluate(mutate(source, (workflow) => {
-        steps(workflow, job).find(step => step.name === 'Install frozen dependencies')!.run = 'pnpm install';
-      })), 'frozen-install');
+      const setupOptions = (workflow: Workflow, name: string): Mapping => mapping(stepNamed(workflow, job, name).with);
+      const mutations: ((workflow: Workflow) => void)[] = [
+        (workflow) => { delete setupOptions(workflow, 'Prepare pnpm')['node-version-file']; },
+        (workflow) => { setupOptions(workflow, 'Prepare pnpm').cache = true; },
+        (workflow) => { setupOptions(workflow, 'Prepare pnpm').install = true; },
+        (workflow) => { stepNamed(workflow, job, 'Prepare pnpm').uses = `pnpm/setup@${staleSha}`; },
+        (workflow) => { setupOptions(workflow, 'Setup Node.js')['node-version'] = '22.0.0'; },
+        (workflow) => { stepNamed(workflow, job, 'Install frozen dependencies').run = 'pnpm install'; },
+      ];
+      for (const mutation of mutations) {
+        expectViolation(evaluate(mutate(source, mutation)), 'step-contract');
+      }
     }
   });
 
   it('requires the verified workflow-dispatch PR head in CI', () => {
     const ciSource = readFileSync(resolve(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
-    const registry = loadReviewedActionsRegistry(repositoryRoot);
     expect(evaluateCiWorkflowPolicy(ciSource, registry)).toEqual([]);
     expect(evaluateCiWorkflowPolicy(ciSource.replace('head_sha:\n        required: true', 'head_sha:\n        required: false'), registry))
       .toEqual(expect.arrayContaining([expect.objectContaining({ rule: 'trigger-contract' })]));
@@ -479,7 +589,9 @@ describe('release workflow shell scripts', () => {
   });
 
   it('keeps release workflow shell and Python text out of src/tools', () => {
-    const toolsSource = readFileSync(resolve(repositoryRoot, 'src/tools/releaseWorkflowPolicy.ts'), 'utf8');
+    const toolsSource = ['releaseWorkflowPolicy', 'releaseWorkflowParts', 'releasePrepareContract', 'releaseCandidateContract', 'releaseDispatchContract', 'releasePublishContract']
+      .map(name => readFileSync(resolve(repositoryRoot, `src/tools/${name}.ts`), 'utf8'))
+      .join('\n');
     for (const fragment of ['gh release', 'gh attestation', 'sha256sum', 'comm -23', 'curl_args', 'python3', 'zipfile']) {
       expect(toolsSource, fragment).not.toContain(fragment);
     }
