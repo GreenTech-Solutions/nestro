@@ -112,7 +112,20 @@ describe('release contract', () => {
       eventName: 'push',
       pullRequestHeadSha: null,
       releaseEligible: false,
-    }, '0.5.0', [], 'notes', { candidateRunId: '77' });
+    }, '0.5.0', [], 'notes', {
+      candidateRunId: '77',
+      artifact: {
+        vsixFile: 'nestro-0.5.0.vsix',
+        digestFile: 'nestro-0.5.0.vsix.sha256',
+        digest: 'b'.repeat(64),
+        manifestFile: 'nestro-0.5.0.vsix.manifest.txt',
+        manifestSha256: 'c'.repeat(64),
+        sbomFile: 'sbom.json',
+        sbomSha256: 'd'.repeat(64),
+        provenanceFile: 'provenance.json',
+        provenanceSha256: 'e'.repeat(64),
+      },
+    });
     expect(outcome.isCandidate).toBe(true);
     if (outcome.isCandidate) {
       expect(Object.keys(outcome.manifest).sort((left, right) => left.localeCompare(right)))

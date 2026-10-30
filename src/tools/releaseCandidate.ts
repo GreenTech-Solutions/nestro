@@ -34,7 +34,7 @@ export interface ReleaseCandidateContext {
   readonly expectedSourceSha?: string;
   readonly expectedCiRunId?: string;
   readonly candidateRunId?: string;
-  readonly artifact?: ReleaseCandidateArtifact;
+  readonly artifact: ReleaseCandidateArtifact;
 }
 
 export interface ReleaseCandidateManifest extends ReleaseCandidateArtifact {
@@ -49,20 +49,6 @@ export interface ReleaseCandidateManifest extends ReleaseCandidateArtifact {
 
 export type ReleaseCandidateOutcome = { readonly isCandidate: true; readonly manifest: ReleaseCandidateManifest }
   | { readonly isCandidate: false; readonly reason: string };
-
-function defaultArtifact(evidence: ReleaseCandidateEvidence): ReleaseCandidateArtifact {
-  return {
-    vsixFile: evidence.vsixFile,
-    digestFile: bundleFileName('digest', evidence.vsixFile),
-    digest: evidence.vsixSha256,
-    manifestFile: bundleFileName('manifest', evidence.vsixFile),
-    manifestSha256: evidence.vsixSha256,
-    sbomFile: bundleFileName('sbom', evidence.vsixFile),
-    sbomSha256: evidence.vsixSha256,
-    provenanceFile: bundleFileName('provenance', evidence.vsixFile),
-    provenanceSha256: evidence.vsixSha256,
-  };
-}
 
 function isSafeFile(file: string): boolean {
   return SAFE_FILE_PATTERN.test(file) && !file.endsWith('.');
@@ -91,7 +77,7 @@ export function buildReleaseCandidate(
   packageVersion: string,
   existingTags: readonly string[],
   notes: string,
-  context: ReleaseCandidateContext = {},
+  context: ReleaseCandidateContext,
 ): ReleaseCandidateOutcome {
   if (!VERSION_PATTERN.test(packageVersion)) {
     return { isCandidate: false, reason: `package version "${packageVersion}" is not a plain major.minor.patch semver` };
@@ -130,7 +116,7 @@ export function buildReleaseCandidate(
   if (context.candidateRunId === undefined || !RUN_ID_PATTERN.test(context.candidateRunId)) {
     return { isCandidate: false, reason: 'candidateRunId must be a positive integer' };
   }
-  const artifact = context.artifact ?? defaultArtifact(evidence);
+  const { artifact } = context;
   if (!isValidArtifact(artifact, evidence)) {
     return { isCandidate: false, reason: 'candidate artifact provenance members do not match the verified evidence' };
   }

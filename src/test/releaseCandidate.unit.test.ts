@@ -78,6 +78,18 @@ describe('release candidate contract', () => {
     expect(outcome).toMatchObject({ reason: expect.stringContaining(reason) });
   });
 
+  it('does not compile a candidate build without explicit artifact digests', () => {
+    const withoutArtifact = (): ReturnType<typeof buildReleaseCandidate> => buildReleaseCandidate(
+      evidence,
+      '0.5.0',
+      [],
+      'notes',
+      // @ts-expect-error the context must carry the verified artifact members
+      { candidateRunId: '43' },
+    );
+    expect(withoutArtifact).toBeTypeOf('function');
+  });
+
   it('rejects malformed manifests and accepts the complete schema', () => {
     expect(findManifestViolation(validManifest())).toBeUndefined();
     expect(isWellFormedManifest(validManifest())).toBe(true);
