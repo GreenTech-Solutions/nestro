@@ -180,7 +180,8 @@ Nestro has no "Swiss-army" files. A module that grows a second job is split befo
 - Product code: at most 300 lines per file and 60 lines per function. Tests: at most 800 lines per file.
   Blank lines and comments are not counted.
 - ESLint enforces this with `max-lines` and `max-lines-per-function`. Files that predate the rule sit in
-  an exception list in `eslint.config.mjs`, each with its current size as the ceiling. A ceiling only goes
+  the `SIZE_LIMIT_EXCEPTIONS` list in `eslint.config.mjs`, one entry per file, each with its current size as the ceiling
+  (`maxLines` for the file, `maxFunctionLines` for its longest function). A ceiling only goes
   down; a new exception needs the owner's approval; `eslint-disable` for these rules is not allowed.
 - Adding code to a file near its limit, or to a file that does something else: put the code in a new
   focused module instead.
@@ -256,6 +257,8 @@ default, three is the ceiling.
 | `@stylistic/semi` | warn | Semicolons required |
 | `no-throw-literal` | warn | Throw `Error` instances, not literals |
 | `@typescript-eslint/naming-convention` | warn | Import names in camelCase or PascalCase |
+| `max-lines` | error | Product files ≤ 300 lines, test files ≤ 800 (blank lines and comments not counted); files over the limit sit in `SIZE_LIMIT_EXCEPTIONS` in `eslint.config.mjs` with their current size as a ceiling that only goes down |
+| `max-lines-per-function` | error | Product functions ≤ 60 lines (no limit in `src/test/**`); long functions are capped per file in the same `SIZE_LIMIT_EXCEPTIONS` list |
 
 `eslint-plugin-sonarjs` recommended config is enabled on top of these, with a documented set of rules disabled in `eslint.config.mjs`. Its remaining rules — notably `sonarjs/parameterized-tests` — are errors, not warnings, and will fail a strict lint run.
 
