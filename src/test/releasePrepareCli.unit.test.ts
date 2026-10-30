@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -125,6 +125,44 @@ describe('release preparation CLI', () => {
     expect(await readFile(join(output), 'utf8')).toContain('release-needed=true');
     expect(await readFile(join(root, 'dist', 'release', 'notes.md'), 'utf8')).toContain('Bug Fixes');
   });
+
+  it('creates the changelog when it does not exist', async () => {
+    const root = await createReleaseRepository('fix: prepare a release');
+    await rm(join(root, 'CHANGELOG.md'));
+    const dependencies = createNodeReleasePrepareDependencies(
+      root,
+      'dist/release',
+      'https://github.com/acme/nestro',
+      '2026-09-11',
+      undefined,
+    );
+    await dependencies.io.prependChangelog('## Unreleased\n\n');
+    await expect(readFile(join(root, 'CHANGELOG.md'), 'utf8')).resolves.toBe('## Unreleased\n\n');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'fails with exit 1 and leaves the changelog untouched when it cannot be read',
+    async () => {
+      const root = await createReleaseRepository('fix: prepare a release');
+      await commitFile(root, 'follow-up.txt', 'fix\n', 'fix: needs a release');
+      const changelogPath = join(root, 'CHANGELOG.md');
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await chmod(changelogPath, 0o200);
+        await expect(mainReleasePrepare(
+          ['--out-dir', 'dist/release'],
+          root,
+          { RELEASE_REPOSITORY_URL: 'https://github.com/acme/nestro' },
+        )).resolves.toBe(1);
+        expect(stderr).toHaveBeenCalledWith(expect.stringContaining('EACCES'));
+      }
+      finally {
+        stderr.mockRestore();
+        await chmod(changelogPath, 0o644);
+      }
+      await expect(readFile(changelogPath, 'utf8')).resolves.toBe('# Changelog\n');
+    },
+  );
 
   it('reports a no-release result from the real entrypoint', async () => {
     const root = await createReleaseRepository('docs: clarify release notes');

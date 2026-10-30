@@ -107,7 +107,12 @@ export function createNodeReleasePrepareDependencies(
       await writeFile(packageJsonPath, JSON.stringify(packageJson, undefined, 2) + '\n', 'utf8');
     },
     async prependChangelog(entry) {
-      const existing = await readFile(changelogPath, 'utf8').catch(() => '');
+      const existing = await readFile(changelogPath, 'utf8').catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return '';
+        }
+        throw error;
+      });
       await writeFile(changelogPath, `${entry}${existing}`, 'utf8');
     },
     async writeNotes(notes) {
