@@ -11,7 +11,7 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/commands/removePackage.ts': { maxFunctionLines: 62 },
   'src/extension.ts': { maxFunctionLines: 64 },
   'src/providers/PackageItem.ts': { maxFunctionLines: 88 },
-  'src/providers/PackagesProvider.ts': { maxLines: 1603, maxFunctionLines: 168 },
+  'src/providers/PackagesProvider.ts': { maxLines: 1519, maxFunctionLines: 168 },
   'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
   'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },
   'src/providers/treeBuilder.ts': { maxLines: 626 },

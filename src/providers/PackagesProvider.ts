@@ -69,6 +69,8 @@ import type {
   AuditProjectSummary,
   AuditReportSnapshot,
 } from './auditOrchestrationService';
+import { PackageCapabilityService } from './capabilityService';
+import type { PackageCapabilityRecord } from './capabilityService';
 import { PackageLoadingService } from './packageLoadingService';
 import type { PackageLoadingServiceContract } from './packageLoadingService';
 import { UpdateOrchestrationService } from './updateOrchestrationService';
@@ -145,16 +147,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private packageReadFailed = false;
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
-  private readonly packageCapabilityRecords = new WeakMap<object, {
-    readonly sourceItem: PackageItem;
-    readonly identity: PackageIdentityTuple;
-    readonly packageFilePath: string;
-    readonly packageDirectory: string;
-    readonly workspaceFolderPath: string;
-    readonly fileStamp: ResolvedPackageItem['fileStamp'];
-    readonly manifestDigest: string;
-    readonly snapshotGeneration: number;
-  }>();
+  private readonly capabilities = new PackageCapabilityService();
 
   private packageSnapshotGeneration = 0;
   /**
@@ -323,7 +316,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return { ok: false, reason: 'not-current' };
     }
 
-    return this.issuePackageCapability(item, record, location.value, generation);
+    return this.capabilities.issue(identity, record.row, location.value, generation);
   }
 
   /**
@@ -334,32 +327,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
    * after this final check is intentionally not claimed.
    */
   async revalidatePackageItem(value: ResolvedPackageItem): Promise<PackageIdentityResolution> {
-    let capabilityRecord: {
-      readonly sourceItem: PackageItem;
-      readonly identity: PackageIdentityTuple;
-      readonly packageFilePath: string;
-      readonly packageDirectory: string;
-      readonly workspaceFolderPath: string;
-      readonly fileStamp: ResolvedPackageItem['fileStamp'];
-      readonly manifestDigest: string;
-      readonly snapshotGeneration: number;
-    } | undefined;
-    try {
-      capabilityRecord = typeof value === 'object' && value !== null
-        ? this.packageCapabilityRecords.get(value)
-        : undefined;
-    }
-    catch {
-      return { ok: false, reason: 'invalid-item' };
-    }
+    const capabilityRecord = this.capabilities.recordOf(value);
     if (capabilityRecord === undefined) {
       return { ok: false, reason: 'invalid-item' };
     }
 
-    const { sourceItem, identity, snapshotGeneration } = capabilityRecord;
-    if (this.loading
-      || snapshotGeneration !== this.packageSnapshotGeneration
-      || this.findCurrentEntry(identity, sourceItem) === undefined) {
+    const { identity, snapshotGeneration } = capabilityRecord;
+    if (this.loading || this.findFreshItemRecord(capabilityRecord) === undefined) {
       return { ok: false, reason: 'not-current' };
     }
 
@@ -367,17 +341,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (!location.ok) {
       return location;
     }
-    const sourceRecord = this.packageItemRecords.get(sourceItem);
-    if (sourceRecord?.baselineLocation === undefined
-      || !sameCanonicalPackageLocation(sourceRecord.baselineLocation, location.value)) {
+    const baselineRecord = this.findFreshItemRecord(capabilityRecord);
+    if (baselineRecord?.baselineLocation === undefined
+      || !sameCanonicalPackageLocation(baselineRecord.baselineLocation, location.value)) {
       return { ok: false, reason: 'path-replaced' };
     }
-    if (await readCanonicalDependencySpec(location.value, identity) !== sourceRecord.row.currentVersion) {
+    if (await readCanonicalDependencySpec(location.value, identity) !== baselineRecord.row.currentVersion) {
       return { ok: false, reason: 'path-replaced' };
     }
-    if (this.loading
-      || snapshotGeneration !== this.packageSnapshotGeneration
-      || this.findCurrentEntry(identity, sourceItem) === undefined) {
+    if (this.loading || this.findFreshItemRecord(capabilityRecord) === undefined) {
       return { ok: false, reason: 'not-current' };
     }
     if (location.value.packageFilePath !== capabilityRecord.packageFilePath
@@ -388,11 +360,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return { ok: false, reason: 'path-replaced' };
     }
 
-    const record = this.packageItemRecords.get(sourceItem);
-    if (record === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-    return this.issuePackageCapability(sourceItem, record, location.value, snapshotGeneration);
+    return this.capabilities.issue(identity, capabilityRecord.row, location.value, snapshotGeneration);
   }
 
   /**
@@ -472,6 +440,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     const { dev, packageFilePath: entryPackageFilePath, item } = this.allEntries[index];
+    this.capabilities.noteRowMutation(identity);
     this.allEntries[index] = {
       item: this.createPackageItem(
         identity.packageName,
@@ -502,6 +471,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
     const row = currentRecord.row;
+    this.capabilities.noteRowMutation(record.identity);
     this.allEntries[index] = {
       item: this.createPackageItem(
         row.packageName,
@@ -551,6 +521,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
 
     const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
+    this.capabilities.noteRowMutation(identity);
     const activeOperation = normalizeOperation(operation, item.latest ?? item.currentVersion);
     const updateType = activeOperation !== undefined || item.latest === undefined
       ? item.updateType
@@ -630,18 +601,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (replacementRecord === undefined) {
       return undefined;
     }
-    return this.issuePackageCapability(
-      replacementEntry.item,
-      replacementRecord,
-      {
-        packageFilePath: record.packageFilePath,
-        packageDirectory: record.packageDirectory,
-        workspaceFolderPath: record.workspaceFolderPath,
-        fileStamp: record.fileStamp,
-        manifestDigest: record.manifestDigest,
-      },
-      this.packageSnapshotGeneration,
-    ).value;
+    this.capabilities.noteRowMutation(record.identity);
+    return this.capabilities.issue(record.identity, replacementRecord.row, record, this.packageSnapshotGeneration).value;
   }
 
   private restorePackageEntryAfterProgressRace(
@@ -661,6 +622,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       const record = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
       if (entry !== undefined && record !== undefined) {
         const row = record.row;
+        this.capabilities.noteRowMutation(identity);
         this.allEntries[currentIndex] = {
           item: this.createPackageItem(
             row.packageName,
@@ -700,9 +662,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (await readCanonicalDependencySpec(location.value, record.identity) !== expectedCurrentVersion) {
       return undefined;
     }
-    if (this.loading
-      || record.snapshotGeneration !== this.packageSnapshotGeneration
-      || this.findCurrentEntry(record.identity, record.sourceItem) === undefined) {
+    if (this.loading || this.findFreshItemRecord(record) === undefined) {
       return undefined;
     }
 
@@ -720,14 +680,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }));
       }
     }
-    const currentEntry = this.findCurrentEntry(record.identity, record.sourceItem);
-    const currentRecord = currentEntry === undefined
-      ? undefined
-      : this.packageItemRecords.get(currentEntry.item);
-    if (currentEntry === undefined || currentRecord === undefined) {
+    if (this.findFreshItemRecord(record) === undefined) {
       return undefined;
     }
-    return this.issuePackageCapability(currentEntry.item, currentRecord, location.value, this.packageSnapshotGeneration).value;
+    return this.capabilities.issue(record.identity, record.row, location.value, this.packageSnapshotGeneration).value;
   }
 
   /** Re-issue a current capability after an authorized sibling-row mutation refreshed its baseline. */
@@ -742,18 +698,16 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (!location.ok) {
       return undefined;
     }
-    const sourceRecord = this.packageItemRecords.get(record.sourceItem);
-    if (sourceRecord?.baselineLocation === undefined
-      || !sameCanonicalPackageLocation(sourceRecord.baselineLocation, location.value)
-      || await readCanonicalDependencySpec(location.value, record.identity) !== sourceRecord.row.currentVersion) {
+    const currentRecord = this.findFreshItemRecord(record);
+    if (currentRecord?.baselineLocation === undefined
+      || !sameCanonicalPackageLocation(currentRecord.baselineLocation, location.value)
+      || await readCanonicalDependencySpec(location.value, record.identity) !== currentRecord.row.currentVersion) {
       return undefined;
     }
-    if (this.loading
-      || record.snapshotGeneration !== this.packageSnapshotGeneration
-      || this.findCurrentEntry(record.identity, record.sourceItem) === undefined) {
+    if (this.loading || this.findFreshItemRecord(record) === undefined) {
       return undefined;
     }
-    return this.issuePackageCapability(record.sourceItem, sourceRecord, location.value, record.snapshotGeneration).value;
+    return this.capabilities.issue(record.identity, record.row, location.value, record.snapshotGeneration).value;
   }
 
   async showFilterPicker(): Promise<void> {
@@ -780,6 +734,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.auditState = 'idle';
     const abortController = new AbortController();
     this.loadAbortController = abortController;
+    this.capabilities.reset();
     this.packageLocationBaselines = new Map();
     this.packageFilePaths = [];
     this.readablePackageFilePaths = [];
@@ -1435,38 +1390,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return this.ownerLabelCache;
   }
 
-  private issuePackageCapability(
-    sourceItem: PackageItem,
-    record: PackageItemRecord,
-    location: CanonicalPackageLocation,
-    snapshotGeneration: number,
-  ): { readonly ok: true; readonly value: ResolvedPackageItem } {
-    const capabilityRecord = {
-      sourceItem,
-      identity: record.identity,
-      packageFilePath: location.packageFilePath,
-      packageDirectory: location.packageDirectory,
-      workspaceFolderPath: location.workspaceFolderPath,
-      fileStamp: Object.freeze({ ...location.fileStamp }),
-      manifestDigest: location.manifestDigest,
-      snapshotGeneration,
-    } as const;
-    const capabilityIdentity = record.identity;
-    const capabilityFileStamp = Object.freeze({ ...location.fileStamp });
-    const capability: ResolvedPackageItem = Object.freeze({
-      item: record.row,
-      identity: capabilityIdentity,
-      packageFilePath: location.packageFilePath,
-      packageDirectory: location.packageDirectory,
-      workspaceFolderPath: location.workspaceFolderPath,
-      fileStamp: capabilityFileStamp,
-      manifestDigest: location.manifestDigest,
-      snapshotGeneration,
-    });
-    this.packageCapabilityRecords.set(capability, capabilityRecord);
-    return { ok: true, value: capability };
-  }
-
   private rebuildPackageItems(): void {
     this.allEntries = this.allEntries.map(({ item, dev, packageFilePath }) => ({
       item: this.createPackageItem(
@@ -1620,27 +1543,21 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return expectedItem === undefined || match.item === expectedItem ? match : undefined;
   }
 
-  private getCurrentCapabilityRecord(capability: ResolvedPackageItem): {
-    readonly sourceItem: PackageItem;
-    readonly identity: PackageIdentityTuple;
-    readonly packageFilePath: string;
-    readonly packageDirectory: string;
-    readonly workspaceFolderPath: string;
-    readonly fileStamp: ResolvedPackageItem['fileStamp'];
-    readonly manifestDigest: string;
-    readonly snapshotGeneration: number;
-  } | undefined {
-    if (typeof capability !== 'object' || capability === null) {
-      return undefined;
-    }
-    const record = this.packageCapabilityRecords.get(capability);
-    if (record === undefined
-      || record.snapshotGeneration !== this.packageSnapshotGeneration
-      || this.loading
-      || this.findCurrentEntry(record.identity, record.sourceItem) === undefined) {
+  private getCurrentCapabilityRecord(capability: ResolvedPackageItem): PackageCapabilityRecord | undefined {
+    const record = this.capabilities.recordOf(capability);
+    if (record === undefined || this.loading || this.findFreshItemRecord(record) === undefined) {
       return undefined;
     }
     return record;
+  }
+
+  /** The current row's record when `capability` is still fresh for it: same generation, mutation count and spec. */
+  private findFreshItemRecord(capability: PackageCapabilityRecord): PackageItemRecord | undefined {
+    const entry = this.findCurrentEntry(capability.identity);
+    const record = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
+    return record !== undefined && this.capabilities.isFresh(capability, record.row, this.packageSnapshotGeneration)
+      ? record
+      : undefined;
   }
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
