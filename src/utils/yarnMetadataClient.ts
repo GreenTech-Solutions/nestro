@@ -12,20 +12,21 @@ import type {
   PackageMetadata,
   PackageMetadataOutcome,
 } from './metadataRegistry';
+import { isValidPackageName } from './packageNameValidation';
 import { resolveYarnFamily } from './yarnFamily';
 
 /** Runs Yarn Classic's wrapped package metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnClassic(
   request: MetadataRequest,
 ): Promise<PackageMetadataOutcome> {
-  return await fetchPackageMetadataFromYarnFamily(request, 'classic', ['info', request.packageName, '--json']);
+  return await fetchPackageMetadataFromYarnFamily(request, 'classic', ['info', '--json', '--', request.packageName]);
 }
 
 /** Runs Yarn Modern's npm plugin metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnModern(
   request: MetadataRequest,
 ): Promise<PackageMetadataOutcome> {
-  return await fetchPackageMetadataFromYarnFamily(request, 'modern', ['npm', 'info', request.packageName, '--json']);
+  return await fetchPackageMetadataFromYarnFamily(request, 'modern', ['npm', 'info', '--json', '--', request.packageName]);
 }
 
 /** Validates the wrapper emitted by Yarn Classic before reading its payload. */
@@ -65,6 +66,10 @@ async function fetchPackageMetadataFromYarnFamily(
     || request.packageFilePath === undefined
     || request.packageFilePath === '') {
     return { kind: 'transport-error', reason: 'process-failed' };
+  }
+
+  if (!isValidPackageName(request.packageName)) {
+    return { kind: 'unrecognized' };
   }
 
   const packageRoot = path.resolve(path.dirname(request.packageFilePath));
