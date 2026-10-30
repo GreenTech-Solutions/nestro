@@ -1,3 +1,5 @@
+import { BUN_ENV_SYNTAX, expandEnvironmentReferences } from './envExpansion';
+
 export interface BunRegistryConfiguration {
   registryUrl: string;
   authToken: string | undefined;
@@ -11,7 +13,6 @@ export interface ParsedBunConfig {
 
 type BunSection = 'install' | 'install.scopes' | 'other';
 
-const BUN_ENVIRONMENT_VARIABLE = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
 const BUN_REGISTRY_KEYS = new Set(['registry']);
 const BUN_REGISTRY_ENTRY_KEYS = new Set(['password', 'token', 'url', 'username']);
 
@@ -191,7 +192,7 @@ function parseTomlString(value: string): { value: string; nextIndex: number } | 
   for (let index = 1; index < value.length; index += 1) {
     const character = value[index];
     if (character === '"') {
-      const expanded = expandEnvironmentVariables(result);
+      const expanded = expandEnvironmentReferences(result, BUN_ENV_SYNTAX);
       return expanded === undefined ? undefined : { value: expanded, nextIndex: index + 1 };
     }
     if (character === '\\') {
@@ -273,24 +274,6 @@ function normalizeRegistryConfiguration(
   url.username = '';
   url.password = '';
   return { registryUrl: url.toString(), authToken, authIdent };
-}
-
-function expandEnvironmentVariables(value: string): string | undefined {
-  let unresolved = false;
-  const expanded = value.replace(BUN_ENVIRONMENT_VARIABLE, (match, bracedName: string | undefined, plainName: string | undefined) => {
-    const variable = bracedName ?? plainName;
-    if (variable === undefined) {
-      unresolved = true;
-      return match;
-    }
-    const environmentValue = process.env[variable];
-    if (environmentValue === undefined) {
-      unresolved = true;
-      return match;
-    }
-    return environmentValue;
-  });
-  return unresolved ? undefined : expanded;
 }
 
 function stripTomlComment(value: string): string {

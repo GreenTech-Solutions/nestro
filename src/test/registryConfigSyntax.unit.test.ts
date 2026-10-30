@@ -1,24 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { substituteEnvironmentVariables, unwrapQuotes } from '../utils/registry/configValues';
+import { unwrapQuotes } from '../utils/registry/configValues';
 import { parseYamlEntry, parseYamlFlowMap, parseYamlScalar, readYamlLines, skipYamlBlock } from '../utils/registry/miniYaml';
 import { getScopedRegistry, normalizeSimpleConfigKey, parseAuthConfigKey } from '../utils/registry/npmrc';
 import { getPackageScope, getScopeConfiguration } from '../utils/registry/packageScope';
 
 afterEach(() => {
   vi.unstubAllEnvs();
-});
-
-describe('substituteEnvironmentVariables()', () => {
-  it('expands set variables and empties unset ones', () => {
-    vi.stubEnv('NESTRO_SYNTAX_SET', 'value');
-    delete process.env.NESTRO_SYNTAX_UNSET;
-
-    expect(substituteEnvironmentVariables('a-${NESTRO_SYNTAX_SET}-${NESTRO_SYNTAX_UNSET}-b')).toBe('a-value--b');
-  });
-
-  it('leaves text that is not a braced variable untouched', () => {
-    expect(substituteEnvironmentVariables('$PLAIN ${} ${1BAD}')).toBe('$PLAIN ${} ${1BAD}');
-  });
 });
 
 describe('unwrapQuotes()', () => {

@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { PACKAGE_MANAGERS } from '../../shared';
 import { getConfigFilePaths, getPackageRoot, readConfigFile } from './configFiles';
-import { substituteEnvironmentVariables, unwrapQuotes } from './configValues';
+import { expandEnvironmentReferences, NPM_ENV_SYNTAX } from '../envExpansion';
+import { unwrapQuotes } from './configValues';
 import { getPackageScope } from './packageScope';
 import { resolveCaFilePath } from './tls';
 
@@ -102,7 +103,7 @@ function mergeNpmrcConfig(config: Map<string, string>, npmrc: string, baseDirect
       continue;
     }
     const value = line.slice(separatorIndex + 1).trim();
-    config.set(key, normalizeConfigValue(key, substituteEnvironmentVariables(unwrapQuotes(value) ?? value), baseDirectory));
+    config.set(key, normalizeConfigValue(key, expandNpmValue(unwrapQuotes(value) ?? value), baseDirectory));
   }
 }
 
@@ -113,13 +114,17 @@ function applyEnvironmentOverrides(config: Map<string, string>, baseDirectory: s
     }
     const key = normalizeConfigKey(environmentKey.slice(NPM_CONFIG_ENV_PREFIX.length));
     if (key !== undefined) {
-      config.set(key, normalizeConfigValue(key, substituteEnvironmentVariables(environmentValue), baseDirectory));
+      config.set(key, normalizeConfigValue(key, expandNpmValue(environmentValue), baseDirectory));
     }
   }
 }
 
 function normalizeConfigValue(key: string, value: string, baseDirectory: string): string {
   return key === 'cafile' ? resolveCaFilePath(value, baseDirectory) : value;
+}
+
+function expandNpmValue(value: string): string {
+  return expandEnvironmentReferences(value, NPM_ENV_SYNTAX) ?? value;
 }
 
 function normalizeConfigKey(key: string): string | undefined {

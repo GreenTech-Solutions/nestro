@@ -1,4 +1,5 @@
-import { substituteEnvironmentVariables, unwrapQuotes } from './configValues';
+import { expandEnvironmentReferences, YARN_MODERN_ENV_SYNTAX } from '../envExpansion';
+import { unwrapQuotes } from './configValues';
 
 export interface RawYamlLine {
   indent: number;
@@ -62,12 +63,12 @@ export function parseYamlScalar(value: string): string | boolean | undefined {
   }
   const unwrapped = unwrapQuotes(trimmed);
   if (unwrapped !== undefined) {
-    return substituteEnvironmentVariables(unwrapped);
+    return expandEnvironmentReferences(unwrapped, YARN_MODERN_ENV_SYNTAX);
   }
   if (trimmed.startsWith('"') || trimmed.startsWith('\'') || trimmed.includes(' {')) {
     return undefined;
   }
-  return substituteEnvironmentVariables(trimmed);
+  return expandEnvironmentReferences(trimmed, YARN_MODERN_ENV_SYNTAX);
 }
 
 /** A single-line flow mapping (`{ a: b, c: { d: e } }`); undefined when it is malformed or has trailing text. */
@@ -157,10 +158,8 @@ function readYamlFlowValue(
     if (end >= value.length) {
       return undefined;
     }
-    return {
-      value: substituteEnvironmentVariables(value.slice(index + 1, end)),
-      nextIndex: end + 1,
-    };
+    const expanded = expandEnvironmentReferences(value.slice(index + 1, end), YARN_MODERN_ENV_SYNTAX);
+    return expanded === undefined ? undefined : { value: expanded, nextIndex: end + 1 };
   }
   let end = index;
   while (end < value.length && value[end] !== ',' && value[end] !== '}') {

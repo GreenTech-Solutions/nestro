@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { YARN_DIALECTS } from '../../shared';
 import { getConfigFilePaths, readConfigFile } from './configFiles';
-import { substituteEnvironmentVariables, unwrapQuotes } from './configValues';
+import { expandEnvironmentReferences, YARN_CLASSIC_ENV_SYNTAX } from '../envExpansion';
+import { unwrapQuotes } from './configValues';
 import { normalizeSimpleConfigKey } from './npmrc';
 import { resolveCaFilePath } from './tls';
 
@@ -50,7 +51,11 @@ export function parseClassicYarnConfig(contents: string): Map<string, string> {
     if (value === undefined) {
       throw new Error('Malformed Yarn Classic configuration.');
     }
-    config.set(key, substituteEnvironmentVariables(value));
+    const expanded = expandEnvironmentReferences(value, YARN_CLASSIC_ENV_SYNTAX);
+    if (expanded === undefined) {
+      throw new Error('Yarn Classic configuration references an unset environment variable.');
+    }
+    config.set(key, expanded);
   }
   return config;
 }
