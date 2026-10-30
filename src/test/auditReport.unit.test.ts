@@ -257,6 +257,35 @@ describe('advisory identity and report safety', () => {
     expect(merged.fixAvailable).toBeUndefined();
   });
 
+  it('orders advisories by severity rank, then package name and identity', () => {
+    const make = (packageName: string, severity: 'critical' | 'high' | 'moderate' | 'low' | 'info', advisoryId: string): AuditAdvisory => createAuditAdvisory({
+      packageName,
+      severity,
+      manager: 'npm',
+      schema: 'npm-v2-vulnerabilities',
+      advisoryId,
+    });
+    const ordered = mergeAuditAdvisories([
+      make('a-info', 'info', 'I'),
+      make('b-low', 'low', 'L'),
+      make('c-moderate', 'moderate', 'M'),
+      make('d-high', 'high', 'H'),
+      make('e-critical', 'critical', 'C'),
+      make('a-high', 'high', 'H2'),
+      make('d-high', 'high', 'H1'),
+    ]);
+
+    expect(ordered.map(entry => `${entry.severity}:${entry.packageName}:${entry.advisoryId}`)).toEqual([
+      'critical:e-critical:C',
+      'high:a-high:H2',
+      'high:d-high:H',
+      'high:d-high:H1',
+      'moderate:c-moderate:M',
+      'low:b-low:L',
+      'info:a-info:I',
+    ]);
+  });
+
   it('does not merge distinct advisory IDs and marks title/range fallback identities unstable', () => {
     const base = {
       packageName: 'lodash' as const,
