@@ -18,3 +18,17 @@ export {
   unwrapNpmAlias,
 } from './versionGrammar';
 export type { ParsedSemver } from './versionGrammar';
+export {
+  DEFAULT_PACKAGE_MANAGER,
+  isPackageManager,
+  LOCKFILE_PRIORITY,
+  LOCKFILES,
+  NODE_MODULES_EXCLUDE_GLOB,
+  PACKAGE_MANAGER_NAMES,
+  PACKAGE_MANAGERS,
+  parsePackageManagerField,
+  YARN_DIALECTS,
+} from './packageManagers';
+export type { CommandDialect, LockfileDescriptor, PackageManager, PackageManagerField } from './packageManagers';
+export { getWindowsSystemExecutablePath, resolveSpawnTarget } from './spawnTarget';
+export type { ResolvedSpawnTarget, SpawnTarget, SpawnTargetEnvironment, UnresolvedSpawnTarget } from './spawnTarget';

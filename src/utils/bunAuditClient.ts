@@ -18,7 +18,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { createAuditAdvisory, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
-import { compareCodeUnits, describeError, isRecord, readRequiredString } from '../shared';
+import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequiredString } from '../shared';
 
 const bunSchema = 'bun-bulk-advisory' as const;
 const compatibleExitCodes: readonly number[] = [0, 1];
@@ -34,7 +34,7 @@ export async function runBunAudit(cwd: string, signal?: AbortSignal): Promise<Au
  * `signal`, and preserves advisory exit 1 for the Bun parser.
  */
 export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
-  const outcome = await runBoundedProcess('bun', ['audit', '--json'], {
+  const outcome = await runBoundedProcess(PACKAGE_MANAGERS.bun.bin, PACKAGE_MANAGERS.bun.dialect.audit, {
     cwd,
     timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
     maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,

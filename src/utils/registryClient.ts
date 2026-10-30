@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
-import type { PackageManager } from './packageManagerKind';
 import { runBoundedMetadataRequest } from './metadataRunner';
 import type {
   BoundedMetadataOutcome,
@@ -19,7 +18,8 @@ import type {
 import type { PackageMetadata, PackageMetadataOutcome } from './metadataRegistry';
 import { compareRawVersions, isPreReleaseVersion } from './versionUtils';
 import { resolveYarnFamily } from './yarnFamily';
-import { isPathWithin, isRecord, stripVersionDecorations } from '../shared';
+import { isPathWithin, isRecord, PACKAGE_MANAGERS, stripVersionDecorations, YARN_DIALECTS } from '../shared';
+import type { PackageManager } from '../shared';
 
 const DEFAULT_REGISTRY_URL = 'https://registry.npmjs.org/';
 const MAX_REGISTRY_REDIRECTS = 3;
@@ -441,7 +441,7 @@ async function readBunConfiguration(
     }
     const parsed = parseBunConfig(contents);
     if (parsed === undefined) {
-      throw new Error(`Malformed bunfig.toml at ${configPath}.`);
+      throw new Error(`Malformed ${PACKAGE_MANAGERS.bun.dialect.configFile} at ${configPath}.`);
     }
     mergeBunConfig(config, parsed);
   }
@@ -450,8 +450,8 @@ async function readBunConfiguration(
 
 function getBunConfigPaths(packageFilePath: string | undefined): string[] {
   return [...new Set([
-    path.join(homedir(), 'bunfig.toml'),
-    ...getProjectConfigPaths(packageFilePath, 'bunfig.toml'),
+    path.join(homedir(), PACKAGE_MANAGERS.bun.dialect.configFile),
+    ...getProjectConfigPaths(packageFilePath, PACKAGE_MANAGERS.bun.dialect.configFile),
   ])];
 }
 
@@ -540,7 +540,7 @@ async function readNpmrcConfig(packageFilePath: string | undefined): Promise<Map
 }
 
 function getNpmrcPaths(packageFilePath: string | undefined): string[] {
-  return [path.join(homedir(), '.npmrc'), ...getProjectConfigPaths(packageFilePath, '.npmrc')];
+  return [path.join(homedir(), PACKAGE_MANAGERS.npm.dialect.configFile), ...getProjectConfigPaths(packageFilePath, PACKAGE_MANAGERS.npm.dialect.configFile)];
 }
 
 function getProjectConfigPaths(packageFilePath: string | undefined, fileName: string): string[] {
@@ -601,7 +601,7 @@ async function readClassicYarnConfiguration(
 ): Promise<ClassicYarnConfiguration> {
   const config = new Map<string, string>();
   let sourceFound = false;
-  for (const configPath of getYarnConfigPaths(packageFilePath, '.yarnrc')) {
+  for (const configPath of getYarnConfigPaths(packageFilePath, YARN_DIALECTS.classic.configFile)) {
     const contents = await readFileOrUndefined(configPath);
     if (contents !== undefined) {
       sourceFound = true;
@@ -691,7 +691,7 @@ async function readYarnModernConfiguration(
     noProxy: undefined,
     scopes: new Map(),
   };
-  for (const configPath of getYarnConfigPaths(packageFilePath, '.yarnrc.yml')) {
+  for (const configPath of getYarnConfigPaths(packageFilePath, YARN_DIALECTS.modern.configFile)) {
     const contents = await readFileOrUndefined(configPath);
     if (contents === undefined) {
       continue;

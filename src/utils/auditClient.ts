@@ -12,10 +12,11 @@ import type {
   AuditFixAvailability,
   AuditVia,
 } from './auditReport';
-import { compareCodeUnits, describeError, isRecord } from '../shared';
+import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS } from '../shared';
+import type { PackageManager } from '../shared';
 
 export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
-export type AuditPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+export type AuditPackageManager = PackageManager;
 
 /**
  * Generous but finite: Yarn's full-graph recursive audit and slow registries can legitimately
@@ -145,7 +146,7 @@ interface RecognizedAuditPayload {
 
 export async function runNpmAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
   logger.info('Running npm audit.');
-  return toAuditResult(await runAuditOutcome('npm', ['audit', '--json'], cwd, signal));
+  return toAuditResult(await runAuditOutcome(PACKAGE_MANAGERS.npm.bin, PACKAGE_MANAGERS.npm.dialect.audit, cwd, signal));
 }
 
 export async function runPackageAudit(
@@ -154,7 +155,12 @@ export async function runPackageAudit(
   signal?: AbortSignal,
 ): Promise<AuditResult> {
   logger.info(`Running ${packageManager} audit.`);
-  return toAuditResult(await runAuditOutcome(packageManager, ['audit', '--json'], cwd, signal));
+  return toAuditResult(await runAuditOutcome(
+    PACKAGE_MANAGERS[packageManager].bin,
+    PACKAGE_MANAGERS[packageManager].dialect.audit,
+    cwd,
+    signal,
+  ));
 }
 
 /**
@@ -540,13 +546,7 @@ function parseVia(value: unknown): AuditVia[] {
 }
 
 function managerForCommand(command: string): AuditPackageManager | undefined {
-  if (command === 'npm') {
-    return 'npm';
-  }
-  if (command === 'pnpm') {
-    return 'pnpm';
-  }
-  return undefined;
+  return command === 'npm' || command === 'pnpm' ? command : undefined;
 }
 
 function managerForSchema(schema: AuditSchemaId): AuditPackageManager {

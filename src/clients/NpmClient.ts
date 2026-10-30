@@ -1,6 +1,9 @@
 import { Client, PackageTarget } from './Client';
 import { runNpmAudit } from '../utils/auditClient';
 import type { AuditResult } from '../utils/auditClient';
+import { PACKAGE_MANAGERS } from '../shared';
+
+const spec = PACKAGE_MANAGERS.npm;
 
 export class NpmClient extends Client {
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {
@@ -9,16 +12,16 @@ export class NpmClient extends Client {
 
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
-      command: 'npm',
-      args: ['install', ...this.getSectionArgs(packages, '--save-dev'), '--', ...this.formatPackageTargets(packages)],
+      command: spec.bin,
+      args: [spec.addVerb, ...this.getSectionArgs(packages, spec.devFlag), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
   buildInstallCommand() {
-    return { command: 'npm', args: ['install'] };
+    return { command: spec.bin, args: [spec.installVerb] };
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'npm', args: ['uninstall', '--', ...this.formatPackageNames(packages)] };
+    return { command: spec.bin, args: [spec.removeVerb, '--', ...this.formatPackageNames(packages)] };
   }
 }

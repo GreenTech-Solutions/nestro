@@ -69,16 +69,6 @@ export interface SignatureAuditCliDependencies {
   readonly writeError: (line: string) => void;
 }
 
-/**
- * Spawned from `PATH` on purpose: pnpm 11 self-switches to the repository's `packageManager`
- * pin, and CI installs that same pinned version, so both paths audit the declared version.
- * On Windows the launcher is a `.cmd` shim, which can only start through a shell (Node refuses
- * a shim without one since CVE-2024-27980); the arguments are the fixed `SIGNATURE_AUDIT_ARGS`.
- */
-export function resolvePnpmLauncher(platform: string): { readonly executable: 'pnpm'; readonly shell: boolean } {
-  return { executable: 'pnpm', shell: platform === 'win32' };
-}
-
 /** Rejects any argument: the guard takes none, and a typo must not silently change the run. */
 export function parseSignatureAuditArgs(argv: readonly string[]): void {
   if (argv.length > 0) {

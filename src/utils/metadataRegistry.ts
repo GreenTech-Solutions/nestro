@@ -1,10 +1,11 @@
 import path from 'node:path';
-import type { PackageManager } from './packageManagerKind';
 import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
 import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMetadataClient';
+import { PACKAGE_MANAGER_NAMES } from '../shared';
+import type { PackageManager } from '../shared';
 
 export type MetadataAdapterTier = 'native-cli' | 'config-aware-https' | 'public-npm';
 
@@ -40,7 +41,6 @@ export interface MetadataAdapter {
   fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome>;
 }
 
-const packageManagers: readonly PackageManager[] = ['npm', 'pnpm', 'yarn', 'bun'];
 const tierOrder: Readonly<Record<MetadataAdapterTier, number>> = {
   'native-cli': 0,
   'config-aware-https': 1,
@@ -49,7 +49,7 @@ const tierOrder: Readonly<Record<MetadataAdapterTier, number>> = {
 
 export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
   tier: 'config-aware-https',
-  packageManagers,
+  packageManagers: PACKAGE_MANAGER_NAMES,
   fetchMetadata: request => fetchPackageMetadataFromRegistry(
     request.packageName,
     request.packageFilePath,

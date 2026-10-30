@@ -20,7 +20,7 @@ import { logger } from './logger';
 import { runBoundedProcess } from './processRunner';
 import { resolveYarnFamily } from './yarnFamily';
 import type { YarnFamily } from './yarnFamily';
-import { compareCodeUnits, describeError, isRecord, readRequiredString } from '../shared';
+import { compareCodeUnits, describeError, isRecord, PACKAGE_MANAGERS, readRequiredString, YARN_DIALECTS } from '../shared';
 
 const classicSchema = 'yarn-classic-audit' as const;
 const modernSchema = 'yarn-modern-npm-audit' as const;
@@ -31,9 +31,6 @@ const severityBits: Readonly<Record<AuditSeverity, number>> = {
   high: 8,
   critical: 16,
 };
-
-const classicArgs = ['audit', '--json'] as const;
-const modernArgs = ['npm', 'audit', '--all', '--recursive', '--json'] as const;
 
 interface ClassicSummary {
   mask: number;
@@ -68,9 +65,9 @@ export async function runYarnAuditOutcome(cwd: string, signal?: AbortSignal): Pr
     );
   }
 
-  const args = family === 'classic' ? classicArgs : modernArgs;
+  const args = YARN_DIALECTS[family].audit;
   logger.info(`Running Yarn ${family} audit.`);
-  const outcome = await runBoundedProcess('yarn', args, {
+  const outcome = await runBoundedProcess(PACKAGE_MANAGERS.yarn.bin, args, {
     cwd,
     timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
     maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,

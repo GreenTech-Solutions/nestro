@@ -48,11 +48,6 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
-    file: 'src/clients/projectResolver.ts',
-    target: '../utils/packageManagerKind',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts; PackageManager is defined in utils so clients and utils share one source of truth.',
-  },
-  {
     file: 'src/clients/NpmClient.ts',
     target: '../utils/auditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',

@@ -46,25 +46,44 @@ describe('createNodeSignatureAuditRunner()', () => {
     });
   });
 
-  it('starts pnpm through a shell on Windows, where its launcher is a .cmd shim', async () => {
+  it('hosts the pnpm .cmd shim in cmd.exe on Windows instead of using a shell', async () => {
     execFileAsyncMock.mockResolvedValue({ stdout: VERIFIED_REPORT, stderr: '' });
 
-    const result = await createNodeSignatureAuditRunner(CWD, 'win32')();
+    const result = await createNodeSignatureAuditRunner(CWD, 'win32', {
+      env: { PATH: 'C:\\Program Files\\nodejs', SystemRoot: 'C:\\Windows' },
+      isFile: filePath => filePath === 'C:\\Program Files\\nodejs\\pnpm.cmd',
+    })();
 
     expect(execFileAsyncMock).toHaveBeenCalledWith(
-      'pnpm',
-      ['audit', 'signatures', '--json'],
-      expect.objectContaining({ shell: true }),
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '""C:\\Program Files\\nodejs\\pnpm.cmd" audit signatures --json"'],
+      expect.objectContaining({ cwd: CWD, windowsVerbatimArguments: true }),
     );
+    expect(execFileAsyncMock.mock.calls[0]?.[2]).not.toHaveProperty('shell');
     expect(result.command).toBe('pnpm audit signatures --json');
   });
 
-  it('starts pnpm without a shell elsewhere', async () => {
+  it('reports a pnpm missing from PATH on Windows without spawning anything', async () => {
+    const result = await createNodeSignatureAuditRunner(CWD, 'win32', { env: {}, isFile: () => false })();
+
+    expect(execFileAsyncMock).not.toHaveBeenCalled();
+    expect(result).toStrictEqual({
+      command: 'pnpm audit signatures --json',
+      stdout: '',
+      stderr: 'pnpm could not run: pnpm was not found on PATH.',
+      exitCode: undefined,
+    });
+  });
+
+  it('starts pnpm directly, without a shell, elsewhere', async () => {
     execFileAsyncMock.mockResolvedValue({ stdout: VERIFIED_REPORT, stderr: '' });
 
     await createNodeSignatureAuditRunner(CWD, 'linux')();
 
-    expect(execFileAsyncMock).toHaveBeenCalledWith('pnpm', expect.anything(), expect.objectContaining({ shell: false }));
+    const options = execFileAsyncMock.mock.calls[0]?.[2];
+    expect(execFileAsyncMock).toHaveBeenCalledWith('pnpm', ['audit', 'signatures', '--json'], expect.anything());
+    expect(options).not.toHaveProperty('shell');
+    expect(options).not.toHaveProperty('windowsVerbatimArguments');
   });
 
   it.each([

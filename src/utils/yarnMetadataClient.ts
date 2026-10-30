@@ -14,20 +14,20 @@ import type {
 } from './metadataRegistry';
 import { isValidPackageName } from './packageNameValidation';
 import { resolveYarnFamily } from './yarnFamily';
-import { isRecord } from '../shared';
+import { isRecord, PACKAGE_MANAGERS, YARN_DIALECTS } from '../shared';
 
 /** Runs Yarn Classic's wrapped package metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnClassic(
   request: MetadataRequest,
 ): Promise<PackageMetadataOutcome> {
-  return await fetchPackageMetadataFromYarnFamily(request, 'classic', ['info', '--json', '--', request.packageName]);
+  return await fetchPackageMetadataFromYarnFamily(request, 'classic', [...YARN_DIALECTS.classic.metadata, request.packageName]);
 }
 
 /** Runs Yarn Modern's npm plugin metadata command in the package root. */
 export async function fetchPackageMetadataFromYarnModern(
   request: MetadataRequest,
 ): Promise<PackageMetadataOutcome> {
-  return await fetchPackageMetadataFromYarnFamily(request, 'modern', ['npm', 'info', '--json', '--', request.packageName]);
+  return await fetchPackageMetadataFromYarnFamily(request, 'modern', [...YARN_DIALECTS.modern.metadata, request.packageName]);
 }
 
 /** Validates the wrapper emitted by Yarn Classic before reading its payload. */
@@ -79,7 +79,7 @@ async function fetchPackageMetadataFromYarnFamily(
     return { kind: 'unrecognized' };
   }
 
-  const outcome = await runBoundedProcess('yarn', args, {
+  const outcome = await runBoundedProcess(PACKAGE_MANAGERS.yarn.bin, args, {
     cwd: packageRoot,
     timeoutMs: METADATA_REQUEST_TIMEOUT_MS,
     maxBufferBytes: METADATA_RESPONSE_MAX_BYTES,

@@ -3,8 +3,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
-import { resolveSpawnTarget } from './processRunner';
-import { describeError, isRecord } from '../shared';
+import { describeError, isRecord, PACKAGE_MANAGERS, parsePackageManagerField, resolveSpawnTarget, YARN_DIALECTS } from '../shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,7 +65,10 @@ function parsePackageManagerFamily(packageManager: string | undefined): YarnFami
   if (packageManager === undefined) {
     return 'unknown';
   }
-  const match = /^yarn@(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(packageManager.trim());
+  const field = parsePackageManagerField(packageManager.trim());
+  const match = field?.packageManager === 'yarn' && field.version !== undefined
+    ? /^(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(field.version)
+    : null;
   if (match === null) {
     return 'unknown';
   }
@@ -75,9 +77,9 @@ function parsePackageManagerFamily(packageManager: string | undefined): YarnFami
 
 async function resolveMarkerFamily(projectRoot: string): Promise<YarnFamilyResolution | undefined> {
   const [modernConfig, classicConfig, lockfile] = await Promise.all([
-    readFileOrUndefined(path.join(projectRoot, '.yarnrc.yml')),
-    readFileOrUndefined(path.join(projectRoot, '.yarnrc')),
-    readFileOrUndefined(path.join(projectRoot, 'yarn.lock')),
+    readFileOrUndefined(path.join(projectRoot, YARN_DIALECTS.modern.configFile)),
+    readFileOrUndefined(path.join(projectRoot, YARN_DIALECTS.classic.configFile)),
+    readFileOrUndefined(path.join(projectRoot, PACKAGE_MANAGERS.yarn.lockfiles[0])),
   ]);
 
   const modern = modernConfig !== undefined || hasModernLockMarker(lockfile);
@@ -110,7 +112,7 @@ function hasClassicLockMarker(lockfile: string | undefined): boolean {
 }
 
 async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResolution> {
-  const target = resolveSpawnTarget('yarn', ['--version']);
+  const target = resolveSpawnTarget(PACKAGE_MANAGERS.yarn.bin, ['--version']);
   if (target.kind === 'unresolved') {
     logger.warn(`Unable to identify Yarn family: ${target.message}`);
     return { family: 'unknown', source: 'version-probe' };

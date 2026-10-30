@@ -12,6 +12,7 @@ import type {
   OperationCoordinator,
 } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
+import { isPackageManager } from '../shared';
 
 /** Real installed `package.json` files are tiny; this bound only guards against a corrupt read. */
 const AUDIT_NODE_PACKAGE_JSON_MAX_BYTES = 1024 * 1024;
@@ -279,10 +280,6 @@ export function cloneAuditProjectFailure(failure: AuditProjectFailure): AuditPro
   };
 }
 
-function isAuditPackageManager(value: unknown): value is AuditPackageManager {
-  return value === 'npm' || value === 'pnpm' || value === 'yarn' || value === 'bun';
-}
-
 function isAuditSchemaId(value: unknown): value is AuditSchemaId {
   return value === 'npm-v2-vulnerabilities'
     || value === 'npm-v1-advisories'
@@ -303,7 +300,7 @@ function isAuditResult(value: unknown): value is AuditResult {
   };
   return candidate.vulnerabilities instanceof Map
     && Array.isArray(candidate.advisories)
-    && isAuditPackageManager(candidate.manager)
+    && isPackageManager(candidate.manager)
     && isAuditSchemaId(candidate.schema);
 }
 

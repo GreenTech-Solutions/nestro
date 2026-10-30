@@ -2,35 +2,21 @@ import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { logger } from '../utils/logger';
-import type { PackageManager } from '../utils/packageManagerKind';
-import { compareCodeUnits, isPathWithin } from '../shared';
+import {
+  compareCodeUnits,
+  DEFAULT_PACKAGE_MANAGER,
+  isPathWithin,
+  LOCKFILES,
+  NODE_MODULES_EXCLUDE_GLOB,
+  parsePackageManagerField,
+} from '../shared';
+import type { PackageManager } from '../shared';
 
 export type { PackageManager };
 
 interface PackageJsonManifest {
   packageManager?: string;
 }
-
-interface LockfileDescriptor {
-  fileName: string;
-  pattern: string;
-  packageManager: PackageManager;
-}
-
-/**
- * Lock file precedence used everywhere a directory is checked for a package-manager
- * signal: pnpm, then Yarn, then Bun, then npm. The first match wins.
- */
-const LOCKFILES: readonly LockfileDescriptor[] = [
-  { fileName: 'pnpm-lock.yaml', pattern: '**/pnpm-lock.yaml', packageManager: 'pnpm' },
-  { fileName: 'yarn.lock', pattern: '**/yarn.lock', packageManager: 'yarn' },
-  { fileName: 'bun.lock', pattern: '**/bun.lock', packageManager: 'bun' },
-  { fileName: 'bun.lockb', pattern: '**/bun.lockb', packageManager: 'bun' },
-  { fileName: 'package-lock.json', pattern: '**/package-lock.json', packageManager: 'npm' },
-  { fileName: 'npm-shrinkwrap.json', pattern: '**/npm-shrinkwrap.json', packageManager: 'npm' },
-];
-
-const packageManagerNames: readonly PackageManager[] = ['npm', 'pnpm', 'yarn', 'bun'];
 
 /** One ancestor-directory package-manager signal: a `packageManager` field or a lock file. */
 export interface PackageManagerSignal {
@@ -70,32 +56,26 @@ export interface AuditProjectResolution {
   readonly rejected: readonly RejectedAuditManifest[];
 }
 
-export function parsePackageManager(value: string | undefined): PackageManager | undefined {
-  return packageManagerNames.find(name => name === value);
-}
-
 export async function detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
   if (cwd !== undefined) {
     try {
       const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
       const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-      const packageManager = manifest.packageManager?.split('@')[0];
-      return parsePackageManager(packageManager);
+      return parsePackageManagerField(manifest.packageManager)?.packageManager;
     }
     catch {
       return undefined;
     }
   }
 
-  const files = await vscode.workspace.findFiles('**/package.json', '**/node_modules/**', 1);
+  const files = await vscode.workspace.findFiles('**/package.json', NODE_MODULES_EXCLUDE_GLOB, 1);
   if (files.length === 0) {
     return undefined;
   }
 
   const raw = await vscode.workspace.fs.readFile(files[0]);
   const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-  const packageManager = manifest.packageManager?.split('@')[0];
-  return parsePackageManager(packageManager);
+  return parsePackageManagerField(manifest.packageManager)?.packageManager;
 }
 
 async function detectLockfileSignalInDirectory(cwd: string): Promise<{ packageManager: PackageManager; fileName: string } | undefined> {
@@ -119,7 +99,7 @@ async function detectLockfileSignalInDirectory(cwd: string): Promise<{ packageMa
  */
 export async function detectPackageManagerFromLockfile(): Promise<PackageManager | undefined> {
   for (const lockfile of LOCKFILES) {
-    const files = await vscode.workspace.findFiles(lockfile.pattern, '**/node_modules/**', 1);
+    const files = await vscode.workspace.findFiles(`**/${lockfile.fileName}`, NODE_MODULES_EXCLUDE_GLOB, 1);
     if (files.length > 0) {
       return lockfile.packageManager;
     }
@@ -272,7 +252,7 @@ async function resolveManifestProject(
 
   const canonical = await canonicalizeRoot(candidateRoot, workspaceFolderPath);
   if (canonical.ok) {
-    const packageManager = ancestorSignal?.packageManager ?? 'npm';
+    const packageManager = ancestorSignal?.packageManager ?? DEFAULT_PACKAGE_MANAGER;
     const lockfilePath = await resolveLockfilePath(canonical.root, packageManager, ancestorSignal?.lockfileFileName);
     return {
       ok: true,
@@ -298,7 +278,7 @@ async function resolveManifestProject(
   }
 
   const ownSignal = await detectPackageManagerSignalAt(manifestDir);
-  const packageManager = ownSignal?.packageManager ?? 'npm';
+  const packageManager = ownSignal?.packageManager ?? DEFAULT_PACKAGE_MANAGER;
   const lockfilePath = await resolveLockfilePath(ownCanonical.root, packageManager, ownSignal?.lockfileFileName);
   return {
     ok: true,

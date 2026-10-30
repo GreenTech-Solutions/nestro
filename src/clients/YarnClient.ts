@@ -1,21 +1,24 @@
 import type { AuditResult } from '../utils/auditClient';
 import { runYarnAudit } from '../utils/yarnAuditClient';
 import { Client, PackageTarget } from './Client';
+import { PACKAGE_MANAGERS } from '../shared';
+
+const spec = PACKAGE_MANAGERS.yarn;
 
 export class YarnClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
-      command: 'yarn',
-      args: ['add', ...this.getSectionArgs(packages, '--dev'), '--', ...this.formatPackageTargets(packages)],
+      command: spec.bin,
+      args: [spec.addVerb, ...this.getSectionArgs(packages, spec.devFlag), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
   buildInstallCommand() {
-    return { command: 'yarn', args: ['install'] };
+    return { command: spec.bin, args: [spec.installVerb] };
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'yarn', args: ['remove', '--', ...this.formatPackageNames(packages)] };
+    return { command: spec.bin, args: [spec.removeVerb, '--', ...this.formatPackageNames(packages)] };
   }
 
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {

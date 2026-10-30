@@ -1,20 +1,23 @@
 import { AuditResult, runPackageAudit } from '../utils/auditClient';
 import { Client, PackageTarget } from './Client';
+import { PACKAGE_MANAGERS } from '../shared';
+
+const spec = PACKAGE_MANAGERS.pnpm;
 
 export class PnpmClient extends Client {
   buildUpdateCommand(packages: readonly PackageTarget[]) {
     return {
-      command: 'pnpm',
-      args: ['add', ...this.getSectionArgs(packages, '--save-dev'), '--', ...this.formatPackageTargets(packages)],
+      command: spec.bin,
+      args: [spec.addVerb, ...this.getSectionArgs(packages, spec.devFlag), '--', ...this.formatPackageTargets(packages)],
     };
   }
 
   buildInstallCommand() {
-    return { command: 'pnpm', args: ['install'] };
+    return { command: spec.bin, args: [spec.installVerb] };
   }
 
   buildRemoveCommand(packages: readonly string[]) {
-    return { command: 'pnpm', args: ['remove', '--', ...this.formatPackageNames(packages)] };
+    return { command: spec.bin, args: [spec.removeVerb, '--', ...this.formatPackageNames(packages)] };
   }
 
   async runAuditReport(signal?: AbortSignal): Promise<AuditResult> {

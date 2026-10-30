@@ -8,7 +8,7 @@ import { runCliAsEntry } from './cliBootstrap';
 
 export function createNodeDependencyAuditCliDependencies(
   cwd: string,
-  platform: string,
+  platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): DependencyAuditCliDependencies {
   return {
@@ -23,7 +23,7 @@ export function createNodeDependencyAuditCliDependencies(
 export function mainDependencyAudit(
   argv: readonly string[],
   cwd: string,
-  platform: string,
+  platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Promise<number> {
   return runDependencyAuditCli(argv, createNodeDependencyAuditCliDependencies(cwd, platform, env));

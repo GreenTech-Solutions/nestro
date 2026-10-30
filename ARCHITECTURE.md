@@ -118,7 +118,7 @@ Nestro operates over two related but distinct notions of "project": a **manifest
 `AuditProject` (`src/clients/projectResolver.ts`) groups manifests whose audit graph resolves to
 the same canonical, symlink-resolved `projectRoot`. That root is the audit execution directory
 and the coordination identity for per-project work; it is not the working directory for every
-package-manager operation. `PackageManager` is defined in `src/utils/packageManagerKind.ts` and
+package-manager operation. `PackageManager` is defined in `src/shared/packageManagers.ts` and
 re-exported by `projectResolver.ts`.
 
 `resolveAuditProjects()` turns the manifest list into the project graph, used both to decide
@@ -636,8 +636,8 @@ not silently re-introduce it.
 
 ## 11. Extension points
 
-**Adding a package manager.** Extend `PackageManager` (`src/utils/packageManagerKind.ts`), add
-its lock-file descriptor to `LOCKFILES`, implement a `Client` subclass in `src/clients/`
+**Adding a package manager.** Add its entry to `PACKAGE_MANAGERS` (`src/shared/packageManagers.ts`:
+bin, lock files, verbs, dev flag, audit/metadata argv, config file), implement a `Client` subclass in `src/clients/`
 (section flag before the `--` operand separator, names/versions validated through
 `operandValidation.ts` before shell-quoting), wire it into `ClientManager.createClient()`, add
 an audit adapter following the `AuditResult`/`AuditOutcome` contract in `auditClient.ts` (own

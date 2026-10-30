@@ -13,7 +13,7 @@ import type {
   PackageMetadata,
   PackageMetadataOutcome,
 } from './metadataRegistry';
-import { isRecord } from '../shared';
+import { isRecord, PACKAGE_MANAGERS } from '../shared';
 
 const nativePackageManagers = ['npm', 'pnpm'] as const;
 
@@ -31,7 +31,8 @@ export async function fetchPackageMetadataFromNativeCli(
     return { kind: 'unrecognized' };
   }
 
-  const outcome = await runBoundedProcess(packageManager, ['view', '--json', '--', request.packageName], {
+  const spec = PACKAGE_MANAGERS[packageManager];
+  const outcome = await runBoundedProcess(spec.bin, [...spec.dialect.metadata, request.packageName], {
     cwd: path.resolve(path.dirname(request.packageFilePath)),
     timeoutMs: METADATA_REQUEST_TIMEOUT_MS,
     maxBufferBytes: METADATA_RESPONSE_MAX_BYTES,

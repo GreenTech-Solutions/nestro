@@ -7,13 +7,13 @@ import {
   yarnVersionProbeMaxBufferBytes,
   yarnVersionProbeTimeoutMs,
 } from '../utils';
-import { resolveSpawnTarget } from '../utils/processRunner';
+import { resolveSpawnTarget } from '../shared';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
-vi.mock('../utils/processRunner', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/processRunner')>();
+vi.mock('../shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../shared')>();
   return { ...actual, resolveSpawnTarget: vi.fn(actual.resolveSpawnTarget) };
 });
 
