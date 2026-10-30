@@ -17,6 +17,7 @@ import {
   evaluateReleaseWorkflowPolicy,
   evaluateVsixPolicy,
   PACKAGED_FILE_COUNT_BUDGET,
+  reviewedActionReference,
 } from '../tools';
 import type { ReleaseCandidateEvidence } from '../tools';
 
@@ -26,6 +27,7 @@ const candidateSource = readFileSync(resolve(repositoryRoot, '.github/workflows/
 const dispatchSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release-dispatch.yml'), 'utf8');
 const releaseSource = readFileSync(resolve(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
 const releaseConfigSource = readFileSync(resolve(repositoryRoot, '.releaserc.json'), 'utf8');
+const staleSha = 'e'.repeat(40);
 
 function mutate(source: string, mutator: (workflow: Record<string, unknown>) => void): string {
   const workflow = parse(source, { uniqueKeys: true }) as Record<string, unknown>;
@@ -166,7 +168,7 @@ describe('release workflow policies', () => {
       delete jobs(workflow).publish.environment;
     })), 'protected-environment');
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
-      steps(workflow, 'publish').push({ name: 'Checkout source', uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' });
+      steps(workflow, 'publish').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
     })), 'step-allowlist');
     expectViolation(evaluateReleaseWorkflowPolicy(mutate(source, (workflow) => {
       const verify = steps(workflow, 'publish').find(step => step.name === 'Verify the candidate manifest, tag and digest');
@@ -355,7 +357,7 @@ describe('release workflow policies', () => {
         setupOptions(workflow, 'Prepare pnpm').install = true;
       })), 'toolchain');
       expectViolation(evaluate(mutate(source, (workflow) => {
-        steps(workflow, job).find(step => step.name === 'Prepare pnpm')!.uses = 'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2';
+        steps(workflow, job).find(step => step.name === 'Prepare pnpm')!.uses = `pnpm/setup@${staleSha}`;
       })), 'toolchain');
       expectViolation(evaluate(mutate(source, (workflow) => {
         setupOptions(workflow, 'Setup Node.js')['node-version'] = '22.0.0';

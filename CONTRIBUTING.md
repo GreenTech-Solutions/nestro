@@ -55,7 +55,7 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `audit:dependencies` | `pnpm run test:compile && node out/tools/auditDependenciesCli.js` | Compile and run pnpm's dependency vulnerability audit: production dependencies fail at moderate, any dependency fails at critical, the rest are warnings. | No |
 | `audit:signatures` | `pnpm run test:compile && node out/tools/auditSignaturesCli.js` | Compile and verify pnpm package signatures. | No |
 | `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence into the directory given as `--out-dir <relative-directory>` (required). | No |
-| `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration, CODEOWNERS, and Dependabot policy. | No |
+| `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration (against `.github/reviewed-actions.json`), CODEOWNERS, and Dependabot policy. | No |
 | `release:provenance` | `pnpm run test:compile && node out/tools/artifactProvenanceCli.js` | Build SBOM and provenance evidence for a release artifact. | No |
 | `release:prepare` | `pnpm run test:compile && node out/tools/releasePrepareCli.js` | Build and validate release preparation evidence. | No |
 | `release:candidate` | `pnpm run test:compile && node out/tools/releaseCandidateCli.js` | Build and validate release-candidate evidence. | No |
@@ -86,6 +86,14 @@ The `audit:*`, `ci:*`, `check:vsce` and `release:*` scripts above back the end-t
 process — verified SHA and artifact identity, audits, packaged smoke, environment approval,
 publish, and post-publish verification. See [RELEASING.md](RELEASING.md) for the full checklist;
 a green CI run is not sufficient on its own to call a release done.
+
+### Bumping a GitHub Action
+
+Every external action SHA lives in [.github/reviewed-actions.json](.github/reviewed-actions.json)
+(`<owner>/<repo>` → `{ "sha", "tag" }`, plus the pinned `actionlint` version and SHA-256). The
+policies behind `ci:policy` read it, so a bump is two edits and no TypeScript: change that action's
+entry, and change its `uses: <action>@<sha> # <tag>` lines in `.github/workflows/`. The registry holds
+only pins in use; a rollback is the same reviewed edit. `.github/` is under CODEOWNERS.
 
 ## Run and debug the extension
 

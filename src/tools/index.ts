@@ -22,6 +22,8 @@ export { parseTagVersion, runReleasePrepare } from './releasePrepare';
 export type { ReleasePrepareIo } from './releasePrepare';
 export { createNodeReleasePrepareDependencies, mainReleasePrepare, parseCommitLog, parseReleasePrepareArgs } from './releasePrepareCli';
 export { evaluateReleaseCandidateWorkflowPolicy, evaluateReleaseConfigPolicy, evaluateReleaseDispatchWorkflowPolicy, evaluateReleasePrepareWorkflowPolicy, evaluateReleaseWorkflowPolicy, RELEASE_CANDIDATE_WORKFLOW_PATH, RELEASE_CONFIG_PATH, RELEASE_DISPATCH_WORKFLOW_PATH, RELEASE_PREPARE_WORKFLOW_PATH, RELEASE_WORKFLOW_PATH } from './releaseWorkflowPolicy';
+export { loadReviewedActionsRegistry, parseReviewedActionsRegistry, REVIEWED_ACTIONS_PATH, reviewedActionReference } from './reviewedActions';
+export type { ReviewedAction, ReviewedActionsRegistry } from './reviewedActions';
 export { DEFAULT_OUT_DIR, parseVerifyVsixArgs, runVerifyVsixCli, sha256Hex, verifyVsixPackage } from './verifyVsix';
 export type { VerifyVsixCliDependencies, VsixVerifierIo } from './verifyVsix';
 export { createNodeCliDependencies, createNodeVsixVerifierIo, createStreamLineWriter, main, parseGitStatusPaths } from './verifyVsixCli';

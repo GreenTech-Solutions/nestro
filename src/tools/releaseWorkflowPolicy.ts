@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
+import { reviewedActionReference } from './reviewedActions';
 import { validatePrepareReleaseConfig } from './releaseAnalyzer';
 
 export const RELEASE_PREPARE_WORKFLOW_PATH = '.github/workflows/release-prepare.yml';
@@ -18,13 +19,12 @@ type UnknownRecord = Record<string, unknown>;
 const SOURCE_SHA_EXPRESSION = '${{ github.event.workflow_run.head_sha }}';
 const SOURCE_RUN_ID_EXPRESSION = '${{ github.event.workflow_run.id }}';
 const CANDIDATE_ACTIONS = {
-  checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-  download: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
-  node: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-  pnpm: 'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024',
-  upload: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+  checkout: reviewedActionReference('actions/checkout'),
+  download: reviewedActionReference('actions/download-artifact'),
+  node: reviewedActionReference('actions/setup-node'),
+  pnpm: reviewedActionReference('pnpm/setup'),
+  upload: reviewedActionReference('actions/upload-artifact'),
 } as const;
-const PUBLISH_ACTION = 'HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12';
 const PREPARE_TRIGGER = {
   workflow_run: {
     types: ['completed'],
@@ -912,8 +912,8 @@ export function evaluateReleaseWorkflowPolicy(source: string): ReleaseWorkflowPo
     || asRecord(marketplace.env)?.VSCE_PAT !== '${{ secrets.VSCE_PAT }}'
     || openVsx === undefined || !exactKeys(asRecord(openVsx?.env), ['OVSX_PAT'])
     || asRecord(openVsx.env)?.OVSX_PAT !== '${{ secrets.OVSX_PAT }}'
-    || marketplace?.uses !== PUBLISH_ACTION
-    || openVsx?.uses !== PUBLISH_ACTION) {
+    || marketplace?.uses !== reviewedActionReference('HaaLeo/publish-vscode-extension')
+    || openVsx?.uses !== reviewedActionReference('HaaLeo/publish-vscode-extension')) {
     add(violations, 'secret-boundary', 'registry credentials must be scoped to their individual publish steps');
   }
   const marketplaceWith = asRecord(marketplace?.with);

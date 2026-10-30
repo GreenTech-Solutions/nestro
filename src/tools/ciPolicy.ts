@@ -1,36 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseDocument, visit } from 'yaml';
+import { FULL_SHA_PATTERN, REVIEWED_REGISTRY, reviewedActionReference } from './reviewedActions';
 
 export const CODEOWNERS_PATH = '.github/CODEOWNERS';
 export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
 export const DEPENDABOT_CONFIG_PATH = '.github/dependabot.yml';
 export const WORKFLOWS_DIRECTORY_PATH = '.github/workflows';
 
-const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const ACTION_REFERENCE_PATTERN = /^([^/]+\/[^/@]+)@(.+)$/u;
-const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = {
-  'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
-  'actions/attest-build-provenance': '4d101475d8b20a2381f78447822ac1eab6504dd8',
-  'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
-  'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
-  'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
-  'pnpm/setup': 'fbda4c85fc2e1e08721cd8763afea8f48d60f024',
-};
-const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = {
-  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1': 'v7.0.1',
-  'actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be': 'v2.2.2',
-  'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8': 'v4.2.2',
-  'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803': 'v6.1.0',
-  'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c': 'v8.0.1',
-  'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38': 'v6.5.0',
-  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020': 'v7.0.0',
-  'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a': 'v7.0.1',
-  'HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db': 'v2.0.0',
-  'HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12': 'v2.1.0',
-  'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86': 'v6.0.10',
-  'pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2': 'v2.0.2',
-  'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024': 'v3.0.0',
-};
+const CI_REVIEWED_ACTIONS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(REVIEWED_REGISTRY.actions).map(([locator, action]) => [locator, action.sha]),
+);
+const REVIEWED_EXTERNAL_ACTIONS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(REVIEWED_REGISTRY.actions).map(([locator, action]) => [`${locator}@${action.sha}`, action.tag]),
+);
 const EXPECTED_CODEOWNERS = '/.github/ @GreenTech-Solutions\n';
 const EXPECTED_DEPENDABOT_CONFIG: UnknownRecord = {
   updates: [{
@@ -49,12 +32,13 @@ const EXPECTED_DEPENDABOT_CONFIG: UnknownRecord = {
   }],
   version: 2,
 };
+const ACTIONLINT_ARCHIVE = `actionlint_${REVIEWED_REGISTRY.actionlint.version}_linux_amd64.tar.gz`;
 const ACTIONLINT_COMMAND = `set -euo pipefail
-archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+archive="$RUNNER_TEMP/${ACTIONLINT_ARCHIVE}"
 curl --fail --silent --show-error --location \\
-  https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \\
+  https://github.com/rhysd/actionlint/releases/download/v${REVIEWED_REGISTRY.actionlint.version}/${ACTIONLINT_ARCHIVE} \\
   --output "$archive"
-printf '%s  %s\\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" \\
+printf '%s  %s\\n' ${REVIEWED_REGISTRY.actionlint.sha256} "$archive" \\
   | sha256sum --check --strict
 tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
 "$RUNNER_TEMP/actionlint" -color .github/workflows/*.yml`;
@@ -101,7 +85,7 @@ function normalizedRun(step: UnknownRecord): string | undefined {
 
 const CHECKOUT_STEP: UnknownRecord = {
   name: 'Checkout exact tested commit',
-  uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  uses: reviewedActionReference('actions/checkout'),
   with: {
     ref: '${{ env.EXPECTED_SHA }}',
     'persist-credentials': false,
@@ -114,7 +98,7 @@ const IDENTITY_STEP: UnknownRecord = {
 };
 const PNPM_STEP: UnknownRecord = {
   name: 'Prepare pnpm',
-  uses: 'pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024',
+  uses: reviewedActionReference('pnpm/setup'),
   with: {
     cache: false,
     install: false,
@@ -123,7 +107,7 @@ const PNPM_STEP: UnknownRecord = {
 };
 const NODE_STEP: UnknownRecord = {
   name: 'Setup Node.js',
-  uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+  uses: reviewedActionReference('actions/setup-node'),
   with: {
     cache: 'pnpm',
     'cache-dependency-path': 'pnpm-lock.yaml',
@@ -226,7 +210,7 @@ printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`,
   {
     if: '${{ github.event_name == \'push\' && github.ref == \'refs/heads/master\' }}',
     name: 'Attest the exact VSIX subject',
-    uses: 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8',
+    uses: reviewedActionReference('actions/attest-build-provenance'),
     with: {
       'subject-path': '${{ steps.subject.outputs.path }}',
     },
@@ -234,7 +218,7 @@ printf 'path=%s\\n' "\${subjects[0]}" >> "$GITHUB_OUTPUT"`,
   {
     id: 'upload',
     name: 'Upload immutable evidence',
-    uses: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    uses: reviewedActionReference('actions/upload-artifact'),
     with: {
       'if-no-files-found': 'error',
       name: 'verify-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
@@ -249,7 +233,7 @@ const PACKAGED_SMOKE_STEPS: readonly UnknownRecord[] = [
   { name: 'Compile packaged smoke runner', run: 'pnpm run test:compile' },
   {
     name: 'Download exact immutable evidence',
-    uses: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+    uses: reviewedActionReference('actions/download-artifact'),
     with: {
       'artifact-ids': '${{ needs.package.outputs.artifact-id }}',
       path: '${{ env.CI_ARTIFACT_DIR }}',

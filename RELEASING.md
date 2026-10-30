@@ -130,7 +130,7 @@ the working tree — do not run them by hand on a release commit.
 |---|---|---|---|
 | `pnpm run audit:dependencies` | no arguments (an extra argument is a hard error) | Runs `pnpm audit --prod --json` and `pnpm audit --json`: no advisory at Moderate or above in a production (bundled) dependency and no Critical advisory anywhere; every other advisory is printed as a warning (`::warning` in GitHub Actions). A registry error, empty, malformed, or inconsistent report is rejected rather than read as a pass. | CLI stdout/stderr |
 | `pnpm run audit:signatures` | no arguments (an extra argument is a hard error) | `pnpm audit signatures --json` and validates the report shape itself: every audited package carried a verified registry signature; an empty, malformed, mismatched-count, or plain-advisory report is rejected rather than read as a pass. | CLI stdout/stderr |
-| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against a reviewed allowlist, `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
+| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against the reviewed-actions registry (`.github/reviewed-actions.json`), `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
 | `pnpm run ci:evidence --out-dir <relative-directory>` | exactly `--out-dir <dir>` | Well-formed CI identity for the current run (full 40-char commit SHA, positive-integer run id/attempt, an `eventName`, the VSIX file name and digest) and writes `evidence.json` (`releaseEligible: false` always — this file is never itself release authority). | `<out-dir>/evidence.json` |
 | `pnpm run release:provenance --artifact-dir <relative-directory>` | exactly `--artifact-dir <dir>` | Builds the SBOM (`sbom.json`, runtime dependency list) and the provenance evidence file (`provenance.json`: source SHA, CI run id/attempt, event name, artifact digest, attestation subject/digest, signer workflow) for the artifact already in that directory. | `<artifact-dir>/sbom.json`, `<artifact-dir>/provenance.json` |
 | `pnpm run release:prepare --out-dir <relative-directory>` | exactly `--out-dir <dir>`; requires `RELEASE_REPOSITORY_URL` | Computes the next semantic-release version and changelog entry from commit history. **Mutating:** when a release is needed it rewrites `package.json` and `CHANGELOG.md` in the working tree; only `release-prepare.yml` runs it, to draft the version PR. | `<out-dir>/notes.md` and the tool's own release-needed/version outputs |
@@ -167,8 +167,8 @@ What the `publish` job does today, once approved:
 
 1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then runs
    `gh attestation verify` against the GitHub attestation created in `ci.yml`.
-2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension@1b8df46...`
-   (pinned `v2.1.0`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
+2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension`
+   (SHA and tag pinned in `.github/reviewed-actions.json`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
    secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:
    https://marketplace.visualstudio.com`, `skipDuplicate: true`.
 3. Publishes to Open VSX with the same pinned action and the same shape (`env: OVSX_PAT: ${{

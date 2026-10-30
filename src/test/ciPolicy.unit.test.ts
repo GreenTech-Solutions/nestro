@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +11,11 @@ import {
   evaluateCodeownersPolicy,
   evaluateDependabotConfigPolicy,
   evaluateWorkflowActionPolicy,
+  loadReviewedActionsRegistry,
+  parseReviewedActionsRegistry,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
+  REVIEWED_ACTIONS_PATH,
+  reviewedActionReference,
 } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
@@ -19,6 +24,10 @@ const releaseWorkflowPath = RELEASE_CANDIDATE_WORKFLOW_PATH;
 const canonicalReleaseSource = readFileSync(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
 const canonicalCodeownersSource = readFileSync(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8');
 const canonicalDependabotSource = readFileSync(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8');
+const canonicalRegistrySource = readFileSync(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8');
+const registry = loadReviewedActionsRegistry(repositoryRoot);
+const checkout = registry.actions['actions/checkout'];
+const unreviewedSha = 'f'.repeat(40);
 
 function mutateWorkflow(mutator: (workflow: Record<string, unknown>) => void): string {
   const workflow = parse(canonicalSource, { uniqueKeys: true }) as Record<string, unknown>;
@@ -96,7 +105,7 @@ describe('CI workflow policy', () => {
 
   it('rejects an unreviewed full action commit even though it is immutable-looking', () => {
     expectRejected(mutateWorkflow((workflow) => {
-      steps(workflow, 'quality')[0].uses = `actions/checkout@${'f'.repeat(40)}`;
+      steps(workflow, 'quality')[0].uses = `actions/checkout@${unreviewedSha}`;
     }), 'reviewed-action');
   });
 
@@ -372,19 +381,19 @@ describe('CI workflow policy', () => {
 });
 
 describe('immutable workflow action policy', () => {
-  const checkoutReference = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1';
+  const checkoutReference = reviewedActionReference('actions/checkout');
 
   it('accepts every reviewed action reference and version comment in the current workflows', () => {
     expect(evaluateWorkflowActionPolicy(canonicalSource)).toEqual([]);
     expect(evaluateWorkflowActionPolicy(canonicalReleaseSource)).toEqual([]);
   });
 
-  it.each(['v6', 'main', 'd23441a', 'D23441A48E516B6C34AEA4FA41551A30E30AF803', 'not-a-sha'])(
+  it.each(['v6', 'main', checkout.sha.slice(0, 7), checkout.sha.toUpperCase(), 'not-a-sha'])(
     'rejects a mutable or non-full release checkout ref %s',
     (ref) => {
       const mutated = canonicalReleaseSource.replace(
-        `${checkoutReference} # v7.0.1`,
-        `actions/checkout@${ref} # v7.0.1`,
+        `${checkoutReference} # ${checkout.tag}`,
+        `actions/checkout@${ref} # ${checkout.tag}`,
       );
       expectRejectedAction(mutated, 'immutable-action');
     },
@@ -393,21 +402,21 @@ describe('immutable workflow action policy', () => {
   it('rejects an arbitrary full SHA and locator substitution', () => {
     expectRejectedAction(canonicalReleaseSource.replace(
       checkoutReference,
-      `actions/checkout@${'f'.repeat(40)}`,
+      `actions/checkout@${unreviewedSha}`,
     ), 'reviewed-action');
     expectRejectedAction(canonicalReleaseSource.replace(
       checkoutReference,
-      'attacker/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+      `attacker/checkout@${checkout.sha}`,
     ), 'reviewed-action');
     expectRejectedAction(canonicalReleaseSource.replace(
       checkoutReference,
-      'actions/checkout/subpath@d23441a48e516b6c34aea4fa41551a30e30af803',
+      `actions/checkout/subpath@${checkout.sha}`,
     ), 'reviewed-action');
   });
 
   it('requires the exact version comment attached to the uses scalar', () => {
-    expectRejectedAction(canonicalReleaseSource.replace(' # v7.0.1', ''), 'action-version-comment');
-    expectRejectedAction(canonicalReleaseSource.replace('# v7.0.1', '# v7.0.0'), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource.replace(` # ${checkout.tag}`, ''), 'action-version-comment');
+    expectRejectedAction(canonicalReleaseSource.replace(`# ${checkout.tag}`, '# v0.0.0'), 'action-version-comment');
   });
 
   it.each([
@@ -452,8 +461,7 @@ describe('immutable workflow action policy', () => {
 });
 
 describe('reviewed action update policy', () => {
-  const releaseCheckoutV6 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
-  const reviewedCheckoutV7 = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
+  const reviewedCheckout = `${reviewedActionReference('actions/checkout')} # ${checkout.tag}`;
 
   it('accepts only the canonical standalone GitHub Actions updater and .github owner', () => {
     expect(evaluateDependabotConfigPolicy(canonicalDependabotSource)).toEqual([]);
@@ -516,25 +524,24 @@ describe('reviewed action update policy', () => {
     ]);
   });
 
-  it('models a reviewed full-SHA update and fails closed before an unknown SHA is enrolled', () => {
-    const reviewedUpdate = canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7);
-    expect(evaluateWorkflowActionPolicy(reviewedUpdate)).toEqual([]);
+  it('accepts the registry pin and fails closed on an unenrolled SHA, mutable tag and bad version comment', () => {
+    expect(evaluateWorkflowActionPolicy(canonicalReleaseSource)).toEqual([]);
 
     const unknownUpdate = canonicalReleaseSource.replace(
-      releaseCheckoutV6,
-      `actions/checkout@${'f'.repeat(40)} # v8.0.0`,
+      reviewedCheckout,
+      `actions/checkout@${unreviewedSha} # v8.0.0`,
     );
     expectRejectedAction(unknownUpdate, 'reviewed-action');
     expectRejectedAction(
-      canonicalReleaseSource.replace(releaseCheckoutV6, 'actions/checkout@v7 # v7.0.1'),
+      canonicalReleaseSource.replace(reviewedCheckout, `actions/checkout@v7 # ${checkout.tag}`),
       'immutable-action',
     );
     expectRejectedAction(
-      canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7.replace('v7.0.1', 'v7.0.0')),
+      canonicalReleaseSource.replace(reviewedCheckout, reviewedCheckout.replace(checkout.tag, 'v0.0.0')),
       'action-version-comment',
     );
     expectRejectedAction(
-      canonicalReleaseSource.replace(releaseCheckoutV6, reviewedCheckoutV7.replace(' # v7.0.1', '')),
+      canonicalReleaseSource.replace(reviewedCheckout, reviewedCheckout.replace(` # ${checkout.tag}`, '')),
       'action-version-comment',
     );
   });
@@ -577,3 +584,103 @@ describe('reviewed action update policy', () => {
 function expectRejectedAction(source: string, rule: string): void {
   expect(evaluateWorkflowActionPolicy(source)).toEqual(expect.arrayContaining([expect.objectContaining({ rule })]));
 }
+
+describe('reviewed actions registry', () => {
+  interface RegistryDraft {
+    [key: string]: unknown;
+    actionlint: Record<string, unknown>;
+    actions: Record<string, Record<string, unknown>>;
+  }
+
+  function registryWith(mutator: (draft: RegistryDraft) => void): string {
+    const draft = JSON.parse(canonicalRegistrySource) as RegistryDraft;
+    mutator(draft);
+    return JSON.stringify(draft);
+  }
+
+  it('loads the canonical registry with every pin in the workflows', () => {
+    expect(parseReviewedActionsRegistry(canonicalRegistrySource)).toEqual(registry);
+    expect(Object.keys(registry.actions)).toEqual(expect.arrayContaining([
+      'actions/checkout',
+      'actions/download-artifact',
+      'actions/setup-node',
+      'actions/upload-artifact',
+      'pnpm/setup',
+      'actions/attest-build-provenance',
+      'HaaLeo/publish-vscode-extension',
+    ]));
+  });
+
+  it('builds action references from registry entries and rejects unknown actions', () => {
+    expect(reviewedActionReference('actions/checkout')).toBe(`actions/checkout@${checkout.sha}`);
+    expect(() => reviewedActionReference('attacker/checkout')).toThrow('not a reviewed action');
+    expect(() => reviewedActionReference('toString')).toThrow('not a reviewed action');
+  });
+
+  it.each([
+    ['malformed JSON', '{ "actions": '],
+    ['a non-object root', '[]'],
+    ['a missing actionlint entry', registryWith((value) => {
+      Reflect.deleteProperty(value, 'actionlint');
+    })],
+    ['an unknown top-level key', registryWith((value) => {
+      value.extra = {};
+    })],
+    ['a short actionlint digest', registryWith((value) => {
+      value.actionlint.sha256 = 'a'.repeat(63);
+    })],
+    ['an uppercase actionlint digest', registryWith((value) => {
+      value.actionlint.sha256 = 'A'.repeat(64);
+    })],
+    ['a non-numeric actionlint version', registryWith((value) => {
+      value.actionlint.version = 'latest';
+    })],
+    ['an extra actionlint key', registryWith((value) => {
+      value.actionlint.url = 'https://example.invalid';
+    })],
+    ['an empty actions mapping', registryWith((value) => {
+      value.actions = {};
+    })],
+    ['an array of actions', registryWith((value) => {
+      value.actions = [] as unknown as RegistryDraft['actions'];
+    })],
+    ['a key without an owner', registryWith((value) => {
+      value.actions.checkout = value.actions['actions/checkout'];
+    })],
+    ['a key with a ref', registryWith((value) => {
+      value.actions['actions/checkout@v7'] = value.actions['actions/checkout'];
+    })],
+    ['a short SHA', registryWith((value) => {
+      value.actions['actions/checkout'].sha = checkout.sha.slice(0, 7);
+    })],
+    ['an uppercase SHA', registryWith((value) => {
+      value.actions['actions/checkout'].sha = checkout.sha.toUpperCase();
+    })],
+    ['a non-semver tag', registryWith((value) => {
+      value.actions['actions/checkout'].tag = 'v7';
+    })],
+    ['an extra entry key', registryWith((value) => {
+      value.actions['actions/checkout'].note = 'x';
+    })],
+    ['a non-object entry', registryWith((value) => {
+      value.actions['actions/checkout'] = checkout.sha as unknown as Record<string, unknown>;
+    })],
+  ])('rejects a registry with %s', (_label, source) => {
+    expect(() => parseReviewedActionsRegistry(source)).toThrow(REVIEWED_ACTIONS_PATH);
+  });
+
+  it('fails closed when the registry file is missing from the repository root', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'nestro-registry-'));
+    try {
+      expect(() => loadReviewedActionsRegistry(root)).toThrow();
+    }
+    finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects a workflow pinned to a SHA the registry no longer lists', () => {
+    const stale = canonicalReleaseSource.replace(reviewedActionReference('actions/checkout'), `actions/checkout@${unreviewedSha}`);
+    expectRejectedAction(stale, 'reviewed-action');
+  });
+});

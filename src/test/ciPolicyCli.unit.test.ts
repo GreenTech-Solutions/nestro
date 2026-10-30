@@ -7,11 +7,13 @@ import {
   CODEOWNERS_PATH,
   createNodeCiPolicyCliDependencies,
   DEPENDABOT_CONFIG_PATH,
+  loadReviewedActionsRegistry,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
   RELEASE_CONFIG_PATH,
   RELEASE_DISPATCH_WORKFLOW_PATH,
   RELEASE_PREPARE_WORKFLOW_PATH,
   RELEASE_WORKFLOW_PATH,
+  reviewedActionReference,
   runCiPolicyCli,
 } from '../tools';
 import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
@@ -19,6 +21,7 @@ import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const releaseWorkflowPath = RELEASE_WORKFLOW_PATH;
 const canonicalReleaseSource = readFile(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
+const downloadArtifactSha = loadReviewedActionsRegistry(repositoryRoot).actions['actions/download-artifact'].sha;
 
 const canonicalPolicyReaders: Pick<
   CiPolicyCliDependencies,
@@ -220,7 +223,7 @@ describe('CI policy CLI', () => {
   it.each([
     ['mutable tag', 'actions/download-artifact@v8', 'immutable-action'],
     ['arbitrary SHA', `actions/download-artifact@${'f'.repeat(40)}`, 'reviewed-action'],
-    ['substituted locator', 'attacker/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c', 'reviewed-action'],
+    ['substituted locator', `attacker/download-artifact@${downloadArtifactSha}`, 'reviewed-action'],
   ])('rejects a %s in release.yml with a path-qualified error', async (_label, replacement, rule) => {
     const workflows = await readCanonicalWorkflows();
     const release = workflows.find(workflow => workflow.path === releaseWorkflowPath);
@@ -234,7 +237,7 @@ describe('CI policy CLI', () => {
         ? {
             ...workflow,
             source: workflow.source.replace(
-              'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+              reviewedActionReference('actions/download-artifact'),
               replacement,
             ),
           }
