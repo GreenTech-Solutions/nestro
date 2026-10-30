@@ -1,7 +1,11 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { DEFAULT_KILL_GRACE_PERIOD_MS } from '../config';
-import { describeError, getWindowsSystemExecutablePath, resolveSpawnTarget } from '../shared';
+import { describeError, resolveSpawnTarget } from '../shared';
+import { BoundedOutput } from './boundedOutput';
+import { ProcessTerminator } from './processTermination';
+
+export { getWindowsTaskkillPath } from './processTermination';
 
 export interface BoundedProcessOptions {
   cwd: string;
@@ -77,223 +81,158 @@ export function runBoundedProcess(
   args: readonly string[],
   options: BoundedProcessOptions,
 ): Promise<BoundedProcessOutcome> {
-  const {
-    cwd,
-    timeoutMs,
-    maxBufferBytes,
-    signal: externalSignal,
-    killGracePeriodMs = DEFAULT_KILL_GRACE_PERIOD_MS,
-  } = options;
+  const { cwd, timeoutMs, maxBufferBytes, signal, killGracePeriodMs = DEFAULT_KILL_GRACE_PERIOD_MS } = options;
 
-  if (externalSignal?.aborted === true) {
+  if (signal?.aborted === true) {
     return Promise.resolve({ kind: 'aborted' });
   }
 
   const target = resolveSpawnTarget(command, args);
   if (target.kind === 'unresolved') {
-    return Promise.resolve({
-      kind: 'spawn-error',
-      reason: target.reason,
-      detail: `${command} could not run: ${target.message}`,
-      message: target.message,
-      cause: undefined,
-    });
+    return Promise.resolve(spawnFailure(command, target.message, target.reason, undefined));
   }
 
   return new Promise<BoundedProcessOutcome>((resolve) => {
-    let settled = false;
-    let timedOut = false;
-    let externallyAborted = false;
-    let overflowed = false;
-    let terminating = false;
-    let escalationTimer: NodeJS.Timeout | undefined;
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-
     const child = spawn(target.command, target.args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(target.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
       // Own process group on posix so termination can reach the whole tree; win32 has
-      // no equivalent concept and `killProcessGroup()` uses `taskkill /t` there instead.
+      // no equivalent concept and `ProcessTerminator` uses `taskkill /t` there instead.
       ...(process.platform === 'win32' ? {} : { detached: true }),
     });
-
-    const finish = (outcome: BoundedProcessOutcome): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeoutTimer);
-      clearTimeout(escalationTimer);
-      externalSignal?.removeEventListener('abort', onExternalAbort);
-      resolve(outcome);
-    };
-
-    // Sends the initial termination signal to the whole tree, then escalates to a forceful
-    // kill after `killGracePeriodMs` if still alive. Idempotent — only the first of a racing
-    // timeout/abort/overflow schedules anything — and the promise stays pending until `close`.
-    const terminate = (): void => {
-      if (terminating) {
-        return;
-      }
-      terminating = true;
-      killProcessGroup(child, 'SIGTERM');
-      escalationTimer = setTimeout(() => {
-        escalationTimer = undefined;
-        killProcessGroup(child, 'SIGKILL');
-        if (childClosed) {
-          finish(terminationOutcome());
-        }
-      }, killGracePeriodMs);
-      escalationTimer.unref();
-    };
-
-    let childClosed = false;
-    const terminationOutcome = (): BoundedProcessOutcome => {
-      if (externallyAborted) {
-        return { kind: 'aborted' };
-      }
-      if (timedOut) {
-        return { kind: 'timeout', timeoutMs };
-      }
-      if (overflowed) {
-        return { kind: 'overflow', maxBufferBytes };
-      }
-      return {
-        kind: 'spawn-error',
-        reason: 'process-failed',
-        detail: `${command} terminated unexpectedly.`,
-        message: 'process terminated unexpectedly.',
-        cause: undefined,
-      };
-    };
-
-    const onExternalAbort = (): void => {
-      externallyAborted = true;
-      terminate();
-    };
-    if (externalSignal?.aborted === true) {
-      onExternalAbort();
-    }
-    else {
-      externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
-    }
-
-    const timeoutTimer = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      if (overflowed) {
-        return;
-      }
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > maxBufferBytes) {
-        overflowed = true;
-        terminate();
-        return;
-      }
-      stdoutChunks.push(chunk);
-    });
-
-    child.stderr?.on('data', (chunk: Buffer) => {
-      if (overflowed) {
-        return;
-      }
-      stderrBytes += chunk.length;
-      if (stderrBytes > maxBufferBytes) {
-        overflowed = true;
-        terminate();
-        return;
-      }
-      stderrChunks.push(chunk);
-    });
-
-    child.on('error', (err) => {
-      // The process could not be spawned at all (e.g. `ENOENT`) — nothing was running,
-      // so there is nothing to terminate.
-      finish({
-        kind: 'spawn-error',
-        reason: isCommandNotFound(err) ? 'command-not-found' : 'process-failed',
-        detail: `${command} could not run: ${describeError(err)}`,
-        message: describeError(err),
-        cause: err,
-      });
-    });
-
-    // `close` (not `exit`) so stdio has fully flushed before stdout/stderr are read. Checked
-    // in this order deliberately: an explicit caller cancellation is reported even if the
-    // timeout timer or buffer cap also tripped in the same tick.
-    child.on('close', (code, signal) => {
-      childClosed = true;
-      if (terminating) {
-        // A direct child can close while a grandchild ignores SIGTERM. Keep the
-        // promise pending until the grace timer has sent SIGKILL to the whole group.
-        if (escalationTimer !== undefined) {
-          return;
-        }
-        finish(terminationOutcome());
-        return;
-      }
-      if (code !== null) {
-        finish({
-          kind: 'exit',
-          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-          stderr: Buffer.concat(stderrChunks).toString('utf8'),
-          exitCode: code,
-        });
-        return;
-      }
-      // Terminated by a signal neither `terminate()` nor a bound above accounts for
-      // (e.g. something outside this runner killed it) — no numeric exit code exists.
-      const reason = signal === null ? 'no exit code' : `terminated by ${signal}`;
-      finish({
-        kind: 'spawn-error',
-        reason: 'process-failed',
-        detail: `${command} exited with ${reason}.`,
-        message: `exited with ${reason}`,
-        cause: undefined,
-      });
-    });
+    supervise(child, { command, timeoutMs, maxBufferBytes, killGracePeriodMs, signal }, resolve);
   });
 }
 
-function killProcessGroup(child: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
-  if (child.pid === undefined) {
-    return;
-  }
-  if (process.platform === 'win32') {
-    // Windows has no POSIX process groups and no `SIGTERM` a console process can trap;
-    // `/t` walks the OS-reported process tree under this pid, and the non-`/f` call is
-    // the closest available "please exit" step before the forceful `/f` escalation.
-    const flags = signal === 'SIGKILL'
-      ? ['/pid', String(child.pid), '/t', '/f']
-      : ['/pid', String(child.pid), '/t'];
-    execFile(getWindowsTaskkillPath(), flags, () => {
-      // Best-effort: nothing actionable here if taskkill itself fails (e.g. the tree
-      // is already gone).
-    });
-    return;
-  }
-  try {
-    // Negative pid targets the whole process group, not just the direct child, so
-    // grandchildren spawned by npm/pnpm/yarn/bun wrapper scripts are reached too. Relies
-    // on `detached: true` at spawn making the child its own group leader.
-    process.kill(-child.pid, signal);
-  }
-  catch {
-    // ESRCH: the group is already gone — nothing left to signal.
-  }
+interface SupervisionContext {
+  command: string;
+  timeoutMs: number;
+  maxBufferBytes: number;
+  killGracePeriodMs: number;
+  signal: AbortSignal | undefined;
 }
 
-/** Resolves the Windows system taskkill executable without consulting PATH. */
-export function getWindowsTaskkillPath(systemRoot: string | undefined = process.env.SystemRoot): string {
-  return getWindowsSystemExecutablePath('taskkill.exe', systemRoot);
+interface TerminationCause {
+  externallyAborted: boolean;
+  timedOut: boolean;
+  overflowed: boolean;
+}
+
+/** Wires a spawned child to its timeout, caller signal and buffer cap, and resolves exactly once. */
+function supervise(
+  child: ChildProcess,
+  ctx: SupervisionContext,
+  resolve: (outcome: BoundedProcessOutcome) => void,
+): void {
+  const cause: TerminationCause = { externallyAborted: false, timedOut: false, overflowed: false };
+  const output = new BoundedOutput(ctx.maxBufferBytes);
+  let settled = false;
+
+  const finish = (outcome: BoundedProcessOutcome): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    clearTimeout(timeoutTimer);
+    terminator.dispose();
+    ctx.signal?.removeEventListener('abort', onExternalAbort);
+    resolve(outcome);
+  };
+  const terminator = new ProcessTerminator(child, ctx.killGracePeriodMs, () => {
+    finish(terminationOutcome(ctx, cause));
+  });
+  const onExternalAbort = (): void => {
+    cause.externallyAborted = true;
+    terminator.terminate();
+  };
+  ctx.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+  const timeoutTimer = setTimeout(() => {
+    cause.timedOut = true;
+    terminator.terminate();
+  }, ctx.timeoutMs);
+
+  const capture = (stream: 'stdout' | 'stderr') => (chunk: Buffer): void => {
+    if (cause.overflowed) {
+      return;
+    }
+    if (!output.capture(stream, chunk)) {
+      cause.overflowed = true;
+      terminator.terminate();
+    }
+  };
+  child.stdout?.on('data', capture('stdout'));
+  child.stderr?.on('data', capture('stderr'));
+
+  // The process could not be spawned at all (e.g. `ENOENT`), so there is nothing to terminate.
+  child.on('error', (err) => {
+    finish(spawnFailure(ctx.command, describeError(err), isCommandNotFound(err) ? 'command-not-found' : 'process-failed', err));
+  });
+
+  // `close` (not `exit`) so stdio has fully flushed before stdout/stderr are read.
+  child.on('close', (code, signal) => {
+    terminator.markClosed();
+    if (terminator.isTerminating) {
+      // A direct child can close while a grandchild ignores SIGTERM. Keep the promise
+      // pending until the grace timer has sent SIGKILL to the whole group.
+      if (!terminator.isEscalationPending) {
+        finish(terminationOutcome(ctx, cause));
+      }
+      return;
+    }
+    finish(closeOutcome(ctx.command, code, signal, output));
+  });
+}
+
+/** Reports an explicit caller cancellation even if the timeout or buffer cap also tripped in the same tick. */
+function terminationOutcome(ctx: SupervisionContext, cause: TerminationCause): BoundedProcessOutcome {
+  if (cause.externallyAborted) {
+    return { kind: 'aborted' };
+  }
+  if (cause.timedOut) {
+    return { kind: 'timeout', timeoutMs: ctx.timeoutMs };
+  }
+  if (cause.overflowed) {
+    return { kind: 'overflow', maxBufferBytes: ctx.maxBufferBytes };
+  }
+  return {
+    kind: 'spawn-error',
+    reason: 'process-failed',
+    detail: `${ctx.command} terminated unexpectedly.`,
+    message: 'process terminated unexpectedly.',
+    cause: undefined,
+  };
+}
+
+function closeOutcome(
+  command: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  output: BoundedOutput,
+): BoundedProcessOutcome {
+  if (code !== null) {
+    return { kind: 'exit', stdout: output.text('stdout'), stderr: output.text('stderr'), exitCode: code };
+  }
+  // Terminated by a signal nothing in this runner accounts for (e.g. something outside
+  // killed it), so no numeric exit code exists.
+  const reason = signal === null ? 'no exit code' : `terminated by ${signal}`;
+  return {
+    kind: 'spawn-error',
+    reason: 'process-failed',
+    detail: `${command} exited with ${reason}.`,
+    message: `exited with ${reason}`,
+    cause: undefined,
+  };
+}
+
+function spawnFailure(
+  command: string,
+  message: string,
+  reason: BoundedProcessSpawnError['reason'],
+  cause: unknown,
+): BoundedProcessSpawnError {
+  return { kind: 'spawn-error', reason, detail: `${command} could not run: ${message}`, message, cause };
 }
 
 function isCommandNotFound(err: unknown): boolean {

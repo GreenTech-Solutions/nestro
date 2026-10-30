@@ -1,6 +1,9 @@
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
+import { classifyCompletedResponse, createTransportError } from './metadataResponse';
+
+export { mapSchemaResult } from './metadataResponse';
 
 export interface MetadataPrivateRegistryContext {
   privateRegistry?: boolean;
@@ -115,169 +118,131 @@ export function runBoundedMetadataRequest<T>(
   url: string,
   options: BoundedMetadataRequestOptions<T>,
 ): Promise<BoundedMetadataOutcome<T>> {
-  const timeoutMs = options.timeoutMs ?? METADATA_REQUEST_TIMEOUT_MS;
-  const maxBufferBytes = options.maxBufferBytes ?? METADATA_RESPONSE_MAX_BYTES;
-
   if (options.signal?.aborted === true) {
     return Promise.resolve({ kind: 'aborted' });
   }
 
   return new Promise<BoundedMetadataOutcome<T>>((resolve) => {
-    let request: ClientRequest | undefined;
-    let response: IncomingMessage | undefined;
-    let settled = false;
-    let timeoutTimer: NodeJS.Timeout | undefined;
-    let receivedBytes = 0;
-    const chunks: Buffer[] = [];
-
-    const settle = (outcome: BoundedMetadataOutcome<T>): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      clearTimeout(timeoutTimer);
-      options.signal?.removeEventListener('abort', onAbort);
-      request?.removeListener('timeout', onTimeout);
-      response?.removeListener('data', onData);
-      response?.removeListener('end', onEnd);
-      response?.removeListener('aborted', onResponseAborted);
-      resolve(outcome);
-    };
-    const destroyRequest = (error?: Error): void => {
-      if (error === undefined) {
-        request?.destroy();
-      }
-      else {
-        request?.destroy(error);
-      }
-      response?.destroy?.();
-    };
-    const onAbort = (): void => {
-      settle({ kind: 'aborted' });
-      destroyRequest();
-    };
-    const onTimeout = (): void => {
-      settle({ kind: 'timeout', timeoutMs });
-      destroyRequest(new Error(options.timeoutErrorMessage ?? `metadata request timed out after ${timeoutMs}ms`));
-    };
-    const onData = (chunk: Buffer | string): void => {
-      if (settled) {
-        return;
-      }
-
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      receivedBytes += buffer.length;
-      if (receivedBytes > maxBufferBytes) {
-        settle({ kind: 'overflow', maxBufferBytes });
-        destroyRequest(new Error(options.overflowErrorMessage ?? `metadata response exceeded ${maxBufferBytes} bytes`));
-        return;
-      }
-
-      chunks.push(buffer);
-    };
-    const onResponseAborted = (): void => {
-      settle({ kind: 'truncated' });
-    };
-    const onResponseError = (error: unknown): void => {
-      settle(createTransportError('response', error));
-    };
-    const onRequestError = (error: unknown): void => {
-      settle(createTransportError('request', error));
-    };
-    const onEnd = (): void => {
-      if (settled) {
-        return;
-      }
-
-      const expectedBytes = getContentLength(response);
-      if (expectedBytes !== undefined && expectedBytes !== receivedBytes) {
-        settle({ kind: 'truncated' });
-        return;
-      }
-
-      if (response?.statusCode !== undefined && (response.statusCode < 200 || response.statusCode >= 300)) {
-        const location = response.headers?.location;
-        settle({
-          kind: 'transport-error',
-          reason: 'http-status',
-          statusCode: response.statusCode,
-          ...(response.statusCode >= 300 && response.statusCode < 400 && typeof location === 'string'
-            ? { redirectLocation: location }
-            : {}),
-        });
-        return;
-      }
-
-      let payload: unknown;
-      try {
-        payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-      }
-      catch {
-        settle({ kind: 'malformed', reason: 'json' });
-        return;
-      }
-
-      try {
-        settle(mapSchemaResult(options.parse(payload)));
-      }
-      catch {
-        settle({ kind: 'malformed', reason: 'schema' });
-      }
-    };
-
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-    timeoutTimer = setTimeout(onTimeout, timeoutMs);
-
-    try {
-      request = https.get(url, {
-        headers: options.headers,
-        ...(options.ca === undefined ? {} : { ca: options.ca }),
-        ...(options.rejectUnauthorized === undefined ? {} : { rejectUnauthorized: options.rejectUnauthorized }),
-      }, (incomingResponse) => {
-        response = incomingResponse;
-        incomingResponse.on('data', onData);
-        incomingResponse.on('end', onEnd);
-        incomingResponse.on('aborted', onResponseAborted);
-        incomingResponse.on('error', onResponseError);
-      });
-      request.setTimeout(timeoutMs);
-      request.on('timeout', onTimeout);
-      request.on('error', onRequestError);
-    }
-    catch (error) {
-      settle(createTransportError('request', error));
-    }
+    new MetadataRequestRun(url, options, resolve).start();
   });
 }
 
-/** Converts a parser result into the outcome that ends a metadata request. */
-export function mapSchemaResult<T>(
-  parsed: MetadataSchemaResult<T>,
-): MetadataSuccess<T> | MetadataUnrecognized | MetadataMalformed {
-  switch (parsed.kind) {
-    case 'recognized':
-      return { kind: 'success', result: parsed.result };
-    case 'unrecognized':
-      return { kind: 'unrecognized' };
-    case 'malformed':
-      return { kind: 'malformed', reason: 'schema' };
+/** One in-flight request: wires the deadline, abort signal and byte cap, and resolves exactly once. */
+class MetadataRequestRun<T> {
+  private request: ClientRequest | undefined;
+  private response: IncomingMessage | undefined;
+  private settled = false;
+  private timeoutTimer: NodeJS.Timeout | undefined;
+  private receivedBytes = 0;
+  private readonly chunks: Buffer[] = [];
+  private readonly timeoutMs: number;
+  private readonly maxBufferBytes: number;
+
+  constructor(
+    private readonly url: string,
+    private readonly options: BoundedMetadataRequestOptions<T>,
+    private readonly resolve: (outcome: BoundedMetadataOutcome<T>) => void,
+  ) {
+    this.timeoutMs = options.timeoutMs ?? METADATA_REQUEST_TIMEOUT_MS;
+    this.maxBufferBytes = options.maxBufferBytes ?? METADATA_RESPONSE_MAX_BYTES;
   }
-}
 
-function getContentLength(response: IncomingMessage | undefined): number | undefined {
-  const value = response?.headers?.['content-length'];
-  if (typeof value !== 'string') {
-    return undefined;
+  start(): void {
+    const { options } = this;
+    options.signal?.addEventListener('abort', this.onAbort, { once: true });
+    this.timeoutTimer = setTimeout(this.onTimeout, this.timeoutMs);
+
+    try {
+      this.request = https.get(this.url, {
+        headers: options.headers,
+        ...(options.ca === undefined ? {} : { ca: options.ca }),
+        ...(options.rejectUnauthorized === undefined ? {} : { rejectUnauthorized: options.rejectUnauthorized }),
+      }, this.attachResponse);
+      this.request.setTimeout(this.timeoutMs);
+      this.request.on('timeout', this.onTimeout);
+      this.request.on('error', this.onRequestError);
+    }
+    catch (error) {
+      this.settle(createTransportError('request', error));
+    }
   }
 
-  const contentLength = Number(value);
-  return Number.isSafeInteger(contentLength) && contentLength >= 0 ? contentLength : undefined;
-}
+  private readonly attachResponse = (incomingResponse: IncomingMessage): void => {
+    this.response = incomingResponse;
+    incomingResponse.on('data', this.onData);
+    incomingResponse.on('end', this.onEnd);
+    incomingResponse.on('aborted', this.onResponseAborted);
+    incomingResponse.on('error', this.onResponseError);
+  };
 
-function createTransportError(
-  reason: 'request' | 'response',
-  _error: unknown,
-): BoundedMetadataTransportError {
-  return { kind: 'transport-error', reason };
+  private settle(outcome: BoundedMetadataOutcome<T>): void {
+    if (this.settled) {
+      return;
+    }
+
+    this.settled = true;
+    clearTimeout(this.timeoutTimer);
+    this.options.signal?.removeEventListener('abort', this.onAbort);
+    this.request?.removeListener('timeout', this.onTimeout);
+    this.response?.removeListener('data', this.onData);
+    this.response?.removeListener('end', this.onEnd);
+    this.response?.removeListener('aborted', this.onResponseAborted);
+    this.resolve(outcome);
+  }
+
+  private destroyRequest(error?: Error): void {
+    if (error === undefined) {
+      this.request?.destroy();
+    }
+    else {
+      this.request?.destroy(error);
+    }
+    this.response?.destroy?.();
+  }
+
+  private readonly onAbort = (): void => {
+    this.settle({ kind: 'aborted' });
+    this.destroyRequest();
+  };
+
+  private readonly onTimeout = (): void => {
+    this.settle({ kind: 'timeout', timeoutMs: this.timeoutMs });
+    this.destroyRequest(new Error(this.options.timeoutErrorMessage ?? `metadata request timed out after ${this.timeoutMs}ms`));
+  };
+
+  private readonly onData = (chunk: Buffer | string): void => {
+    if (this.settled) {
+      return;
+    }
+
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.receivedBytes += buffer.length;
+    if (this.receivedBytes > this.maxBufferBytes) {
+      this.settle({ kind: 'overflow', maxBufferBytes: this.maxBufferBytes });
+      this.destroyRequest(new Error(this.options.overflowErrorMessage ?? `metadata response exceeded ${this.maxBufferBytes} bytes`));
+      return;
+    }
+
+    this.chunks.push(buffer);
+  };
+
+  private readonly onResponseAborted = (): void => {
+    this.settle({ kind: 'truncated' });
+  };
+
+  private readonly onResponseError = (error: unknown): void => {
+    this.settle(createTransportError('response', error));
+  };
+
+  private readonly onRequestError = (error: unknown): void => {
+    this.settle(createTransportError('request', error));
+  };
+
+  private readonly onEnd = (): void => {
+    if (this.settled) {
+      return;
+    }
+
+    this.settle(classifyCompletedResponse(this.response, this.receivedBytes, Buffer.concat(this.chunks), this.options.parse));
+  };
 }

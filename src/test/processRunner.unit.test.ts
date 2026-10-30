@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter, getEventListeners } from 'node:events';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { getWindowsTaskkillPath, runBoundedProcess } from '../utils';
 // the Windows wiring tests substitute a single call.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, spawn: vi.fn(actual.spawn) };
+  return { ...actual, spawn: vi.fn(actual.spawn), execFile: vi.fn(actual.execFile) };
 });
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -269,6 +269,7 @@ describe('runBoundedProcess() — Windows launch wiring', () => {
     }
     vi.mocked(statSync).mockReset();
     vi.mocked(spawn).mockReset();
+    vi.mocked(execFile).mockReset();
   });
 
   function fakeChild(exitCode: number, stdout: string): ChildProcess {
@@ -323,5 +324,26 @@ describe('runBoundedProcess() — Windows launch wiring', () => {
 
     expect(outcome).toMatchObject({ kind: 'spawn-error', reason: 'process-failed' });
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('terminates the tree with taskkill /t, then escalates to taskkill /f when the timeout fires', async () => {
+    asWindows('C:\\tools');
+    vi.mocked(statSync).mockImplementation(((filePath: string) => ({
+      isFile: () => filePath === 'C:\\tools\\node.exe',
+    })) as unknown as typeof statSync);
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter() });
+    vi.mocked(spawn).mockImplementationOnce((() => child) as unknown as typeof spawn);
+    vi.mocked(execFile).mockImplementation((() => undefined) as unknown as typeof execFile);
+    setTimeout(() => child.emit('close', null, 'SIGTERM'), 30);
+
+    const outcome = await runBoundedProcess('node', ['-e', ''], { cwd, timeoutMs: 10, maxBufferBytes: 1024, killGracePeriodMs: 60 });
+
+    expect(outcome).toEqual({ kind: 'timeout', timeoutMs: 10 });
+    const taskkill = 'C:\\Windows\\System32\\taskkill.exe';
+    expect(vi.mocked(execFile).mock.calls.map(([file, flags]) => [file, flags])).toEqual([
+      [taskkill, ['/pid', '4242', '/t']],
+      [taskkill, ['/pid', '4242', '/t', '/f']],
+    ]);
   });
 });
