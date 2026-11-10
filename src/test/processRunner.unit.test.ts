@@ -3,7 +3,8 @@ import type { ChildProcess } from 'node:child_process';
 import { EventEmitter, getEventListeners } from 'node:events';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getWindowsTaskkillPath, runBoundedProcess } from '../utils';
 
@@ -24,6 +25,27 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const cwd = process.cwd();
 const markerFiles: string[] = [];
+const scriptDirectory = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/scripts');
+
+function scriptPath(fileName: string): string {
+  return join(scriptDirectory, fileName);
+}
+
+async function waitForPidMarker(file: string, timeoutMs: number): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (existsSync(file)) {
+      const match = readFileSync(file, 'utf8').match(/^(\d+):ready$/);
+      if (match !== null) {
+        return Number(match[1]);
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Child process did not create a complete PID marker within ${timeoutMs} ms.`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
 
 describe('getWindowsTaskkillPath()', () => {
   it.each([
@@ -70,7 +92,7 @@ describe('runBoundedProcess() — real child process', () => {
   it('captures stdout/stderr and the exit code for a normal successful run', async () => {
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', 'process.stdout.write("out"); process.stderr.write("err")'],
+      [scriptPath('write-stdout-stderr.js')],
       { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024 },
     );
 
@@ -80,7 +102,7 @@ describe('runBoundedProcess() — real child process', () => {
   it('recovers stdout written before a non-zero exit, matching the advisory-exit shape', async () => {
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', 'process.stdout.write("{\\"advisory\\":true}"); process.exitCode = 1'],
+      [scriptPath('write-advisory-and-exit.js')],
       { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024 },
     );
 
@@ -104,7 +126,7 @@ describe('runBoundedProcess() — real child process', () => {
     const marker = markerPath();
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'done'), 400)`],
+      [scriptPath('write-marker-after-delay.js'), marker, '400'],
       { cwd, timeoutMs: 60, maxBufferBytes: 1024 * 1024 },
     );
 
@@ -118,14 +140,13 @@ describe('runBoundedProcess() — real child process', () => {
 
   it('kills the whole process tree, not just the direct child, when a timeout fires', async () => {
     const marker = markerPath();
-    // The direct child forks a grandchild of its own — the shape every real audit command
-    // (npm/pnpm/yarn/bun) can take when delegating to a worker process. Killing only the
-    // direct pid would leave this grandchild to write its marker once its delay elapses.
-    const grandchildCode = `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'done'), 500)`;
-    const parentCode = `require('node:child_process').spawn('node', ['-e', ${JSON.stringify(grandchildCode)}], `
-      + `{ stdio: 'ignore' }); setTimeout(() => {}, 60000);`;
-
-    const outcome = await runBoundedProcess('node', ['-e', parentCode], { cwd, timeoutMs: 200, maxBufferBytes: 1024 * 1024 });
+    // The grandchild writes its marker only if killing the direct child leaves it alive.
+    const outcome = await runBoundedProcess('node', [
+      scriptPath('spawn-grandchild.js'),
+      scriptPath('write-marker-after-delay.js'),
+      marker,
+      '500',
+    ], { cwd, timeoutMs: 200, maxBufferBytes: 1024 * 1024 });
 
     expect(outcome).toEqual({ kind: 'timeout', timeoutMs: 200 });
     await new Promise(resolve => setTimeout(resolve, 700));
@@ -134,23 +155,18 @@ describe('runBoundedProcess() — real child process', () => {
 
   it('escalates to a forceful kill when a process traps the initial termination signal', async () => {
     const marker = markerPath();
-    // Records its own pid, then makes SIGTERM inert — the runner's first termination
-    // signal alone must not be enough for this test to observe a dead process.
-    const script = `require('fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); `
-      + `process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000);`;
-
-    const outcome = await runBoundedProcess('node', ['-e', script], {
-      cwd, timeoutMs: 150, maxBufferBytes: 1024 * 1024, killGracePeriodMs: 250,
+    const timeoutMs = 3000;
+    const outcomePromise = runBoundedProcess('node', [scriptPath('trap-sigterm-write-pid.js'), marker], {
+      cwd, timeoutMs, maxBufferBytes: 1024 * 1024, killGracePeriodMs: 250,
     });
 
-    // The outcome stays `timeout` — the escalation does not change what the caller is
-    // told, only whether the process tree actually ends up dead.
-    expect(outcome).toEqual({ kind: 'timeout', timeoutMs: 150 });
+    const pid = await waitForPidMarker(marker, timeoutMs - 500);
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(() => process.kill(pid, 0)).not.toThrow();
 
-    // Mutation guard: runBoundedProcess() only settles from the child's `close` event,
-    // so a broken escalation would hang this whole test (it has no other way to
-    // resolve) rather than merely leave a live process behind.
-    const pid = Number(readFileSync(marker, 'utf8'));
+    // runBoundedProcess() settles only on `close`, so a broken escalation hangs this test.
+    const outcome = await outcomePromise;
+    expect(outcome).toEqual({ kind: 'timeout', timeoutMs });
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
@@ -160,7 +176,7 @@ describe('runBoundedProcess() — real child process', () => {
 
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', 'process.exit(0)'],
+      [scriptPath('exit-success.js')],
       { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024, signal: controller.signal },
     );
 
@@ -172,7 +188,7 @@ describe('runBoundedProcess() — real child process', () => {
     const controller = new AbortController();
     const promise = runBoundedProcess(
       'node',
-      ['-e', `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'done'), 400)`],
+      [scriptPath('write-marker-after-delay.js'), marker, '400'],
       { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024, signal: controller.signal },
     );
 
@@ -188,7 +204,7 @@ describe('runBoundedProcess() — real child process', () => {
   it('terminates and reports overflow when stdout alone exceeds the buffer limit', async () => {
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', 'process.stdout.write("x".repeat(1_000_000))'],
+      [scriptPath('write-large-stdout.js')],
       { cwd, timeoutMs: 5000, maxBufferBytes: 100 },
     );
 
@@ -201,7 +217,7 @@ describe('runBoundedProcess() — real child process', () => {
     // stream, so this input distinguishes per-stream enforcement from an incorrect aggregate cap.
     const outcome = await runBoundedProcess(
       'node',
-      ['-e', 'process.stdout.write("12345"); process.stderr.write("x".repeat(1_000_000))'],
+      [scriptPath('write-stdout-and-large-stderr.js')],
       { cwd, timeoutMs: 5000, maxBufferBytes: 200 },
     );
 
@@ -212,8 +228,8 @@ describe('runBoundedProcess() — real child process', () => {
     const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
     const before = clearTimeoutSpy.mock.calls.length;
 
-    await runBoundedProcess('node', ['-e', ''], { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024 });
-    await runBoundedProcess('node', ['-e', 'setTimeout(() => {}, 5000)'], { cwd, timeoutMs: 40, maxBufferBytes: 1024 * 1024 });
+    await runBoundedProcess('node', [scriptPath('exit-success.js')], { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024 });
+    await runBoundedProcess('node', [scriptPath('wait.js')], { cwd, timeoutMs: 40, maxBufferBytes: 1024 * 1024 });
     await runBoundedProcess('this-command-does-not-exist-nestro-test', [], { cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024 });
 
     // Two timers per run — the timeout detector and the (possibly-never-scheduled)
@@ -225,12 +241,12 @@ describe('runBoundedProcess() — real child process', () => {
   it('removes its abort listener from a caller signal reused across sequential calls', async () => {
     const controller = new AbortController();
 
-    await runBoundedProcess('node', ['-e', ''], {
+    await runBoundedProcess('node', [scriptPath('exit-success.js')], {
       cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024, signal: controller.signal,
     });
     expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
 
-    await runBoundedProcess('node', ['-e', ''], {
+    await runBoundedProcess('node', [scriptPath('exit-success.js')], {
       cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024, signal: controller.signal,
     });
     expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
@@ -238,7 +254,7 @@ describe('runBoundedProcess() — real child process', () => {
     // Proves the earlier, already-completed calls left no stale listener behind to
     // mis-fire: aborting now must only affect a *new* call, never something already done.
     controller.abort();
-    const finalOutcome = await runBoundedProcess('node', ['-e', ''], {
+    const finalOutcome = await runBoundedProcess('node', [scriptPath('exit-success.js')], {
       cwd, timeoutMs: 5000, maxBufferBytes: 1024 * 1024, signal: controller.signal,
     });
     expect(finalOutcome).toEqual({ kind: 'aborted' });
@@ -337,7 +353,7 @@ describe('runBoundedProcess() — Windows launch wiring', () => {
     vi.mocked(execFile).mockImplementation((() => undefined) as unknown as typeof execFile);
     setTimeout(() => child.emit('close', null, 'SIGTERM'), 30);
 
-    const outcome = await runBoundedProcess('node', ['-e', ''], { cwd, timeoutMs: 10, maxBufferBytes: 1024, killGracePeriodMs: 60 });
+    const outcome = await runBoundedProcess('node', [scriptPath('exit-success.js')], { cwd, timeoutMs: 10, maxBufferBytes: 1024, killGracePeriodMs: 60 });
 
     expect(outcome).toEqual({ kind: 'timeout', timeoutMs: 10 });
     const taskkill = 'C:\\Windows\\System32\\taskkill.exe';
