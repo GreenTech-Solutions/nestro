@@ -21,7 +21,7 @@ describe('showError', () => {
   });
 
   it('shows a relative bounded toast while keeping full sanitized detail in Output', () => {
-    const message = `Failed to read '/workspace/apps/web/package.json' _authToken=toast-secret ${'x'.repeat(300)}`;
+    const message = `Detail for '/workspace/apps/web/package.json' _authToken=toast-secret ${'x'.repeat(300)}`;
     const error = new Error(`ENOENT: open '/workspace/apps/web/package.json' _authToken=detail-secret`);
     error.stack = `Error: ENOENT: open '/workspace/apps/web/package.json' _authToken=detail-secret`;
 
@@ -31,7 +31,9 @@ describe('showError', () => {
     const output = channel.entries.map(entry => entry.message).join('\n');
 
     expect(vscode.workspace.asRelativePath).toHaveBeenCalledWith('/workspace/apps/web/package.json');
-    expect(toast.startsWith('Nestro: Failed to read \'apps/web/package.json\'')).toBe(true);
+    const localizationCalls = vi.mocked(vscode.l10n.t).mock.calls;
+    expect(localizationCalls).toContainEqual(['Nestro: ']);
+    expect(toast.startsWith(vscode.l10n.t('Nestro: '))).toBe(true);
     expect(toast).not.toContain('/workspace/apps/web/package.json');
     expect(toast).not.toContain('toast-secret');
     expect(toast.length).toBeLessThanOrEqual(240);

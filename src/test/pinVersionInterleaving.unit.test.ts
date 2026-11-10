@@ -39,7 +39,9 @@ describe('pinVersionCommand() writer boundary', () => {
     expect(vscode.workspace.fs.readFile).toHaveBeenCalledTimes(2);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: ${PACKAGE_IDENTITY_REJECTED_MESSAGE}`);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
+    );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining('~2.0.0'));
   });
 
@@ -60,7 +62,9 @@ describe('pinVersionCommand() writer boundary', () => {
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(beforeWrite).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: ${PACKAGE_IDENTITY_REJECTED_MESSAGE}`);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
+    );
   });
 });
 

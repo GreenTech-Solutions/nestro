@@ -2,7 +2,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
-import { formatHeldBackDate, logger, type ReleaseAgeState } from '../utils';
+import { formatDependencySectionLabel, formatHeldBackDate, formatShellTaskFailureMessage, logger, type ReleaseAgeState } from '../utils';
+
+const expectedNotification = (message: string): string => `${vscode.l10n.t('Nestro: ')}${message}`;
+const expectErrorNotification = (message: string): void => expect(vscode.window.showErrorMessage)
+  .toHaveBeenCalledWith(expectedNotification(message));
+const expectLocalizedErrorNotification = (messageKey: string, ...args: string[]): void =>
+  expectErrorNotification(vscode.l10n.t(messageKey, ...args));
+const unverifiedUpdateMessage = (): string => vscode.l10n.t('Package update could not be verified. Refresh the package list and try again.');
+
+function expectedPartialUpdateMessage(
+  reason: string,
+  updated: readonly string[],
+  notUpdated: readonly string[],
+): string {
+  const reasonSentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
+  const updatedSentence = updated.length === 0
+    ? vscode.l10n.t('Nothing was updated.')
+    : vscode.l10n.t('Updated: {0}.', updated.join(', '));
+  const notUpdatedSentence = vscode.l10n.t('Not updated: {0}.', notUpdated.join(', '));
+  return vscode.l10n.t('failed to update packages — {0}', `${reasonSentence} ${updatedSentence} ${notUpdatedSentence}`);
+}
 
 const identityMocks = vi.hoisted(() => {
   const makeCapability = (item: {
@@ -181,9 +201,7 @@ describe('installUpdateCommand()', () => {
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: task "Update typescript" failed with exit code 1.',
-    );
+    expectErrorNotification(formatShellTaskFailureMessage('Update typescript', 1));
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
@@ -202,9 +220,7 @@ describe('installUpdateCommand()', () => {
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: task "Update typescript" ended without an exit code.',
-    );
+    expectErrorNotification(formatShellTaskFailureMessage('Update typescript', undefined));
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
@@ -224,9 +240,7 @@ describe('installUpdateCommand()', () => {
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to install update — task launch failed',
-    );
+    expectLocalizedErrorNotification('failed to install update — {0}', 'task launch failed');
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
@@ -292,9 +306,7 @@ describe('installUpdateCommand()', () => {
     await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to install update — Package update could not be verified. Refresh the package list and try again.',
-    );
+    expectErrorNotification(vscode.l10n.t('failed to install update — {0}', unverifiedUpdateMessage()));
   });
 
   it('does not launch a task when the second immediate identity check fails', async () => {
@@ -588,9 +600,8 @@ describe('installUpdateCommand()', () => {
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to install update — boom',
-    );
+    expect(vscode.l10n.t).toHaveBeenCalledWith('failed to install update — {0}', 'boom');
+    expectLocalizedErrorNotification('failed to install update — {0}', 'boom');
     expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
       packageName: 'typescript',
       packageFilePath: '/workspace/package.json',
@@ -859,9 +870,7 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: task "Install Dependencies" failed with exit code 1.',
-    );
+    expectErrorNotification(formatShellTaskFailureMessage('Install Dependencies', 1));
   });
 
   it('shows an error when the install task ends without an exit code', async () => {
@@ -872,9 +881,7 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: task "Install Dependencies" ended without an exit code.',
-    );
+    expectErrorNotification(formatShellTaskFailureMessage('Install Dependencies', undefined));
   });
 
   it('shows an error when no workspace package.json is found', async () => {
@@ -882,9 +889,7 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to run install — No workspace package.json found.',
-    );
+    expectErrorNotification(vscode.l10n.t('failed to run install — {0}', vscode.l10n.t('No workspace package.json found.')));
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 
@@ -908,9 +913,7 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to run install — workspace search failed',
-    );
+    expectLocalizedErrorNotification('failed to run install — {0}', 'workspace search failed');
     expect(vscode.tasks.executeTask).not.toHaveBeenCalled();
   });
 
@@ -943,9 +946,7 @@ describe('runInstallCommand()', () => {
 
     await runInstallCommand();
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to run install — install boom',
-    );
+    expectLocalizedErrorNotification('failed to run install — {0}', 'install boom');
   });
 });
 
@@ -1082,9 +1083,7 @@ describe('updateAllVisibleCommand()', () => {
       packageFilePath: '/workspace/apps/web/package.json',
       section: 'dependencies',
     }, undefined);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed',
-    );
+    expectLocalizedErrorNotification('failed to update packages — {0}', 'second write failed');
     expect(provider.invalidateUpdateCache).toHaveBeenCalled();
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -1114,9 +1113,7 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — second write failed; failed to roll back: package.json',
-    );
+    expectErrorNotification(vscode.l10n.t('failed to update packages — {0}', 'second write failed; failed to roll back: package.json'));
   });
 
   it('does nothing when there are no visible outdated packages', async () => {
@@ -1398,12 +1395,12 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
+    expect(vscode.l10n.t).toHaveBeenCalledWith('failed to update packages — {0}', expect.any(String));
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(2);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
-      + 'Updated: workspace — (root). Not updated: workspace — apps/web.',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage(
+      formatShellTaskFailureMessage('Update All Packages', 1), ['workspace — (root)'], ['workspace — apps/web'],
+    ));
     expect(provider.invalidateUpdateCache).toHaveBeenCalled();
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -1419,10 +1416,9 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
-      + 'Nothing was updated. Not updated: workspace — (root), workspace — apps/web.',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage(
+      formatShellTaskFailureMessage('Update All Packages', 1), [], ['workspace — (root)', 'workspace — apps/web'],
+    ));
     expect(provider.invalidateUpdateCache).toHaveBeenCalled();
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -1437,10 +1433,11 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
-      + 'Updated: workspace — (root) (dependencies). Not updated: workspace — (root) (dev dependencies).',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage(
+      formatShellTaskFailureMessage('Update All Packages', 1),
+      [`workspace — (root) (${formatDependencySectionLabel('dependencies')})`],
+      [`workspace — (root) (${formatDependencySectionLabel('devDependencies')})`],
+    ));
   });
 
   it('reports a later root that goes stale mid-run and reloads', async () => {
@@ -1459,10 +1456,9 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — the package list changed while updating. '
-      + 'Updated: workspace — (root). Not updated: workspace — apps/web.',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage(
+      vscode.l10n.t('the package list changed while updating.'), ['workspace — (root)'], ['workspace — apps/web'],
+    ));
     expect(provider.invalidateUpdateCache).toHaveBeenCalled();
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
@@ -1576,9 +1572,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — Package update could not be verified. Refresh the package list and try again.',
-    );
+    expectErrorNotification(vscode.l10n.t('failed to update packages — {0}', unverifiedUpdateMessage()));
   });
 
   it('reloads after a deferred bulk write whose refreshed baseline cannot be verified', async () => {
@@ -1597,9 +1591,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — Package update could not be verified. Refresh the package list and try again.',
-    );
+    expectErrorNotification(vscode.l10n.t('failed to update packages — {0}', unverifiedUpdateMessage()));
   });
 
   it('rejects an installing row during a final bulk identity check', async () => {
@@ -1627,10 +1619,9 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
-      + 'Nothing was updated. Not updated: workspace — (root).',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage(
+      formatShellTaskFailureMessage('Update All Packages', 1), [], ['workspace — (root)'],
+    ));
   });
 
   it('waits for each immediate bulk update task before starting the next one', async () => {
@@ -1674,9 +1665,7 @@ describe('updateAllVisibleCommand()', () => {
 
     await updateAllVisibleCommand(provider);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — bulk boom. Nothing was updated. Not updated: workspace — (root).',
-    );
+    expectErrorNotification(expectedPartialUpdateMessage('bulk boom', [], ['workspace — (root)']));
   });
 
   it('rejects a bulk update when any visible row lacks a canonical package file path', async () => {

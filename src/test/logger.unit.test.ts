@@ -62,7 +62,7 @@ describe('logger', () => {
     const logged = channel.entries[0]?.message;
     expect(logged).toBe('Fetching versions for evil\n↳ [error] forged\n↳ [warn] lone\n↳ [warn] forged\n↳ [debug] forged\n↳ red');
     expect(logged).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(logged).not.toContain('[error] Nestro:');
+    expect(logged).not.toContain(`[error] ${freshVscode.l10n.t('Nestro: ').trimEnd()}`);
   });
 
   it('redacts shaped credentials in registry and audit text', async () => {

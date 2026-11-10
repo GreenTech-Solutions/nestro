@@ -266,11 +266,14 @@ function wait(milliseconds: number): Promise<void> {
 
 describe('formatShellTaskFailureMessage()', () => {
   it('formats non-zero and missing exit codes', () => {
-    expect(formatShellTaskFailureMessage('Update react', 1)).toBe(
-      'task "Update react" failed with exit code 1.',
-    );
-    expect(formatShellTaskFailureMessage('Remove react', undefined)).toBe(
-      'task "Remove react" ended without an exit code.',
-    );
+    vi.mocked(vscode.l10n.t).mockClear();
+    const failedMessage = formatShellTaskFailureMessage('Update react', 1);
+    expect(vscode.l10n.t).toHaveBeenCalledWith('task "{0}" failed with exit code {1}.', 'Update react', 1);
+    expect(failedMessage).toBe(vscode.l10n.t('task "{0}" failed with exit code {1}.', 'Update react', 1));
+
+    vi.mocked(vscode.l10n.t).mockClear();
+    const missingExitCodeMessage = formatShellTaskFailureMessage('Remove react', undefined);
+    expect(vscode.l10n.t).toHaveBeenCalledWith('task "{0}" ended without an exit code.', 'Remove react');
+    expect(missingExitCodeMessage).toBe(vscode.l10n.t('task "{0}" ended without an exit code.', 'Remove react'));
   });
 });

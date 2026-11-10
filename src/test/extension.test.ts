@@ -843,18 +843,18 @@ suite('Manifest Contracts', () => {
   });
 
   test('declares unsupported workspace modes and workspace-side execution', () => {
-    const manifest = getManifest();
-    assert.deepStrictEqual(manifest.capabilities, {
+    const catalog = JSON.parse(readFileSync(`${requireExtension().extensionPath}/package.nls.json`, 'utf8')) as Readonly<Record<string, string>>;
+    assert.deepStrictEqual(getManifest().capabilities, {
       untrustedWorkspaces: {
         supported: false,
-        description: 'Nestro reads local package files and runs package-manager processes.',
+        description: catalog['capabilities.untrustedWorkspaces.description'],
       },
       virtualWorkspaces: {
         supported: false,
-        description: 'Nestro requires local package files and package-manager processes.',
+        description: catalog['capabilities.virtualWorkspaces.description'],
       },
     });
-    assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
+    assert.deepStrictEqual(getManifest().extensionKind, ['workspace']);
   });
 
   test('row capabilities keep update actions working and hide pin for unsupported specs', () => {

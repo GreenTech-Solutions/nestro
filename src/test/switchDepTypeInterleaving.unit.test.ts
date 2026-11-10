@@ -72,9 +72,9 @@ describe('switchDepTypeCommand() writer boundary', () => {
   });
 
   it.each([
-    ['changed', { dependencies: { pkg: '~2.0.0' } }, 'source spec changed from ^1.2.3 to ~2.0.0'],
-    ['removed', { dependencies: {} }, 'source spec changed from ^1.2.3 to <missing>'],
-  ] as const)('rejects a source %s after final revalidation without writing or reloading', async (_label, nextManifest, expectedMessage) => {
+    ['changed', { dependencies: { pkg: '~2.0.0' } }, '^1.2.3', '~2.0.0'],
+    ['removed', { dependencies: {} }, '^1.2.3', '<missing>'],
+  ] as const)('rejects a source %s after final revalidation without writing or reloading', async (_label, nextManifest, expectedSourceSpec, actualSourceSpec) => {
     let manifest: Manifest = { dependencies: { pkg: '^1.2.3' } };
     const provider = makeProvider(() => {
       manifest = nextManifest;
@@ -89,7 +89,20 @@ describe('switchDepTypeCommand() writer boundary', () => {
     expect(vscode.workspace.fs.readFile).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: Cannot switch pkg: ${expectedMessage}.`);
+    expect(vscode.l10n.t).toHaveBeenCalledWith(
+      'Cannot switch {0}: source spec changed from {1} to {2}.',
+      'pkg',
+      expectedSourceSpec,
+      actualSourceSpec,
+    );
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${vscode.l10n.t(
+        'Cannot switch {0}: source spec changed from {1} to {2}.',
+        'pkg',
+        expectedSourceSpec,
+        actualSourceSpec,
+      )}`,
+    );
   });
 
   it.each([
@@ -107,8 +120,19 @@ describe('switchDepTypeCommand() writer boundary', () => {
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(vscode.l10n.t).toHaveBeenCalledWith(
+      'Cannot switch {0}: source spec {1} conflicts with target spec {2}.',
+      'pkg',
+      '^1.2.3',
+      targetSpec,
+    );
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining(`source spec ^1.2.3 conflicts with target spec ${targetSpec}`),
+      `${vscode.l10n.t('Nestro: ')}${vscode.l10n.t(
+        'Cannot switch {0}: source spec {1} conflicts with target spec {2}.',
+        'pkg',
+        '^1.2.3',
+        targetSpec,
+      )}`,
     );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining('/workspace/package.json'));
   });
@@ -127,13 +151,22 @@ describe('switchDepTypeCommand() writer boundary', () => {
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
+    const messageKey = side === 'source'
+      ? 'Cannot switch {0}: source spec changed from {1} to {2}.'
+      : 'Cannot switch {0}: source spec {1} conflicts with target spec {2}.';
+    const messageArguments = ['pkg', '^1.2.3', safeSpec] as const;
+    expect(vscode.l10n.t).toHaveBeenCalledWith(messageKey, ...messageArguments);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
     const message = String(vi.mocked(vscode.window.showErrorMessage).mock.calls[0]?.[0]);
+    const localizedMessage = vscode.l10n.t(messageKey, ...messageArguments);
+    const prefix = vscode.l10n.t('Nestro: ');
     if (_label === 'long string') {
       expect(message.length).toBeLessThanOrEqual(240);
+      expect(message.startsWith(`${prefix}${localizedMessage.slice(0, 32)}`)).toBe(true);
       expect(message).toMatch(/x/);
     }
-    if (_label !== 'long string') {
+    else {
+      expect(message).toBe(`${prefix}${localizedMessage}`);
       expect(message).toContain(side === 'source' ? `to ${safeSpec}` : `target spec ${safeSpec}`);
     }
     expect(message).not.toContain('/workspace/package.json');

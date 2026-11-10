@@ -11,6 +11,7 @@ import {
   switchDependencyType,
   updateDependencyVersionsInFile,
   updateWorkspaceDependencyVersions,
+  VersionPinConflictError,
 } from '../utils';
 
 describe('extractVersionPrefix()', () => {
@@ -791,7 +792,7 @@ describe('setVersionPin()', () => {
     }, undefined, 2)));
 
     await expect(setVersionPin('/workspace/package.json', 'missing', 'dependencies', '1.2.3', true))
-      .rejects.toThrow('Package action is no longer available. Refresh the package list and try again.');
+      .rejects.toThrow(VersionPinConflictError);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import {
   FilterManager,
   GroupItem,
-  METADATA_CONCURRENCY_CAP,
+  METADATA_CONCURRENCY_CAP, PACKAGE_IDENTITY_REJECTED_MESSAGE,
   PackageDetailItem,
   PackageItem,
   PackagesProvider,
@@ -3902,7 +3902,7 @@ describe('package identity boundary', () => {
 
       expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
       expect(showError).toHaveBeenCalledWith(
-        'Package action is no longer available. Refresh the package list and try again.',
+        PACKAGE_IDENTITY_REJECTED_MESSAGE,
       );
       provider.dispose();
     }
@@ -3943,7 +3943,7 @@ describe('package identity boundary', () => {
 
       expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
       expect(showError).toHaveBeenCalledWith(
-        'Package action is no longer available. Refresh the package list and try again.',
+        PACKAGE_IDENTITY_REJECTED_MESSAGE,
       );
       provider.dispose();
     }

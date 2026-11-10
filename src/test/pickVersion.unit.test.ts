@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { pickVersionCommand } from '../commands/pickVersion';
 import { runResolvedPackageVersion } from '../commands/installUpdate';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem, PackagesProvider } from '../providers';
 import { fetchPackageMetadata, showError } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 
@@ -410,7 +410,7 @@ describe('pickVersionCommand()', () => {
 
     expect(runResolvedPackageVersion).not.toHaveBeenCalled();
     expect(showError).toHaveBeenCalledWith(
-      'Package action is no longer available. Refresh the package list and try again.',
+      PACKAGE_IDENTITY_REJECTED_MESSAGE,
     );
   });
 
@@ -436,7 +436,7 @@ describe('pickVersionCommand()', () => {
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await vi.waitFor(() => expect(showError).toHaveBeenCalledWith(
-      'Package action is no longer available. Refresh the package list and try again.',
+      PACKAGE_IDENTITY_REJECTED_MESSAGE,
     ));
 
     expect(runResolvedPackageVersion).toHaveBeenCalledTimes(1);

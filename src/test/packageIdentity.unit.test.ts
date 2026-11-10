@@ -14,6 +14,7 @@ import {
   resolveCanonicalPackageLocation,
 } from '../providers/packageIdentity';
 import * as utils from '../utils';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
 import type { CanonicalPackageLocation, PackagesProvider, ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
@@ -77,7 +78,7 @@ describe('package identity command helpers', () => {
     resolve.mockResolvedValueOnce({ ok: false, reason: 'path-replaced' });
     await expect(resolveCommandPackageItem({}, provider)).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -91,7 +92,7 @@ describe('package identity command helpers', () => {
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
     await expect(revalidateCommandPackageItem(capability, provider)).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -119,7 +120,7 @@ describe('package identity command helpers', () => {
     await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -162,7 +163,7 @@ describe('package identity command helpers', () => {
     await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -184,7 +185,7 @@ describe('package identity command helpers', () => {
     await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -204,7 +205,7 @@ describe('package identity command helpers', () => {
 
     await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
     expect(revalidate).toHaveBeenCalledTimes(1);
   });
@@ -225,7 +226,7 @@ describe('package identity command helpers', () => {
 
     await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -241,7 +242,7 @@ describe('package identity command helpers', () => {
 
     await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
