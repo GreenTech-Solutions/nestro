@@ -279,6 +279,9 @@ checked at every await boundary. `checkUpdates()` and `runAudit()` wait for the 
 (`waitForCurrent()`) before reading rows instead of reading packages in parallel, and retry the
 load first when the last discovery failed without finding package files. Both no-op immediately if
 already `'running'`; the generation machinery covers a reload that supersedes a running operation.
+On a rejected current load, the provider clears `allEntries`, records a `package-load-failed`
+status-report entry and leaves `nestro.noWorkspace` false. The tree never retains rows without
+their capabilities.
 
 ### Capability records
 

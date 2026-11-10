@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { FilterManager, PackagesProvider } from '../providers';
+import { FilterManager, PackageItem, PackagesProvider, StatusItem } from '../providers';
 import type {
   AuditOrchestrationServiceContract,
   PackageLoadingServiceContract,
@@ -98,6 +98,24 @@ function createProvider(load: PackageLoadingServiceContract['load']): ProviderHa
   };
 }
 
+function getPackageNames(provider: PackagesProvider, parent?: vscode.TreeItem): string[] {
+  return provider.getChildren(parent).flatMap((child) => {
+    if (child instanceof PackageItem) {
+      return [child.packageName];
+    }
+    if (child instanceof StatusItem) {
+      return [];
+    }
+    return getPackageNames(provider, child);
+  });
+}
+
+function readLastContextValue(contextKey: string): unknown {
+  const calls = vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][];
+  const contextCalls = calls.filter(call => call[0] === 'setContext' && call[1] === contextKey);
+  return contextCalls.at(-1)?.[2];
+}
+
 function mockCancelledProgress(): void {
   vi.mocked(vscode.window.withProgress).mockImplementationOnce((_options, task) => task(
     { report: vi.fn() },
@@ -192,5 +210,27 @@ describe('PackagesProvider operation lifecycle', () => {
     harness.provider.cancelAudit();
 
     expect(harness.auditRun).not.toHaveBeenCalled();
+  });
+
+  it('clears stale rows and reports a failed reload without showing no workspace', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>()
+      .mockResolvedValueOnce(createSnapshot())
+      .mockRejectedValueOnce(new Error('reload failed'));
+    const harness = createProvider(load);
+    await harness.provider.loadPackages();
+
+    expect(getPackageNames(harness.provider)).toEqual(['react']);
+
+    await harness.provider.loadPackages();
+
+    expect(getPackageNames(harness.provider)).toEqual([]);
+    const loadingStatus = harness.provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Workspace package loading failed'
+    ));
+    expect(loadingStatus?.command?.command).toBe('nestro.openStatusReport');
+    expect(harness.provider.getStatusReport().packageReadFailures).toEqual([
+      expect.objectContaining({ reason: 'package-load-failed', detail: 'reload failed' }),
+    ]);
+    expect(readLastContextValue('nestro.noWorkspace')).toBe(false);
   });
 });

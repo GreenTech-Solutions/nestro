@@ -820,7 +820,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
       this.packageReadFailed = true;
       this.capabilitiesInitialized = true;
-      this.failedPackageReadPaths = [];
+      this.allEntries = [];
       this.packageReadFailures = [{
         packageFilePaths: [],
         reason: 'package-load-failed',
