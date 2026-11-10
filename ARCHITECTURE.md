@@ -55,14 +55,14 @@ and the `WeakMap` backing provider-issued row records (section 5). `PackageRowSt
 `PackageCapabilityService.noteRowMutation()`. `replaceAll()` applies snapshot and presentation
 rebuilds while preserving row epochs; a new load invalidates old capabilities through the snapshot
 generation. `PackageProviderState` invalidates its owner-label cache whenever it replaces the
-tracked manifest-path list. The update-result cache and its fingerprint belong to
-`UpdateOrchestrationService`.
+tracked manifest-path list. `UpdateOrchestrationService` owns the update-result cache and
+coordinates its fingerprint gate, while `updateFingerprint.ts` computes the manifest fingerprint.
 
 | Service | File | Responsibility |
 |---|---|---|
 | `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json` and returns entries, paths, read failures, and canonical-location baselines. |
-| `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Runs `npm-check-updates` once per manifest, computes release-age state, owns the update-result cache and its fingerprint. |
-| `AuditOrchestrationService` | `auditOrchestrationService.ts` | Resolves the canonical audit project graph, runs one audit per project, attributes advisories back to rows. |
+| `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Coordinates fetch, release-age classification, cache/debounce, and the fingerprint gate; `updateCheckFetcher.ts`, `updateReleaseAge.ts`, `updateCache.ts`, `updateResultApplication.ts`, and `updateFingerprint.ts` own those focused steps. |
+| `AuditOrchestrationService` | `auditOrchestrationService.ts` | Wraps the full audit run in a Yarn-family memo, resolves the canonical audit project graph, runs one audit per project, and attributes advisories back to rows. |
 | `PackageLoadController` | `packageLoadController.ts` | Applies load snapshots, resolves workspace action flags, and owns load cancellation and failure state. |
 | `PackageUpdateController` | `packageUpdateController.ts` | Drives update lifecycle, applies accepted results, and publishes update failures. |
 | `PackageAuditController` | `packageAuditController.ts` | Drives audit lifecycle, applies report snapshots, and rebuilds vulnerability badges. |
@@ -333,8 +333,8 @@ write itself as a staleness failure.
 
 ### The update fingerprint
 
-`computeUpdateFingerprint()` decides whether a cached update result may be reused. For every
-identity being checked, it groups by manifest, resolves the canonical location, and re-reads
+`computeUpdateFingerprint()` (`src/providers/updateFingerprint.ts`) decides whether a cached update result may be reused.
+For every identity being checked, it groups by manifest, resolves the canonical location, and re-reads
 the exact dependency spec currently on disk (`readCanonicalDependencySpecs()`). Each entry
 becomes a sorted JSON tuple of `[canonicalManifestPath, section, packageName, spec-or-null,
 'ok'-or-rejection-reason]`, combined with the effective policy (`target`, `includePreReleases`,

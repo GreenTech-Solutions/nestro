@@ -1,6 +1,7 @@
 import { realpath as fsRealpath } from 'node:fs/promises';
 import { ClientManager, resolveAuditProjects } from '../clients';
 import type { AuditProject, PackageManager } from '../clients';
+import * as utils from '../utils';
 import { cloneAuditAdvisory, runRootOperations } from '../utils';
 import type {
   AuditAdvisory,
@@ -242,7 +243,11 @@ export class AuditOrchestrationService implements AuditOrchestrationServiceContr
     return new AuditOrchestrationService(createDefaultDependencies(checkCoordinator));
   }
 
-  async run(request: AuditOrchestrationRequest): Promise<AuditOrchestrationResult> {
+  run(request: AuditOrchestrationRequest): Promise<AuditOrchestrationResult> {
+    return utils.runWithYarnFamilyMemo(() => this.runInMemo(request));
+  }
+
+  private async runInMemo(request: AuditOrchestrationRequest): Promise<AuditOrchestrationResult> {
     try {
       if (isStale(request)) {
         return CANCELLED;

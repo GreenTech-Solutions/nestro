@@ -68,7 +68,7 @@ vi.mock('../utils', async () => {
     getWorkspacePackageFilePaths: vi.fn(),
     logger,
     readAllWorkspaceDependencies: vi.fn(),
-    readWorkspaceDependencies: vi.fn(),
+    runWithYarnFamilyMemo: vi.fn((operation: () => Promise<unknown>) => operation()),
     showError: vi.fn(),
   };
 });

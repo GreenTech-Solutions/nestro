@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
-import { resolveMutationCoordinatorKey } from '../clients';
 import {
   FilterManager,
   GroupItem,
@@ -190,7 +189,7 @@ vi.mock('../utils', async () => {
     },
     parseDependencySpec,
     readAllWorkspaceDependencies: vi.fn(),
-    readWorkspaceDependencies: vi.fn(),
+    runWithYarnFamilyMemo: vi.fn((operation: () => Promise<unknown>) => operation()),
     resolveYarnFamily: vi.fn(),
     resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (
       Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
@@ -955,7 +954,6 @@ describe('PackagesProvider', () => {
     }]);
     vi.mocked(fetchAllLatestVersions).mockResolvedValueOnce(new Map([['react', '1.1.0']]));
     vi.mocked(resolveMetadataRegistryKey).mockRejectedValueOnce(new Error('registry lookup failed'));
-    vi.mocked(resolveMutationCoordinatorKey).mockRejectedValueOnce(new Error('project key failed'));
     vi.mocked(fetchPackageMetadata).mockRejectedValueOnce(new Error('metadata unavailable'));
     const provider = new PackagesProvider(new FilterManager('all'));
 
