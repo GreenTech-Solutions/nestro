@@ -1,194 +1,55 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { resolveAuditProjects } from '../clients';
-import type { AuditProject } from '../clients';
-import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
-import { uniqueStrings } from '../shared';
-import {
-  createCheckCoordinator,
-  formatAuditSeverityLabel,
-  formatUpdateTypeLabel,
-  getUpdateType,
-  logger,
-  OperationCoordinator,
-  resolveYarnFamily,
-  showError,
-} from '../utils';
-import type {
-  AuditSeverity,
-  ReleaseAgeState,
-  StatusReportFailure,
-  StatusReportFileLabel,
-  StatusReportSnapshot,
-  UpdateType,
-} from '../utils';
-import { LoadingItem } from './LoadingItem';
-import { isPackageItem, normalizeOperation, PackageItem, sanitizePackageText } from './PackageItem';
-import type { PackageOperation, PackageOperationInput } from './PackageItem';
-import { PackageDetailItem } from './PackageDetailItem';
-import { GroupItem } from './GroupItem';
-import { StatusItem } from './StatusItem';
-import { FilterManager, FilterType } from './FilterManager';
-import {
-  buildTree,
-  getFilterCounts,
-  getLocalizedPackageLabelFormatting,
-  PackageTreeEntry,
-  projectPackageTree,
-  resolvePackageFileLabels,
-  toWorkspaceFolderDescriptors,
-} from './treeBuilder';
-import type { WorkspaceFolderDescriptor } from './treeBuilder';
-import { WorkspaceFolderItem } from './WorkspaceFolderItem';
-import {
-  packageIdentityFromValues,
-  packageIdentityKey,
-  readCanonicalDependencySpec,
-  resolveCanonicalPackageLocation,
-  samePackageFileStamp,
-} from './packageIdentity';
-import type {
-  CanonicalPackageItem,
-  CanonicalPackageLocation,
-  PackageIdentityResolution,
-  PackageIdentityTuple,
-  PackageItemRecord,
-  ResolvedPackageItem,
-} from './packageIdentity';
+import { createCheckCoordinator, logger, OperationCoordinator } from '../utils';
+import type { StatusReportSnapshot } from '../utils';
+import { FilterManager } from './FilterManager';
+import type { FilterType } from './FilterManager';
+import { PackageItem } from './PackageItem';
+import type { PackageOperationInput } from './PackageItem';
 import {
   AuditOrchestrationService,
-  cloneAuditProjectFailure,
-  cloneAuditProjectSummary,
-  describeAuditFailure,
 } from './auditOrchestrationService';
 import type {
-  AuditableRow,
   AuditOrchestrationServiceContract,
   AuditProjectFailure,
   AuditProjectSummary,
   AuditReportSnapshot,
 } from './auditOrchestrationService';
-import { PackageCapabilityService } from './capabilityService';
-import type { PackageCapabilityRecord } from './capabilityService';
-import { PackageLoadingService } from './packageLoadingService';
-import { PackageRowStore } from './packageRowStore';
+import { PackageCapabilityOperations } from './packageCapabilityOperations';
+import { PackageAuditController } from './packageAuditController';
+import { PackageLoadController } from './packageLoadController';
 import type { PackageLoadingServiceContract } from './packageLoadingService';
-import { ManifestWriteBaselines } from './manifestWriteBaselines';
-import { OperationLifecycle } from './operationLifecycle';
-import type { OperationRun } from './operationLifecycle';
+import { PackageLoadingService } from './packageLoadingService';
+import { PackageProviderState } from './packageProviderState';
+import { PackageRowMutationService } from './packageRowMutationService';
+import { PackageUpdateController } from './packageUpdateController';
+import { PackageViewController } from './packageViewController';
+import { getFilterCounts, projectPackageTree } from './treeBuilder';
+import type { PackageTreeEntry } from './treeBuilder';
+import { createStatusReportSnapshot } from './statusReportAssembler';
 import { UpdateOrchestrationService } from './updateOrchestrationService';
-import type { UpdateFingerprintPolicy, UpdateOrchestrationServiceContract } from './updateOrchestrationService';
-import {
-  computeViewProjection,
-  createAllFalseViewContexts,
-  diffViewContexts,
-  projectStatusRows,
-  VIEW_CONTEXT_KEYS,
-} from './viewProjectionService';
-import type { ViewContextKey, ViewContextMap, ViewProjection, ViewProjectionSnapshot } from './viewProjectionService';
+import type { UpdateOrchestrationServiceContract } from './updateOrchestrationService';
+import { EMPTY_WORKSPACE_CAPABILITIES, WorkspaceCapabilityResolver } from './workspaceCapabilityResolver';
+import type { PackageIdentityResolution, PackageIdentityTuple, ResolvedPackageItem } from './packageIdentity';
 
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
-export type { PackageIdentityResolution, ResolvedPackageItem } from './packageIdentity';
-
-interface CreatePackageItemOptions {
-  readonly packageName: string;
-  readonly currentVersion: string;
-  readonly latest?: string;
-  readonly updateType: UpdateType;
-  readonly operation?: PackageOperation;
-  readonly packageFilePath: string;
-  readonly dev: boolean;
-  readonly versionPrefix: string;
-  readonly releaseAge?: ReleaseAgeState;
-}
-
-/** Global workspace capabilities used by toolbar and Command Palette contexts. */
-export interface WorkspaceCapabilities {
-  readonly hasPackageFiles: boolean;
-  readonly hasReadablePackageFiles: boolean;
-  readonly hasDependencyEntries: boolean;
-  readonly hasAuditableProjects: boolean;
-  readonly canRunInstall: boolean;
-  readonly canRunAudit: boolean;
-  readonly canSearchPackages: boolean;
-  readonly canFilterPackages: boolean;
-  readonly canPinAllVersions: boolean;
-}
-
-const EMPTY_WORKSPACE_CAPABILITIES: WorkspaceCapabilities = Object.freeze({
-  hasPackageFiles: false,
-  hasReadablePackageFiles: false,
-  hasDependencyEntries: false,
-  hasAuditableProjects: false,
-  canRunInstall: false,
-  canRunAudit: false,
-  canSearchPackages: false,
-  canFilterPackages: false,
-  canPinAllVersions: false,
-});
+export type { PackageIdentityResolution, ResolvedPackageItem };
+export type { WorkspaceCapabilities } from './workspaceCapabilityResolver';
 
 /** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
 export const METADATA_CONCURRENCY_CAP = 4;
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
-  private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-
-  private readonly filterChangeDisposable: vscode.Disposable;
-  private readonly packageLoadingService: PackageLoadingServiceContract;
-  private packageFilePaths: string[] = [];
-  /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
-  private ownerLabelCache: ReadonlyMap<string, string> | undefined;
-  private readablePackageFilePaths: string[] = [];
-  private workspaceCapabilities: WorkspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
-  // True once a load has settled (success or failure) at least once. Global actions stay
-  // enabled while this is false so a command is never hidden just because the extension
-  // has not resolved real capabilities yet — see resolvePublishedWorkspaceCapabilities().
-  private capabilitiesInitialized = false;
-  private packageReadFailed = false;
-  private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
-  private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
-  private readonly capabilities = new PackageCapabilityService();
-  private readonly rowStore = new PackageRowStore(identity => this.capabilities.noteRowMutation(identity));
-
-  private get allEntries(): readonly PackageTreeEntry[] {
-    return this.rowStore.allEntries;
-  }
-
-  private set allEntries(entries: PackageTreeEntry[]) {
-    this.rowStore.replaceAll(entries);
-  }
-
-  private packageSnapshotGeneration = 0;
-  private readonly loadLifecycle = new OperationLifecycle<'load'>('load');
-  private readonly updateLifecycle = new OperationLifecycle<'update'>('update');
-  private readonly auditLifecycle = new OperationLifecycle<'audit'>('audit');
-  private readonly manifestWriteBaselines = new ManifestWriteBaselines();
-  private loading = true;
-  private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
-  private auditResults: Map<string, AuditSeverity> = new Map();
-  private auditProjects: AuditProjectSummary[] = [];
-  private auditFailures: AuditProjectFailure[] = [];
-  private checkState: 'idle' | 'running' | 'done' | 'incomplete' = 'idle';
-  private lastCheckTime: Date | undefined;
-  private auditState: 'idle' | 'running' | 'done' | 'incomplete' | 'failed' = 'idle';
-  /** Shared read/process boundary for concurrent update and audit runs. */
-  private readonly checkCoordinator = createCheckCoordinator();
-  /** Nested metadata profile; every metadata request also holds a shared check slot. */
-  private readonly metadataCoordinator = new OperationCoordinator(METADATA_CONCURRENCY_CAP);
+  readonly onDidChangeTreeData: vscode.Event<void>;
+  private readonly state: PackageProviderState;
+  private readonly view: PackageViewController;
+  private readonly capabilities: PackageCapabilityOperations;
+  private readonly rowMutations: PackageRowMutationService;
+  private readonly loadController: PackageLoadController;
+  private readonly updateController: PackageUpdateController;
+  private readonly auditController: PackageAuditController;
   private readonly updateOrchestrationService: UpdateOrchestrationServiceContract;
-  private readonly auditOrchestrationService: AuditOrchestrationServiceContract;
-  private lastAuditCount: number | undefined;
-  private lastAuditSuccessfulRootCount: number | undefined;
-  private failedAuditPaths: string[] = [];
-  private failedUpdatePaths: string[] = [];
-  private failedPackageReadPaths: string[] = [];
-  private packageReadFailures: StatusReportFailure[] = [];
-  private updateFailures: StatusReportFailure[] = [];
-  private disposed = false;
-  /** The context map last published to VS Code, so only changed keys are re-published. */
-  private lastPublishedContexts: ViewContextMap | undefined;
+  private readonly filterChangeDisposable: vscode.Disposable;
 
   constructor(
     private readonly filterManager: FilterManager,
@@ -196,17 +57,44 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     updateOrchestrationService?: UpdateOrchestrationServiceContract,
     auditOrchestrationService?: AuditOrchestrationServiceContract,
   ) {
-    this.packageLoadingService = packageLoadingService;
+    this.state = new PackageProviderState();
+    const checkCoordinator = createCheckCoordinator();
+    const metadataCoordinator = new OperationCoordinator(METADATA_CONCURRENCY_CAP);
     this.updateOrchestrationService = updateOrchestrationService
-      ?? UpdateOrchestrationService.withCoordinators(this.checkCoordinator, this.metadataCoordinator);
-    this.auditOrchestrationService = auditOrchestrationService
-      ?? AuditOrchestrationService.withCoordinator(this.checkCoordinator);
+      ?? UpdateOrchestrationService.withCoordinators(checkCoordinator, metadataCoordinator);
+    const auditService = auditOrchestrationService
+      ?? AuditOrchestrationService.withCoordinator(checkCoordinator);
+    this.view = new PackageViewController(this.state, filterManager);
+    this.onDidChangeTreeData = this.view.onDidChangeTreeData;
+    this.capabilities = new PackageCapabilityOperations(this.state);
+    this.rowMutations = new PackageRowMutationService(
+      this.state,
+      this.capabilities,
+      () => this.emitTreeChanged(),
+    );
+    this.loadController = new PackageLoadController(
+      this.state,
+      packageLoadingService,
+      new WorkspaceCapabilityResolver(),
+      () => this.emitTreeChanged(),
+    );
+    this.updateController = new PackageUpdateController(
+      this.state,
+      this.updateOrchestrationService,
+      () => this.ensurePackageLoad(),
+      () => this.emitTreeChanged(),
+    );
+    this.auditController = new PackageAuditController(
+      this.state,
+      auditService,
+      () => this.ensurePackageLoad(),
+      () => this.emitTreeChanged(),
+    );
     this.filterChangeDisposable = this.filterManager.onDidChange(() => this.emitTreeChanged());
   }
 
   attachTreeView(treeView: vscode.TreeView<vscode.TreeItem>): void {
-    this.treeView = treeView;
-    this.applyTreeViewState(computeViewProjection(this.buildViewProjectionSnapshot()));
+    this.view.attachTreeView(treeView);
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -214,28 +102,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
-    if (this.loading) {
-      return element ? [] : [...this.buildStatusItems(), new LoadingItem()];
-    }
-    if (element instanceof GroupItem) {
-      return element.children;
-    }
-    if (element instanceof StatusItem) {
-      return [];
-    }
-    if (element instanceof WorkspaceFolderItem) {
-      return element.children;
-    }
-    if (element instanceof PackageItem) {
-      return this.getPackageDetails(element);
-    }
-    return [...this.buildStatusItems(), ...buildTree(
-      this.rowStore.allEntries,
-      this.filterManager.current,
-      this.filterManager.search,
-      this.workspaceFolderDescriptors,
-      this.packageFilePaths,
-    )];
+    return this.view.getChildren(element);
   }
 
   setFilter(type: FilterType): void {
@@ -251,126 +118,36 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
-    const packageFilePaths = [...this.packageFilePaths];
-    const before = await this.manifestWriteBaselines.capture(packageFilePaths);
+    const packageFilePaths = [...this.state.packageFilePaths];
+    const before = await this.state.manifestWriteBaselines.capture(packageFilePaths);
     try {
       const result = await fn();
       this.invalidateUpdateCache();
       return result;
     }
     finally {
-      await this.manifestWriteBaselines.recordChanges(packageFilePaths, before);
+      await this.state.manifestWriteBaselines.recordChanges(packageFilePaths, before);
     }
   }
 
   isOwnManifestWrite(uri: vscode.Uri): Promise<boolean> {
-    return this.manifestWriteBaselines.isOwnWrite(uri);
+    return this.state.manifestWriteBaselines.isOwnWrite(uri);
   }
 
-  /**
-   * Resolve a rendered row against this provider's current snapshot and canonical
-   * workspace filesystem. Tuple matching is mandatory; the object reference is only a
-   * freshness check after the tuple has selected exactly one current row. No caller path,
-   * name, version, or section is used by command mutations after this method returns.
-   */
-  async resolvePackageItem(value: unknown): Promise<PackageIdentityResolution> {
-    let item: PackageItem;
-    try {
-      if (!isPackageItem(value)) {
-        return { ok: false, reason: 'invalid-item' };
-      }
-      item = value;
-    }
-    catch {
-      return { ok: false, reason: 'invalid-item' };
-    }
-
-    const record = this.packageItemRecords.get(item);
-    if (record === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-
-    const { identity } = record;
-    const generation = this.packageSnapshotGeneration;
-    const entry = this.findCurrentEntry(identity, item);
-    if (this.loading || entry === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-
-    const location = await resolveCanonicalPackageLocation(identity.packageFilePath);
-    if (!location.ok) {
-      return location;
-    }
-    if (record.baselineLocation === undefined
-      || !sameCanonicalPackageLocation(record.baselineLocation, location.value)) {
-      return { ok: false, reason: 'path-replaced' };
-    }
-    if (await readCanonicalDependencySpec(location.value, identity) !== record.row.currentVersion) {
-      return { ok: false, reason: 'path-replaced' };
-    }
-    if (generation !== this.packageSnapshotGeneration || this.findCurrentEntry(identity, item) === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-
-    return this.capabilities.issue(identity, record.row, location.value, generation);
+  resolvePackageItem(value: unknown): Promise<PackageIdentityResolution> {
+    return this.capabilities.resolvePackageItem(value);
   }
 
-  /**
-   * Re-check a previously resolved capability immediately before a write or task. This
-   * closes the async realpath check/use window as far as the extension boundary allows:
-   * generation, exact tuple/current row, owning workspace, canonical path, and manifest
-   * file stamp must all remain unchanged. Filesystem atomicity against an external actor
-   * after this final check is intentionally not claimed.
-   */
-  async revalidatePackageItem(value: ResolvedPackageItem): Promise<PackageIdentityResolution> {
-    const capabilityRecord = this.capabilities.recordOf(value);
-    if (capabilityRecord === undefined) {
-      return { ok: false, reason: 'invalid-item' };
-    }
-
-    const { identity, snapshotGeneration } = capabilityRecord;
-    if (this.loading || this.findFreshItemRecord(capabilityRecord) === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-
-    const location = await resolveCanonicalPackageLocation(identity.packageFilePath);
-    if (!location.ok) {
-      return location;
-    }
-    const baselineRecord = this.findFreshItemRecord(capabilityRecord);
-    if (baselineRecord?.baselineLocation === undefined
-      || !sameCanonicalPackageLocation(baselineRecord.baselineLocation, location.value)) {
-      return { ok: false, reason: 'path-replaced' };
-    }
-    if (await readCanonicalDependencySpec(location.value, identity) !== baselineRecord.row.currentVersion) {
-      return { ok: false, reason: 'path-replaced' };
-    }
-    if (this.loading || this.findFreshItemRecord(capabilityRecord) === undefined) {
-      return { ok: false, reason: 'not-current' };
-    }
-    if (location.value.packageFilePath !== capabilityRecord.packageFilePath
-      || location.value.packageDirectory !== capabilityRecord.packageDirectory
-      || location.value.workspaceFolderPath !== capabilityRecord.workspaceFolderPath
-      || location.value.manifestDigest !== capabilityRecord.manifestDigest
-      || !samePackageFileStamp(location.value.fileStamp, capabilityRecord.fileStamp)) {
-      return { ok: false, reason: 'path-replaced' };
-    }
-
-    return this.capabilities.issue(identity, capabilityRecord.row, location.value, snapshotGeneration);
+  revalidatePackageItem(value: ResolvedPackageItem): Promise<PackageIdentityResolution> {
+    return this.capabilities.revalidatePackageItem(value);
   }
 
-  /**
-   * Project-level audit results from the most recent run, keyed by canonical project
-   * root rather than by row. Row badges may be suppressed for ambiguous multi-manifest
-   * or duplicate-name matches (attributed by the audit orchestration service), but the
-   * underlying project result and its origin manifest set are always kept here.
-   */
   getAuditProjects(): readonly AuditProjectSummary[] {
-    return this.auditProjects.map(summary => cloneAuditProjectSummary(summary));
+    return this.auditController.getAuditProjects();
   }
 
   getAuditFailures(): readonly AuditProjectFailure[] {
-    return this.auditFailures.map(failure => cloneAuditProjectFailure(failure));
+    return this.auditController.getAuditFailures();
   }
 
   getAuditReport(): AuditReportSnapshot {
@@ -380,1232 +157,137 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     };
   }
 
-  /** Returns a defensive snapshot for the unified status diagnostics report. */
   getStatusReport(): StatusReportSnapshot {
-    const packageReadFailures = this.packageReadFailures.map(cloneStatusReportFailure);
-    const updateFailures = this.updateFailures.map(cloneStatusReportFailure);
-    const auditFailures = this.auditFailures.map(failure => cloneStatusReportFailure({
-      packageFilePaths: failure.packageFilePaths.length > 0
-        ? failure.packageFilePaths
-        : failure.project?.originManifests ?? [],
-      reason: failure.reason,
-      detail: failure.detail,
-    }));
-    const packageFilePaths = uniqueStrings([
-      ...packageReadFailures.flatMap(failure => failure.packageFilePaths),
-      ...updateFailures.flatMap(failure => failure.packageFilePaths),
-      ...auditFailures.flatMap(failure => failure.packageFilePaths),
-    ]);
-    const fileLabels: StatusReportFileLabel[] = resolvePackageFileLabels(
-      packageFilePaths,
-      this.workspaceFolderDescriptors,
-      getLocalizedPackageLabelFormatting(),
-    ).map((entry, order) => ({
-      packageFilePath: entry.packageFilePath,
-      label: entry.owner.label,
-      order,
-    }));
-    return {
-      packageReadFailures,
-      updateFailures,
-      auditFailures,
-      fileLabels,
-    };
+    return createStatusReportSnapshot({
+      packageReadFailures: this.state.packageReadFailures,
+      updateFailures: this.state.updateFailures,
+      auditFailures: this.state.auditFailures,
+      workspaceFolderDescriptors: this.state.workspaceFolderDescriptors,
+    });
   }
 
   getVisibleOutdatedPackages(): PackageItem[] {
     if (this.loading) {
       return [];
     }
-    return projectPackageTree(this.rowStore.allEntries, this.filterManager.current, this.filterManager.search)
-      .visibleOutdatedEntries
-      .map(entry => entry.item);
+    return projectPackageTree(
+      this.allEntries,
+      this.filterManager.current,
+      this.filterManager.search,
+    ).visibleOutdatedEntries.map(entry => entry.item);
   }
 
   getPackageIdentitiesForFile(packageFilePath: string): PackageStateIdentity[] {
-    return this.rowStore.allEntries
-      .filter(entry => entry.packageFilePath === packageFilePath)
-      .map(entry => this.packageItemRecords.get(entry.item)?.identity)
-      .filter((identity): identity is PackageStateIdentity => identity !== undefined);
+    return this.rowMutations.getPackageIdentitiesForFile(packageFilePath);
   }
 
   markPackageUpdated(identity: PackageStateIdentity, newVersion: string): void {
-    const index = this.findEntryIndex(identity);
-    if (index === -1) {
-      return;
-    }
-
-    const entry = this.rowStore.allEntries[index];
-    if (entry === undefined) {
-      return;
-    }
-    const { dev, packageFilePath: entryPackageFilePath, item } = entry;
-    const replacement = this.createPackageItem({
-      packageName: identity.packageName,
-      currentVersion: item.versionPrefix + newVersion,
-      updateType: 'none',
-      packageFilePath: entryPackageFilePath,
-      dev,
-      versionPrefix: item.versionPrefix,
-    });
-    if (this.rowStore.patchRow(identity, replacement) === undefined) {
-      return;
-    }
-    this.emitTreeChanged();
+    this.rowMutations.markPackageUpdated(identity, newVersion);
   }
 
-  /** Mark a package row only when the provider-issued capability still owns the current row. */
   markPackageUpdatedForCapability(capability: ResolvedPackageItem, newVersion: string): void {
-    const record = this.getCurrentCapabilityRecord(capability);
-    if (record === undefined) {
-      return;
-    }
-    const index = this.findEntryIndex(record.identity);
-    const entry = index === -1 ? undefined : this.rowStore.allEntries[index];
-    const currentRecord = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
-    if (entry === undefined || currentRecord === undefined) {
-      return;
-    }
-    const row = currentRecord.row;
-    const replacement = this.createPackageItem({
-      packageName: row.packageName,
-      currentVersion: row.versionPrefix + newVersion,
-      updateType: 'none',
-      packageFilePath: row.packageFilePath,
-      dev: row.dev,
-      versionPrefix: row.versionPrefix,
-    });
-    if (this.rowStore.patchRow(record.identity, replacement) === undefined) {
-      return;
-    }
-    this.emitTreeChanged();
+    this.rowMutations.markPackageUpdatedForCapability(capability, newVersion);
   }
 
   resetUpdateData(): void {
-    this.invalidateUpdateCache();
-    this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => ({
-      item: this.createPackageItem({
-        packageName: item.packageName,
-        currentVersion: item.currentVersion,
-        updateType: 'none',
-        operation: item.operation,
-        packageFilePath,
-        dev,
-        versionPrefix: item.versionPrefix,
-      }),
-      dev,
-      packageFilePath,
-    })));
-    this.emitTreeChanged();
+    this.rowMutations.resetUpdateData(() => this.invalidateUpdateCache());
   }
 
   invalidateUpdateCache(): void {
     this.updateOrchestrationService.invalidateCache();
-    this.lastCheckTime = undefined;
+    this.state.lastCheckTime = undefined;
     logger.info('Update cache invalidated.');
   }
 
   markPackageUpdating(identity: PackageStateIdentity, operation: PackageOperationInput): void {
-    const index = this.findEntryIndex(identity);
-    if (index === -1) {
-      return;
-    }
-
-    const entry = this.rowStore.allEntries[index];
-    if (entry === undefined) {
-      return;
-    }
-    const { item, dev, packageFilePath: entryPackageFilePath } = entry;
-    const activeOperation = normalizeOperation(operation, item.latest ?? item.currentVersion);
-    const updateType = activeOperation !== undefined || item.latest === undefined
-      ? item.updateType
-      : getUpdateType(item.currentVersion, item.latest);
-    const replacement = this.createPackageItem({
-      packageName: item.packageName,
-      currentVersion: item.currentVersion,
-      latest: item.latest,
-      updateType,
-      operation: activeOperation,
-      packageFilePath: entryPackageFilePath,
-      dev,
-      versionPrefix: item.versionPrefix,
-      releaseAge: item.releaseAge,
-    });
-    if (this.rowStore.patchRow(identity, replacement) === undefined) {
-      return;
-    }
-    this.emitTreeChanged();
+    this.rowMutations.markPackageUpdating(identity, operation);
   }
 
-  /**
-   * Update progress and issue a replacement capability for the newly rendered row.
-   * The replacement is required because progress updates intentionally replace the
-   * PackageItem object, making the previous capability stale.
-   */
   markPackageUpdatingForCapability(
     capability: ResolvedPackageItem,
     operation: PackageOperationInput,
   ): ResolvedPackageItem | undefined {
-    const record = this.getCurrentCapabilityRecord(capability);
-    if (record === undefined) {
-      return undefined;
-    }
-    const index = this.findEntryIndex(record.identity);
-    const currentEntry = index === -1 ? undefined : this.rowStore.allEntries[index];
-    const currentRecord = currentEntry === undefined
-      ? undefined
-      : this.packageItemRecords.get(currentEntry.item);
-    if (currentEntry === undefined || currentRecord === undefined) {
-      return undefined;
-    }
-    const generation = this.packageSnapshotGeneration;
-    const previousEntry = currentEntry;
-    const previousRecord = currentRecord;
-    const row = currentRecord.row;
-    const activeOperation = normalizeOperation(operation, row.latest ?? row.currentVersion);
-    const updateType = activeOperation !== undefined || row.latest === undefined
-      ? row.updateType
-      : getUpdateType(row.currentVersion, row.latest);
-    const replacement = this.createPackageItem({
-      packageName: row.packageName,
-      currentVersion: row.currentVersion,
-      latest: row.latest,
-      updateType,
-      operation: activeOperation,
-      packageFilePath: row.packageFilePath,
-      dev: row.dev,
-      versionPrefix: row.versionPrefix,
-      releaseAge: row.releaseAge,
-    });
-    if (this.rowStore.patchRow(record.identity, replacement) === undefined) {
-      return undefined;
-    }
-    this.emitTreeChanged();
-    const replacementEntry = this.rowStore.allEntries[index];
-    if (replacementEntry === undefined
-      || generation !== this.packageSnapshotGeneration
-      || this.loading
-      || this.findCurrentEntry(record.identity, replacementEntry.item) === undefined) {
-      this.restorePackageEntryAfterProgressRace(record.identity, index, previousEntry, previousRecord);
-      return undefined;
-    }
-    const replacementRecord = this.packageItemRecords.get(replacementEntry.item);
-    if (replacementRecord === undefined) {
-      return undefined;
-    }
-    return this.capabilities.issue(record.identity, replacementRecord.row, record, this.packageSnapshotGeneration).value;
+    return this.rowMutations.markPackageUpdatingForCapability(capability, operation);
   }
 
-  private restorePackageEntryAfterProgressRace(
-    identity: PackageIdentityTuple,
-    originalIndex: number,
-    originalEntry: PackageTreeEntry,
-    originalRecord: PackageItemRecord,
-  ): void {
-    const currentEntry = this.rowStore.allEntries[originalIndex];
-    if (currentEntry?.item === originalEntry.item || currentEntry?.item === undefined) {
-      this.rowStore.restoreAt(originalIndex, originalEntry);
-      this.packageItemRecords.set(originalEntry.item, originalRecord);
-    }
-    else {
-      const currentIndex = this.findEntryIndex(identity);
-      const entry = currentIndex === -1 ? undefined : this.rowStore.allEntries[currentIndex];
-      const record = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
-      if (entry !== undefined && record !== undefined) {
-        const row = record.row;
-        const replacement = this.createPackageItem({
-          packageName: row.packageName,
-          currentVersion: row.currentVersion,
-          latest: row.latest,
-          updateType: row.updateType,
-          operation: originalRecord.row.operation,
-          packageFilePath: row.packageFilePath,
-          dev: row.dev,
-          versionPrefix: row.versionPrefix,
-          releaseAge: row.releaseAge,
-        });
-        this.rowStore.patchRow(identity, replacement);
-      }
-    }
-    this.emitTreeChanged();
-  }
-
-  /** Refresh the load-time manifest baseline after a mutation this provider authorized. */
-  async refreshPackageBaselineForCapability(
+  refreshPackageBaselineForCapability(
     capability: ResolvedPackageItem,
     expectedCurrentVersion: string,
   ): Promise<ResolvedPackageItem | undefined> {
-    const record = this.getCurrentCapabilityRecord(capability);
-    if (record === undefined) {
-      return undefined;
-    }
-    const location = await resolveCanonicalPackageLocation(record.identity.packageFilePath);
-    if (!location.ok
-      || location.value.packageFilePath !== record.packageFilePath
-      || location.value.packageDirectory !== record.packageDirectory
-      || location.value.workspaceFolderPath !== record.workspaceFolderPath) {
-      return undefined;
-    }
-    if (await readCanonicalDependencySpec(location.value, record.identity) !== expectedCurrentVersion) {
-      return undefined;
-    }
-    if (this.loading || this.findFreshItemRecord(record) === undefined) {
-      return undefined;
-    }
-
-    const baselineLocation = Object.freeze({
-      ...location.value,
-      fileStamp: Object.freeze({ ...location.value.fileStamp }),
-    });
-    this.packageLocationBaselines.set(record.identity.packageFilePath, baselineLocation);
-    for (const entry of this.rowStore.allEntries) {
-      const entryRecord = this.packageItemRecords.get(entry.item);
-      if (entryRecord?.identity.packageFilePath === record.identity.packageFilePath) {
-        this.packageItemRecords.set(entry.item, Object.freeze({
-          ...entryRecord,
-          baselineLocation,
-        }));
-      }
-    }
-    if (this.findFreshItemRecord(record) === undefined) {
-      return undefined;
-    }
-    return this.capabilities.issue(record.identity, record.row, location.value, this.packageSnapshotGeneration).value;
+    return this.capabilities.refreshPackageBaselineForCapability(capability, expectedCurrentVersion);
   }
 
-  /** Re-issue a current capability after an authorized sibling-row mutation refreshed its baseline. */
-  async reissuePackageCapability(
-    capability: ResolvedPackageItem,
-  ): Promise<ResolvedPackageItem | undefined> {
-    const record = this.getCurrentCapabilityRecord(capability);
-    if (record === undefined) {
-      return undefined;
-    }
-    const location = await resolveCanonicalPackageLocation(record.identity.packageFilePath);
-    if (!location.ok) {
-      return undefined;
-    }
-    const currentRecord = this.findFreshItemRecord(record);
-    if (currentRecord?.baselineLocation === undefined
-      || !sameCanonicalPackageLocation(currentRecord.baselineLocation, location.value)
-      || await readCanonicalDependencySpec(location.value, record.identity) !== currentRecord.row.currentVersion) {
-      return undefined;
-    }
-    if (this.loading || this.findFreshItemRecord(record) === undefined) {
-      return undefined;
-    }
-    return this.capabilities.issue(record.identity, record.row, location.value, record.snapshotGeneration).value;
+  reissuePackageCapability(capability: ResolvedPackageItem): Promise<ResolvedPackageItem | undefined> {
+    return this.capabilities.reissuePackageCapability(capability);
   }
 
   async showFilterPicker(): Promise<void> {
-    if (this.rowStore.allEntries.length === 0) {
+    if (this.state.rowStore.allEntries.length === 0) {
       return;
     }
-    await this.filterManager.showPicker(getFilterCounts(this.rowStore.allEntries, this.filterManager.search));
+    await this.filterManager.showPicker(getFilterCounts(this.state.rowStore.allEntries, this.filterManager.search));
   }
 
   loadPackages(): Promise<void> {
-    logger.info('Loading workspace packages.');
-    const snapshotGeneration = this.packageSnapshotGeneration + 1;
-    this.packageSnapshotGeneration = snapshotGeneration;
-    this.updateLifecycle.cancel();
-    this.auditLifecycle.cancel();
-    this.checkState = 'idle';
-    this.auditState = 'idle';
-    const operation = this.loadLifecycle.start(snapshotGeneration);
-    this.capabilities.reset();
-    this.packageLocationBaselines = new Map();
-    this.setPackageFilePaths([]);
-    this.readablePackageFilePaths = [];
-    // workspaceCapabilities is intentionally left in place here: it still holds the last
-    // settled result (or the permissive pre-init default), so a reload never flashes global
-    // actions to disabled while it is in flight. It is only overwritten once this load settles.
-    this.packageReadFailed = false;
-    this.loading = true;
-    this.auditResults = new Map();
-    this.auditProjects = [];
-    this.auditFailures = [];
-    this.lastAuditCount = undefined;
-    this.lastAuditSuccessfulRootCount = undefined;
-    this.failedAuditPaths = [];
-    this.failedUpdatePaths = [];
-    this.packageReadFailures = [];
-    this.updateFailures = [];
-    this.failedPackageReadPaths = [];
-    this.emitTreeChanged();
-    const completion = this.loadPackageSnapshot(operation);
-    this.loadLifecycle.trackCompletion(operation, completion);
-    return completion;
+    return this.loadController.loadPackages();
   }
 
-  private async loadPackageSnapshot(operation: OperationRun<'load'>): Promise<void> {
-    try {
-      const snapshot = await this.packageLoadingService.load(operation.abortController.signal);
-      if (snapshot === undefined || this.isLoadOutdated(operation)) {
-        return;
-      }
-      const {
-        entries,
-        packageFilePaths,
-        readablePackageFilePaths,
-        failedPackageReadPaths,
-        failedPackageReadDetails,
-        packageLocationBaselines,
-        packageReadFailed,
-      } = snapshot;
-      this.packageReadFailed = packageReadFailed;
-      this.packageLocationBaselines = new Map(packageLocationBaselines);
-      this.setPackageFilePaths(packageFilePaths);
-      this.readablePackageFilePaths = [...readablePackageFilePaths];
-      this.failedPackageReadPaths = [...failedPackageReadPaths];
-      this.packageReadFailures = createPackageReadFailureSnapshot(
-        failedPackageReadPaths,
-        failedPackageReadDetails,
-        packageReadFailed,
-      );
-      logger.info(`Loaded ${entries.length} workspace package(s).`);
-      const existingMap = new Map(this.rowStore.allEntries.map(e => [
-        packageIdentityKey(packageIdentityFromValues(e.item.packageName, e.packageFilePath, e.dev)),
-        e,
-      ]));
-      this.rowStore.replaceAll(entries.map((e) => {
-        const identity = packageIdentityFromValues(e.name, e.packageFilePath, e.dev);
-        const existing = existingMap.get(packageIdentityKey(identity));
-        // Compare bare semver (strip prefix) so that a pin operation (^1.2.3 → 1.2.3)
-        // preserves existing update data rather than resetting it to 'none'.
-        const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
-        const newSemver = e.current.slice(e.versionPrefix.length);
-        const preserveExistingUpdateState = existing !== undefined
-          && (existing.item.operation !== undefined || existingSemver === newSemver);
-        if (preserveExistingUpdateState) {
-          return {
-            item: this.createPackageItem({
-              packageName: e.name,
-              currentVersion: e.current,
-              latest: existing.item.latest,
-              updateType: existing.item.updateType,
-              operation: existing.item.operation,
-              packageFilePath: e.packageFilePath,
-              dev: e.dev,
-              versionPrefix: e.versionPrefix,
-              releaseAge: existing.item.releaseAge,
-            }),
-            dev: e.dev,
-            packageFilePath: e.packageFilePath,
-          };
-        }
-        return {
-          item: this.createPackageItem({
-            packageName: e.name,
-            currentVersion: e.current,
-            updateType: 'none',
-            packageFilePath: e.packageFilePath,
-            dev: e.dev,
-            versionPrefix: e.versionPrefix,
-          }),
-          dev: e.dev,
-          packageFilePath: e.packageFilePath,
-        };
-      }));
-      const workspaceCapabilities = await this.resolveWorkspaceCapabilities(
-        packageFilePaths,
-        readablePackageFilePaths,
-        entries,
-      );
-      if (this.isLoadOutdated(operation)) {
-        return;
-      }
-      this.workspaceCapabilities = workspaceCapabilities;
-      this.capabilitiesInitialized = true;
-    }
-    catch (err) {
-      if (this.isLoadOutdated(operation)) {
-        return;
-      }
-      this.packageLocationBaselines = new Map();
-      this.setPackageFilePaths([]);
-      this.readablePackageFilePaths = [];
-      this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
-      this.packageReadFailed = true;
-      this.capabilitiesInitialized = true;
-      this.rowStore.replaceAll([]);
-      this.packageReadFailures = [{
-        packageFilePaths: [],
-        reason: 'package-load-failed',
-        detail: err instanceof Error ? err.message : String(err),
-      }];
-      showError(vscode.l10n.t('Failed to load packages — {0}', err instanceof Error ? err.message : String(err)), err);
-    }
-    finally {
-      if (!this.isLoadOutdated(operation)) {
-        this.loading = false;
-        this.emitTreeChanged();
-      }
-      this.loadLifecycle.finish(operation);
-    }
+  checkUpdates(): Promise<void> {
+    return this.updateController.checkUpdates();
   }
 
-  async checkUpdates(): Promise<void> {
-    if (this.checkState === 'running') {
-      return;
-    }
-
-    this.ensurePackageLoad();
-
-    const snapshotGeneration = this.packageSnapshotGeneration;
-    const operation = this.updateLifecycle.start(snapshotGeneration);
-    this.checkState = 'running';
-    this.failedUpdatePaths = [];
-    this.updateFailures = [];
-    let attemptedPackageFilePaths: string[] = [];
-    this.emitTreeChanged();
-    try {
-      await this.updateLifecycle.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: vscode.l10n.t('Checking package updates…'),
-          cancellable: true,
-        },
-        async (): Promise<void> => {
-          if (!this.isUpdateCurrent(operation)) {
-            return;
-          }
-          await this.loadLifecycle.waitForCurrent(operation.abortController.signal);
-          if (!this.isUpdateCurrent(operation)) {
-            return;
-          }
-          const forceAlways = getCheckUpdatesForceAlways();
-          const { includePreReleases, minimumReleaseAgeDays, target } = getUpdatePolicySettings();
-          const debounceSeconds = getCheckUpdatesDebounce();
-          const source = this.rowStore.allEntries.map(e => ({
-            name: e.item.packageName,
-            current: e.item.currentVersion,
-            dev: e.dev,
-            versionPrefix: e.item.versionPrefix,
-            packageFilePath: e.packageFilePath,
-          }));
-          const packageFiles = [...new Set(source.map(entry => entry.packageFilePath))];
-          attemptedPackageFilePaths = packageFiles;
-          const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
-          const currentVersions = new Map(identities.map((identity, index) => [
-            packageIdentityKey(identity),
-            source[index].current,
-          ]));
-          const result = await this.updateOrchestrationService.check({
-            identities,
-            currentVersions,
-            packageFiles,
-            target,
-            includePreReleases,
-            minimumReleaseAgeDays,
-            forceAlways,
-            debounceSeconds,
-            lastCheckTime: this.lastCheckTime?.getTime(),
-            signal: operation.abortController.signal,
-            isCurrent: () => this.isUpdateCurrent(operation),
-            resolveCurrentPolicy: () => this.currentUpdatePolicy(),
-            onCheckStarted: () => {
-              logger.info('Checking package updates.');
-              logger.info(`Checking updates for ${source.length} package(s).`);
-            },
-            onRootFailure: () => logger.error('Update check failed for a package root; other roots still completed.'),
-            onDiscarded: () => logger.info('Update results discarded — packages or update settings changed during the check.'),
-          });
-          if (!this.isUpdateCurrent(operation)) {
-            return;
-          }
-          if (result.kind === 'debounced') {
-            logger.info('Check for updates skipped — debounce interval has not elapsed.');
-            this.checkState = 'done';
-            return;
-          }
-          if (result.kind === 'discarded') {
-            this.checkState = 'idle';
-            return;
-          }
-          const upgrades = result.data;
-          this.failedUpdatePaths = uniqueStrings(result.failedPackageFilePaths);
-          this.updateFailures = createUpdateFailureSnapshot(
-            result.failedPackageFilePaths,
-            result.failures,
-          );
-          if (result.allFailed) {
-            const failureMessage = result.failure instanceof Error
-              ? result.failure.message
-              : result.failure === undefined ? vscode.l10n.t('all package roots failed') : String(result.failure);
-            showError(vscode.l10n.t('Failed to check updates — {0}', failureMessage), result.failure);
-          }
-          this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => {
-            const identity = packageIdentityFromValues(item.packageName, packageFilePath, dev);
-            const updateData = upgrades.get(packageIdentityKey(identity));
-            const latest = updateData?.acceptedVersion;
-            const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
-            return {
-              item: this.createPackageItem({
-                packageName: item.packageName,
-                currentVersion: item.currentVersion,
-                latest,
-                updateType,
-                operation: item.operation,
-                packageFilePath,
-                dev,
-                versionPrefix: item.versionPrefix,
-                releaseAge: updateData?.releaseAge,
-              }),
-              dev,
-              packageFilePath,
-            };
-          }));
-          logger.info(`Checked updates for ${source.length} package(s).`);
-          this.checkState = this.failedUpdatePaths.length === 0 ? 'done' : 'incomplete';
-          this.lastCheckTime = new Date();
-        },
-        () => this.cancelCheckUpdates(),
-      );
-    }
-    catch (err) {
-      if (this.isUpdateCurrent(operation)) {
-        this.failedUpdatePaths = uniqueStrings(attemptedPackageFilePaths);
-        this.updateFailures = [{
-          packageFilePaths: attemptedPackageFilePaths,
-          reason: 'update-check-failed',
-          detail: err instanceof Error ? err.message : String(err),
-        }];
-        this.checkState = 'idle';
-        showError(vscode.l10n.t('Failed to check updates — {0}', err instanceof Error ? err.message : String(err)), err);
-      }
-    }
-    finally {
-      if (this.updateLifecycle.finish(operation)) {
-        if (this.checkState === 'running') {
-          this.checkState = 'idle';
-        }
-        if (!operation.abortController.signal.aborted) {
-          this.emitTreeChanged();
-        }
-      }
-    }
-  }
-
-  /** Reads the update policy live, so a fetch in flight can detect a setting changed mid-check. */
-  private currentUpdatePolicy(): UpdateFingerprintPolicy {
-    return getUpdatePolicySettings();
-  }
-
-  /** Cancels the in-flight update check and discards its late result. */
   cancelCheckUpdates(): void {
-    if (this.checkState !== 'running' || this.updateLifecycle.cancel() === undefined) {
-      return;
-    }
-    this.checkState = 'idle';
-    this.emitTreeChanged();
+    this.updateController.cancelCheckUpdates();
+  }
+
+  runAudit(): Promise<void> {
+    return this.auditController.runAudit();
+  }
+
+  cancelAudit(): void {
+    this.auditController.cancelAudit();
   }
 
   dispose(): void {
-    if (this.disposed) {
+    if (this.state.disposed) {
       return;
     }
-    this.manifestWriteBaselines.clear();
-    this.loadLifecycle.cancel();
+    this.state.manifestWriteBaselines.clear();
+    this.state.loadLifecycle.cancel();
     this.cancelCheckUpdates();
     this.cancelAudit();
-    this.disposed = true;
-    this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
-    this.packageReadFailed = false;
-    this.resetViewContexts();
+    this.state.disposed = true;
+    this.state.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
+    this.state.packageReadFailed = false;
+    this.view.resetContexts();
     this.filterChangeDisposable.dispose();
-    this._onDidChangeTreeData.dispose();
-  }
-
-  /** Unconditionally publishes every context key as `false`, bypassing the change diff. */
-  private resetViewContexts(): void {
-    const allFalse = createAllFalseViewContexts();
-    for (const [key, value] of Object.entries(allFalse) as [ViewContextKey, boolean][]) {
-      void vscode.commands.executeCommand('setContext', VIEW_CONTEXT_KEYS[key], value);
-    }
-    this.lastPublishedContexts = allFalse;
-  }
-
-  /**
-   * Cancels the in-flight audit run, if any. Resets the busy state synchronously — before
-   * the aborted `client.runAudit()` call settles — so a caller never observes a stale
-   * "running" state while process teardown is still happening. A no-op when idle.
-   */
-  cancelAudit(): void {
-    if (this.auditState !== 'running' || this.auditLifecycle.cancel() === undefined) {
-      return;
-    }
-    this.auditState = 'idle';
-    this.emitTreeChanged();
-  }
-
-  async runAudit(): Promise<void> {
-    if (this.auditState === 'running') {
-      return;
-    }
-
-    this.ensurePackageLoad();
-
-    const operation = this.auditLifecycle.start(this.packageSnapshotGeneration);
-    this.auditState = 'running';
-    this.lastAuditCount = undefined;
-    this.lastAuditSuccessfulRootCount = undefined;
-    this.failedAuditPaths = [];
-    this.auditProjects = [];
-    this.auditFailures = [];
-    this.auditResults = new Map();
-    this.rebuildPackageItems();
-    this.emitTreeChanged();
-    try {
-      await this.auditLifecycle.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: vscode.l10n.t('Running package audit…'),
-          cancellable: true,
-        },
-        async (): Promise<void> => {
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
-          await this.loadLifecycle.waitForCurrent(operation.abortController.signal);
-          if (!this.isAuditCurrent(operation)) {
-            return;
-          }
-          await this.runAuditCore(operation);
-        },
-        () => this.cancelAudit(),
-      );
-    }
-    finally {
-      if (this.auditLifecycle.finish(operation) && this.auditState === 'running') {
-        this.auditState = 'idle';
-        if (!operation.abortController.signal.aborted) {
-          this.emitTreeChanged();
-        }
-      }
-    }
-  }
-
-  private async runAuditCore(operation: OperationRun<'audit'>): Promise<void> {
-    if (!this.isAuditCurrent(operation)) {
-      return;
-    }
-
-    let shouldEmit = false;
-
-    try {
-      const packageFilePaths = this.rowStore.allEntries.length > 0
-        ? [...new Set(this.rowStore.allEntries.map(entry => entry.packageFilePath))]
-        : this.readablePackageFilePaths;
-      if (!this.isAuditCurrent(operation)) {
-        return;
-      }
-      if (packageFilePaths.length === 0) {
-        this.auditState = 'idle';
-        shouldEmit = true;
-        return;
-      }
-
-      const rows: AuditableRow[] = this.rowStore.allEntries.map(entry => ({
-        packageName: entry.item.packageName,
-        packageFilePath: entry.packageFilePath,
-        dev: entry.dev,
-        currentVersion: entry.item.currentVersion,
-      }));
-      const result = await this.auditOrchestrationService.run({
-        packageFilePaths,
-        rows,
-        signal: operation.abortController.signal,
-        isCurrent: () => this.isAuditCurrent(operation),
-      });
-      if (!this.isAuditCurrent(operation)) {
-        return;
-      }
-      if (result.kind === 'discarded') {
-        return;
-      }
-      if (result.kind === 'failed') {
-        this.auditFailures = [{
-          packageFilePaths: [],
-          reason: result.reason,
-          detail: result.detail,
-        }];
-        this.auditState = 'failed';
-        shouldEmit = true;
-        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
-        return;
-      }
-
-      this.auditResults = new Map(result.auditResults);
-      this.auditProjects = [...result.auditProjects];
-      this.auditFailures = [...result.auditFailures];
-      this.failedAuditPaths = [...result.failedAuditPaths];
-      this.auditState = this.failedAuditPaths.length === 0 ? 'done' : 'incomplete';
-      this.lastAuditCount = result.vulnerablePackageCount;
-      this.lastAuditSuccessfulRootCount = result.successfulAuditRootCount;
-      shouldEmit = true;
-      const rejectedManifestCount = this.auditFailures.filter(failure => failure.project === undefined).length;
-      const failedProjectCount = this.auditFailures.length - rejectedManifestCount;
-      if (rejectedManifestCount > 0) {
-        logger.error('Audit project resolution failed; see the security audit report for redacted details.');
-      }
-      for (let index = 0; index < failedProjectCount; index += 1) {
-        logger.error('Audit failed for a project; see the security audit report for redacted details.');
-      }
-      logger.info(
-        this.failedAuditPaths.length === 0
-          ? `Audit: ${this.lastAuditCount} vulnerable package(s).`
-          : `Audit incomplete: ${this.lastAuditCount} vulnerable package(s); `
-            + `failed ${this.failedAuditPaths.length} package root(s).`,
-      );
-      this.rebuildPackageItems();
-    }
-    catch (err) {
-      if (this.isAuditCurrent(operation)) {
-        const failure = describeAuditFailure(err);
-        this.auditFailures = [{
-          packageFilePaths: [],
-          reason: failure.reason,
-          detail: failure.detail,
-        }];
-        this.auditState = 'failed';
-        shouldEmit = true;
-        showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
-      }
-    }
-    finally {
-      if (this.auditLifecycle.finish(operation)) {
-        if (this.auditState === 'running') {
-          this.auditState = 'idle';
-          shouldEmit = !operation.abortController.signal.aborted;
-        }
-        if (shouldEmit) {
-          this.emitTreeChanged();
-        }
-      }
-    }
-  }
-
-  /** A load is outdated once a newer load has started or the provider has been disposed. */
-  private isLoadOutdated(operation: OperationRun<'load'>): boolean {
-    return !this.loadLifecycle.isCurrent(operation, this.packageSnapshotGeneration, this.loading);
+    this.view.dispose();
   }
 
   private ensurePackageLoad(): void {
-    if (this.packageSnapshotGeneration === 0
-      || (!this.loading && this.packageReadFailed && this.packageFilePaths.length === 0)) {
+    if (this.state.packageSnapshotGeneration === 0
+      || (!this.state.loading && this.state.packageReadFailed && this.state.packageFilePaths.length === 0)) {
       void this.loadPackages();
     }
   }
 
-  /** An audit is current only while its operation owns the provider and snapshot. */
-  private isAuditCurrent(operation: OperationRun<'audit'>): boolean {
-    return this.auditLifecycle.isCurrent(
-      operation,
-      this.packageSnapshotGeneration,
-      this.auditState === 'running',
-    );
-  }
-
-  /** An update check is current only while its operation owns the provider and snapshot. */
-  private isUpdateCurrent(operation: OperationRun<'update'>): boolean {
-    return this.updateLifecycle.isCurrent(
-      operation,
-      this.packageSnapshotGeneration,
-      this.checkState === 'running',
-    );
-  }
-
-  /** Computes the view projection once, applies it, and publishes only the contexts that changed. */
   private emitTreeChanged(): void {
-    if (this.disposed) {
-      return;
-    }
-    const projection = computeViewProjection(this.buildViewProjectionSnapshot());
-    this.applyTreeViewState(projection);
-    this.publishViewContexts(projection.contexts);
-    this._onDidChangeTreeData.fire();
+    this.view.emitTreeChanged();
   }
 
-  private buildViewProjectionSnapshot(): ViewProjectionSnapshot {
-    return {
-      entries: this.allEntries,
-      filterType: this.filterManager.current,
-      search: this.filterManager.search,
-      loading: this.loading,
-      workspaceCapabilities: this.workspaceCapabilities,
-      capabilitiesInitialized: this.capabilitiesInitialized,
-      packageReadFailed: this.packageReadFailed,
-      packageReadFailures: this.packageReadFailures,
-      checkState: this.checkState,
-      lastCheckTime: this.lastCheckTime,
-      failedUpdatePaths: this.failedUpdatePaths,
-      auditState: this.auditState,
-      lastAuditCount: this.lastAuditCount,
-      lastAuditSuccessfulRootCount: this.lastAuditSuccessfulRootCount,
-      failedAuditPaths: this.failedAuditPaths,
-    };
+  private get allEntries(): readonly PackageTreeEntry[] {
+    return this.state.allEntries;
   }
 
-  private applyTreeViewState(projection: ViewProjection): void {
-    if (this.treeView === undefined) {
-      return;
-    }
-    this.treeView.badge = projection.badge;
-    this.treeView.message = undefined;
-    this.treeView.description = projection.description;
+  private set allEntries(entries: PackageTreeEntry[]) {
+    this.state.allEntries = entries;
   }
 
-  /** Publishes only the context keys whose value changed since the last publication. */
-  private publishViewContexts(next: ViewContextMap): void {
-    const changed = diffViewContexts(this.lastPublishedContexts, next);
-    for (const key of Object.keys(changed) as ViewContextKey[]) {
-      void vscode.commands.executeCommand('setContext', VIEW_CONTEXT_KEYS[key], changed[key]);
-    }
-    this.lastPublishedContexts = next;
+  private get loading(): boolean {
+    return this.state.loading;
   }
 
-  private createPackageItem(options: CreatePackageItemOptions): PackageItem {
-    const {
-      packageName,
-      currentVersion,
-      latest,
-      updateType,
-      operation,
-      packageFilePath,
-      dev,
-      versionPrefix,
-      releaseAge = { kind: 'accepted' },
-    } = options;
-    const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
-    const vulnerabilitySeverity = this.auditResults.get(packageIdentityKey(identity));
-    const item = new PackageItem(
-      packageName,
-      currentVersion,
-      latest,
-      updateType,
-      operation,
-      vulnerabilitySeverity,
-      packageFilePath,
-      dev,
-      versionPrefix,
-      releaseAge,
-      this.resolveOwnerLabel(packageFilePath),
-    );
-    const row: CanonicalPackageItem = Object.freeze({
-      packageName,
-      currentVersion,
-      latest,
-      updateType,
-      operation,
-      vulnerabilitySeverity,
-      packageFilePath,
-      dev,
-      versionPrefix,
-      releaseAge,
-    });
-    const baselineLocation = this.packageLocationBaselines.get(packageFilePath);
-    this.packageItemRecords.set(item, Object.freeze({ identity, row, baselineLocation }));
-    return item;
+  private set loading(value: boolean) {
+    this.state.loading = value;
   }
-
-  /** Same owner-qualified label the tree/picker show, so a row's accessible owner never diverges from it. */
-  private resolveOwnerLabel(packageFilePath: string): string | undefined {
-    if (packageFilePath === '') {
-      return undefined;
-    }
-    const cached = this.ownerLabels.get(packageFilePath);
-    if (cached !== undefined) {
-      return cached;
-    }
-    // Defensive: a manifest outside the tracked set resolves on its own instead of
-    // widening the cache every other row's lookup relies on.
-    const folders = this.workspaceFolderDescriptors;
-    if (folders.length === 0) {
-      return undefined;
-    }
-    return resolvePackageFileLabels(
-      [...this.packageFilePaths, packageFilePath],
-      folders,
-      getLocalizedPackageLabelFormatting(),
-    )
-      .find(entry => entry.packageFilePath === packageFilePath)?.owner.label;
-  }
-
-  /** Owner labels for the tracked manifest set; the projection runs once per `packageFilePaths` change, not per row. */
-  private get ownerLabels(): ReadonlyMap<string, string> {
-    if (this.ownerLabelCache === undefined) {
-      const folders = this.workspaceFolderDescriptors;
-      this.ownerLabelCache = folders.length === 0
-        ? new Map()
-        : new Map(resolvePackageFileLabels(
-            this.packageFilePaths,
-            folders,
-            getLocalizedPackageLabelFormatting(),
-          ).map(
-            entry => [entry.packageFilePath, entry.owner.label],
-          ));
-    }
-    return this.ownerLabelCache;
-  }
-
-  private setPackageFilePaths(packageFilePaths: readonly string[]): void {
-    this.packageFilePaths = [...packageFilePaths];
-    this.ownerLabelCache = undefined;
-  }
-
-  private rebuildPackageItems(): void {
-    this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => ({
-      item: this.createPackageItem({
-        packageName: item.packageName,
-        currentVersion: item.currentVersion,
-        latest: item.latest,
-        updateType: item.updateType,
-        operation: item.operation,
-        packageFilePath,
-        dev,
-        versionPrefix: item.versionPrefix,
-        releaseAge: item.releaseAge,
-      }),
-      dev,
-      packageFilePath,
-    })));
-  }
-
-  private get workspaceRoot(): string | undefined {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  }
-
-  private get workspaceFolderDescriptors(): WorkspaceFolderDescriptor[] {
-    return toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-  }
-
-  private async resolveWorkspaceCapabilities(
-    packageFilePaths: readonly string[],
-    readablePackageFilePaths: readonly string[],
-    entries: readonly { readonly packageFilePath: string }[],
-  ): Promise<WorkspaceCapabilities> {
-    const hasPackageFiles = packageFilePaths.length > 0;
-    const hasReadablePackageFiles = readablePackageFilePaths.length > 0;
-    const hasDependencyEntries = entries.length > 0;
-    let hasAuditableProjects = false;
-
-    if (hasReadablePackageFiles) {
-      try {
-        const { projects } = await resolveAuditProjects(readablePackageFilePaths);
-        for (const project of projects) {
-          if (await this.isAuditableProject(project)) {
-            hasAuditableProjects = true;
-            break;
-          }
-        }
-      }
-      catch {
-        logger.warn('Failed to resolve auditable workspace projects.');
-      }
-    }
-
-    return {
-      hasPackageFiles,
-      hasReadablePackageFiles,
-      hasDependencyEntries,
-      hasAuditableProjects,
-      canRunInstall: hasReadablePackageFiles,
-      canRunAudit: hasAuditableProjects,
-      canSearchPackages: hasDependencyEntries,
-      canFilterPackages: hasDependencyEntries,
-      canPinAllVersions: hasDependencyEntries,
-    };
-  }
-
-  private async isAuditableProject(project: AuditProject): Promise<boolean> {
-    if (project.lockfilePath === undefined) {
-      return false;
-    }
-    if (project.packageManager !== 'yarn') {
-      return true;
-    }
-
-    // A Yarn lock file alone does not identify a supported audit command. Keep the
-    // Audit action disabled when the family resolver cannot establish Classic or Modern.
-    if (typeof resolveYarnFamily !== 'function') {
-      return false;
-    }
-    try {
-      const resolution = await resolveYarnFamily(project.projectRoot);
-      return resolution.family !== 'unknown';
-    }
-    catch {
-      return false;
-    }
-  }
-
-  private findEntryIndex(identity: PackageStateIdentity): number {
-    return this.rowStore.findEntryIndex(identity);
-  }
-
-  private findCurrentEntry(
-    identity: PackageIdentityTuple,
-    expectedItem?: PackageItem,
-  ): PackageTreeEntry | undefined {
-    const key = packageIdentityKey(identity);
-    const matches = this.rowStore.allEntries.filter((entry) => {
-      const entryIdentity = this.packageItemRecords.get(entry.item)?.identity;
-      return entryIdentity !== undefined && packageIdentityKey(entryIdentity) === key;
-    });
-    if (matches.length !== 1) {
-      return undefined;
-    }
-    const [match] = matches;
-    return expectedItem === undefined || match.item === expectedItem ? match : undefined;
-  }
-
-  private getCurrentCapabilityRecord(capability: ResolvedPackageItem): PackageCapabilityRecord | undefined {
-    const record = this.capabilities.recordOf(capability);
-    if (record === undefined || this.loading || this.findFreshItemRecord(record) === undefined) {
-      return undefined;
-    }
-    return record;
-  }
-
-  /** The current row's record when `capability` is still fresh for it: same generation, mutation count and spec. */
-  private findFreshItemRecord(capability: PackageCapabilityRecord): PackageItemRecord | undefined {
-    const entry = this.findCurrentEntry(capability.identity);
-    const record = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
-    return record !== undefined && this.capabilities.isFresh(capability, record.row, this.packageSnapshotGeneration)
-      ? record
-      : undefined;
-  }
-
-  private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
-    const details = [
-      new PackageDetailItem(item.dev ? vscode.l10n.t('Dev dependency') : vscode.l10n.t('Dependency'), item.dev ? 'tools' : 'package'),
-      new PackageDetailItem(vscode.l10n.t('Current: {0}', sanitizePackageText(item.currentVersion)), 'tag'),
-    ];
-    if (item.latest !== undefined) {
-      details.push(new PackageDetailItem(vscode.l10n.t(
-        'Update: {0} → {1} ({2})',
-        sanitizePackageText(item.currentVersion),
-        sanitizePackageText(item.latest),
-        formatUpdateTypeLabel(item.updateType),
-      ), 'arrow-up'));
-    }
-    if (item.vulnerabilitySeverity !== undefined) {
-      details.push(new PackageDetailItem(vscode.l10n.t(
-        'Vulnerability: {0}',
-        formatAuditSeverityLabel(item.vulnerabilitySeverity),
-      ), 'warning'));
-    }
-    if (this.workspaceRoot !== undefined) {
-      const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
-      if (relativeFile !== undefined) {
-        details.push(new PackageDetailItem(vscode.l10n.t('File: {0}', sanitizePackageText(relativeFile)), 'file'));
-      }
-    }
-    return details;
-  }
-
-  private buildStatusItems(): StatusItem[] {
-    return projectStatusRows(this.buildViewProjectionSnapshot()).map(row => new StatusItem(
-      row.label,
-      row.description,
-      row.icon,
-      row.color,
-      row.actionable,
-      row.command,
-    ));
-  }
-
-  private toRelativePackageFilePath(packageFilePath: string): string | undefined {
-    if (packageFilePath === '') {
-      return undefined;
-    }
-
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath));
-    if (workspaceFolder === undefined) {
-      return packageFilePath;
-    }
-
-    const relativeFile = path.relative(workspaceFolder.uri.fsPath, packageFilePath).replace(/\\/g, '/');
-    if (relativeFile === 'package.json') {
-      return undefined;
-    }
-
-    return relativeFile;
-  }
-}
-
-function sameCanonicalPackageLocation(
-  left: CanonicalPackageLocation,
-  right: CanonicalPackageLocation,
-): boolean {
-  return left.packageFilePath === right.packageFilePath
-    && left.packageDirectory === right.packageDirectory
-    && left.workspaceFolderPath === right.workspaceFolderPath
-    && left.manifestDigest === right.manifestDigest
-    && samePackageFileStamp(left.fileStamp, right.fileStamp);
-}
-
-function cloneStatusReportFailure(failure: StatusReportFailure): StatusReportFailure {
-  return {
-    packageFilePaths: [...failure.packageFilePaths],
-    reason: failure.reason,
-    detail: failure.detail,
-  };
-}
-
-function createPackageReadFailureSnapshot(
-  paths: readonly string[],
-  details: readonly { readonly packageFilePath: string; readonly error: string }[] | undefined,
-  discoveryFailed: boolean,
-): StatusReportFailure[] {
-  const detailByPath = new Map<string, string[]>();
-  for (const failure of details ?? []) {
-    const current = detailByPath.get(failure.packageFilePath) ?? [];
-    current.push(failure.error);
-    detailByPath.set(failure.packageFilePath, current);
-  }
-  for (const packageFilePath of paths) {
-    if (!detailByPath.has(packageFilePath)) {
-      detailByPath.set(packageFilePath, []);
-    }
-  }
-  if (discoveryFailed && !detailByPath.has('')) {
-    detailByPath.set('', ['Failed to discover workspace package files.']);
-  }
-  return [...detailByPath.entries()].map(([packageFilePath, errors]) => ({
-    packageFilePaths: packageFilePath === '' ? [] : [packageFilePath],
-    reason: packageFilePath === '' ? 'package-discovery-failed' : 'package-read-failed',
-    detail: errors.length === 0 ? undefined : errors.join('; '),
-  }));
-}
-
-function createUpdateFailureSnapshot(
-  paths: readonly string[],
-  failures: readonly { readonly packageFilePath: string; readonly error: unknown }[],
-): StatusReportFailure[] {
-  const byPath = new Map<string, StatusReportFailure>();
-  for (const failure of failures) {
-    byPath.set(failure.packageFilePath, {
-      packageFilePaths: [failure.packageFilePath],
-      reason: 'update-check-failed',
-      detail: formatFailureDetail(failure.error),
-    });
-  }
-  for (const packageFilePath of uniqueStrings(paths)) {
-    if (!byPath.has(packageFilePath)) {
-      byPath.set(packageFilePath, {
-        packageFilePaths: [packageFilePath],
-        reason: 'update-check-failed',
-      });
-    }
-  }
-  return [...byPath.values()];
-}
-
-function formatFailureDetail(error: unknown): string {
-  if (error instanceof Error) {
-    return error.stack ?? error.message;
-  }
-  return String(error);
 }

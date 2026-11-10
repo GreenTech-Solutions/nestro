@@ -3873,7 +3873,7 @@ function setProviderState(
     loading?: boolean;
   },
 ): void {
-  Object.assign(provider as unknown as Record<string, unknown>, state);
+  Object.assign((provider as unknown as { state: Record<string, unknown> }).state, state);
 }
 
 describe('package identity boundary', () => {

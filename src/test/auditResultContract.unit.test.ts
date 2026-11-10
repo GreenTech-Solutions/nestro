@@ -64,6 +64,7 @@ vi.mock('../utils', async () => {
     fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map()),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
     getUpdateType: vi.fn(() => 'none'),
+    resolveYarnFamily: vi.fn().mockResolvedValue({ family: 'unknown', source: 'version-probe' }),
     getWorkspacePackageFilePaths: vi.fn(),
     logger,
     readAllWorkspaceDependencies: vi.fn(),

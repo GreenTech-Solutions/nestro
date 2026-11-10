@@ -28,6 +28,7 @@ vi.mock('../utils', async () => {
     getUpdateType: vi.fn((current: string, latest: string) => (
       current.split('.')[0] === latest.split('.')[0] ? 'minor' : 'breaking'
     )),
+    resolveYarnFamily: vi.fn().mockResolvedValue({ family: 'unknown', source: 'version-probe' }),
     logger: {
       info: vi.fn(),
       error: vi.fn(),

@@ -37,40 +37,50 @@ by `checkUpdates()`/`runAudit()` when the matching `*OnStartup` setting is enabl
 
 `registerPackageJsonWatcher()` debounces filesystem events per
 `PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and asks the provider whether each changed manifest
-matches a recorded own-write digest. `PackagesProvider` owns those SHA-256 baselines and records
-only files whose content changed during a provider write. A missing baseline, unreadable file, or
-digest mismatch triggers a reload. `registerWorkspaceFoldersWatcher()` refreshes the package-file
-watcher and reloads packages on `vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added
-or removed after activation is picked up without a window reload.
+matches a recorded own-write digest. `PackageProviderState` owns the `ManifestWriteBaselines` and
+the provider delegates writes to it; only files whose content changed during a provider write get
+a baseline. A missing baseline, unreadable file, or digest mismatch triggers a reload.
+`registerWorkspaceFoldersWatcher()` refreshes the package-file watcher and reloads packages on
+`vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added or removed after activation is
+picked up without a window reload.
 
 ### The provider, services, and row store
 
 `PackagesProvider` (`src/providers/PackagesProvider.ts`) implements
-`vscode.TreeDataProvider<vscode.TreeItem>` and `vscode.Disposable`. It owns mutable UI state —
-`packageFilePaths`, `workspaceCapabilities`, operation generation and cancellation records, audit
-results and report summaries, and the `WeakMap` backing provider-issued row records (section 5).
-`PackageRowStore` owns the flat `allEntries` row list. `patchRow()` and `restoreAt()` record row
-mutations through `PackageCapabilityService.noteRowMutation()`. `replaceAll()` applies snapshot and
-presentation rebuilds while preserving row epochs; a new load invalidates old capabilities through
-the snapshot generation. The provider invalidates its owner-label cache whenever it replaces the
+`vscode.TreeDataProvider<vscode.TreeItem>` and `vscode.Disposable` as a facade over focused
+controllers and services. `PackageProviderState` owns mutable snapshot and operation state —
+`packageFilePaths`, `workspaceCapabilities`, lifecycle records, audit results and report summaries,
+and the `WeakMap` backing provider-issued row records (section 5). `PackageRowStore` owns the flat
+`allEntries` row list. `patchRow()` and `restoreAt()` record row mutations through
+`PackageCapabilityService.noteRowMutation()`. `replaceAll()` applies snapshot and presentation
+rebuilds while preserving row epochs; a new load invalidates old capabilities through the snapshot
+generation. `PackageProviderState` invalidates its owner-label cache whenever it replaces the
 tracked manifest-path list. The update-result cache and its fingerprint belong to
-`UpdateOrchestrationService`. The provider delegates row replacement to the row store
-and non-trivial loading, update, audit, and view work to four collaborators:
+`UpdateOrchestrationService`.
 
 | Service | File | Responsibility |
 |---|---|---|
 | `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json` and returns entries, paths, read failures, and canonical-location baselines. |
 | `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Runs `npm-check-updates` once per manifest, computes release-age state, owns the update-result cache and its fingerprint. |
 | `AuditOrchestrationService` | `auditOrchestrationService.ts` | Resolves the canonical audit project graph, runs one audit per project, attributes advisories back to rows. |
-| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `projectStatusRows()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot of provider fields into contexts, badge, description, and status rows. |
+| `PackageLoadController` | `packageLoadController.ts` | Applies load snapshots, resolves workspace action flags, and owns load cancellation and failure state. |
+| `PackageUpdateController` | `packageUpdateController.ts` | Drives update lifecycle, applies accepted results, and publishes update failures. |
+| `PackageAuditController` | `packageAuditController.ts` | Drives audit lifecycle, applies report snapshots, and rebuilds vulnerability badges. |
+| `WorkspaceCapabilityResolver` | `workspaceCapabilityResolver.ts` | Resolves global action flags and checks whether each project has a supported audit command. |
+| `PackageCapabilityOperations` | `packageCapabilityOperations.ts` | Resolves and revalidates provider-issued package capabilities at command boundaries. |
+| `PackageRowMutationService` | `packageRowMutationService.ts` | Updates package row state and recovers from progress-render races. |
+| `PackageProviderState` | `packageProviderState.ts` | Owns shared snapshot state, row construction, and owner-label caching. |
+| tree view | `packageViewController.ts` | Builds tree/status items and publishes tree-view state and context keys. |
+| status report | `statusReportAssembler.ts` | Builds defensive diagnostics snapshots and package read/update failure entries. |
+| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `projectStatusRows()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot into contexts, badge, description, and status rows. |
 | `PackageRowStore` | `packageRowStore.ts` | Owns `allEntries`; `patchRow()` and `restoreAt()` record row mutations and `replaceAll()` applies bulk rebuilds. |
 
-(The four collaborators and the row store live under `src/providers/`.) The first three services
-are constructor-injectable — `PackagesProvider` accepts each as an optional parameter, defaulting
-to a production instance — which is how `src/test/packagesProvider.unit.test.ts` substitutes fakes
-without touching VS Code APIs. The view projection is stateless: every call site builds a
-`ViewProjectionSnapshot` from current provider fields and gets a fresh `ViewProjection` back. The
-row store reports row mutations through `PackageCapabilityService.noteRowMutation()`.
+(All collaborators and the row store live under `src/providers/`.) Loading, update, and audit
+orchestration services remain constructor-injectable — `PackagesProvider` accepts them as optional
+parameters, defaulting to production instances — which is how provider tests substitute fakes
+without touching VS Code APIs. The view projection is stateless: `PackageViewController` builds a
+`ViewProjectionSnapshot` from shared state and gets a fresh `ViewProjection` back. The row store
+reports row mutations through `PackageCapabilityService.noteRowMutation()`.
 
 `getChildren()` returns early while `loading` is true, and otherwise returns status rows from
 `buildStatusItems()` first, followed by the package groups from `buildTree()` in `treeBuilder.ts`.
@@ -278,30 +288,29 @@ process/task actually stops would let a second operation start against the same 
 
 ### Generations
 
-`PackagesProvider` keeps one `OperationLifecycle<T>` (`src/providers/operationLifecycle.ts`) per
-operation — load, update check and audit. Each lifecycle owns a monotonic generation, the current
-`OperationRun` (`{kind, generation, snapshotGeneration, abortController}`), its completion promise
-and progress cancellation, including a progress token cancelled before the task starts.
-`packageSnapshotGeneration` is bumped at the start of every `loadPackages()`, which also cancels any
-outstanding update check or audit; `isLoadOutdated()` guards every await point inside the load
-against a still-later reload or disposal. `isUpdateCurrent()` and `isAuditCurrent()` require the
-run to still be its lifecycle's current run, its generation to match, its `snapshotGeneration` to
-match the *current* snapshot, the busy state to still be `'running'`, and its signal not aborted —
-checked at every await boundary. `checkUpdates()` and `runAudit()` wait for the current load
+`PackageProviderState` keeps one `OperationLifecycle<T>`
+(`src/providers/operationLifecycle.ts`) per operation — load, update check and audit. Each
+lifecycle owns a monotonic generation, the current `OperationRun`
+(`{kind, generation, snapshotGeneration, abortController}`), its completion promise and progress
+cancellation, including a progress token cancelled before the task starts. `PackageLoadController`
+bumps `packageSnapshotGeneration` at the start of every `loadPackages()`, which also cancels any
+outstanding update check or audit; it guards each await against a later reload or disposal.
+`PackageUpdateController` and `PackageAuditController` check ownership, snapshot generation, busy
+state, and abort status at every await boundary. `checkUpdates()` and `runAudit()` wait for the current load
 (`waitForCurrent()`) before reading rows instead of reading packages in parallel, and retry the
 load first when the last discovery failed without finding package files. Both no-op immediately if
 already `'running'`; the generation machinery covers a reload that supersedes a running operation.
-On a rejected current load, the provider clears `PackageRowStore.allEntries`, records a `package-load-failed`
-status-report entry and leaves `nestro.noWorkspace` false. The tree never retains rows without
-their capabilities.
+On a rejected current load, `PackageLoadController` clears `PackageRowStore.allEntries`, records a
+`package-load-failed` status-report entry and leaves `nestro.noWorkspace` false. The tree never
+retains rows without their capabilities.
 
 ### Capability records
 
 A `PackageItem` rendered in the tree cannot, by itself, be trusted as a write target: its
 fields are exactly what was true when last rendered, and any async gap (a QuickPick, a
 confirmation dialog) can let the file change underneath it. `resolvePackageItem()` is the
-boundary every command calls first: it confirms the raw argument is a real `PackageItem` this
-provider issued (`packageItemRecords: WeakMap<PackageItem, PackageItemRecord>`), confirms
+boundary every command calls first: `PackageCapabilityOperations` confirms the raw argument is a
+real `PackageItem` this provider issued (`packageItemRecords: WeakMap<PackageItem, PackageItemRecord>`), confirms
 exactly one current row still matches that identity tuple (`findCurrentEntry()`), resolves the
 canonical filesystem location, and issues a `ResolvedPackageItem` "capability" recorded in a
 second `WeakMap` (`packageCapabilityRecords`). Every field a command reads afterward — name,
@@ -685,6 +694,6 @@ projection a pure function of the snapshot.
 its value inside `computeViewProjection()`, and reference it from a `"when"` clause in
 `package.json` — never from `enablement` on a package-row context action (section 2). A key
 gating a global action should be added to `WorkspaceCapabilities` and resolved inside
-`PackagesProvider.resolveWorkspaceCapabilities()` alongside the existing `can*` fields, so it
-shares the pre-first-load permissive default (`resolvePublishedWorkspaceCapabilities()`) and
+`WorkspaceCapabilityResolver.resolve()` alongside the existing `can*` fields, so it shares the
+pre-first-load permissive default (`resolvePublishedWorkspaceCapabilities()`) and
 the all-`false` reset on `dispose()`.

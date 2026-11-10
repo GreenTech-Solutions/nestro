@@ -58,6 +58,7 @@ vi.mock('../utils', async () => {
       warn: vi.fn(),
     },
     parseDependencySpec,
+    resolveYarnFamily: vi.fn().mockResolvedValue({ family: 'unknown', source: 'version-probe' }),
     showError: vi.fn(),
     selectVersionsForPicker: vi.fn(selectVersionsForPickerActual),
   };
