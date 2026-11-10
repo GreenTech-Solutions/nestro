@@ -32,8 +32,6 @@ export const DEFAULT_KILL_GRACE_PERIOD_MS = 2_000;
 export const UPDATE_CACHE_TTL_MS = 5 * 60 * 1000;
 /** Filesystem-event coalescing window of the `package.json` watcher. */
 export const PACKAGE_JSON_WATCHER_DEBOUNCE_MS = 500;
-/** Delay before the write-suppression flag is released after a command write. */
-export const WRITE_SUPPRESSION_RELEASE_MS = 600;
 
 /** Longest search query shown in the view description, in code points. */
 export const MAX_DESCRIPTION_SEARCH_LENGTH = 24;

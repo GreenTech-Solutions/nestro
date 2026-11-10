@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { resolveAuditProjects } from '../clients';
 import type { AuditProject } from '../clients';
-import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings, WRITE_SUPPRESSION_RELEASE_MS } from '../config';
+import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
 import { uniqueStrings } from '../shared';
 import {
   createCheckCoordinator,
@@ -72,6 +72,7 @@ import { PackageCapabilityService } from './capabilityService';
 import type { PackageCapabilityRecord } from './capabilityService';
 import { PackageLoadingService } from './packageLoadingService';
 import type { PackageLoadingServiceContract } from './packageLoadingService';
+import { ManifestWriteBaselines } from './manifestWriteBaselines';
 import { OperationLifecycle } from './operationLifecycle';
 import type { OperationRun } from './operationLifecycle';
 import { UpdateOrchestrationService } from './updateOrchestrationService';
@@ -142,9 +143,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private readonly loadLifecycle = new OperationLifecycle<'load'>('load');
   private readonly updateLifecycle = new OperationLifecycle<'update'>('update');
   private readonly auditLifecycle = new OperationLifecycle<'audit'>('audit');
+  private readonly manifestWriteBaselines = new ManifestWriteBaselines();
   private loading = true;
-  private writeSuppressionDepth = 0;
-  private readonly writeSuppressionTimers = new Set<ReturnType<typeof setTimeout>>();
   private treeView: vscode.TreeView<vscode.TreeItem> | undefined;
   private auditResults: Map<string, AuditSeverity> = new Map();
   private auditProjects: AuditProjectSummary[] = [];
@@ -229,24 +229,21 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.filterManager.clearSearch();
   }
 
-  get suppressingWrites(): boolean {
-    return this.writeSuppressionDepth > 0;
-  }
-
   async withWriteSuppressed<T>(fn: () => Promise<T>): Promise<T> {
-    this.writeSuppressionDepth += 1;
+    const packageFilePaths = [...this.packageFilePaths];
+    const before = await this.manifestWriteBaselines.capture(packageFilePaths);
     try {
       const result = await fn();
       this.invalidateUpdateCache();
       return result;
     }
     finally {
-      const timer = setTimeout(() => {
-        this.writeSuppressionTimers.delete(timer);
-        this.writeSuppressionDepth = Math.max(0, this.writeSuppressionDepth - 1);
-      }, WRITE_SUPPRESSION_RELEASE_MS);
-      this.writeSuppressionTimers.add(timer);
+      await this.manifestWriteBaselines.recordChanges(packageFilePaths, before);
     }
+  }
+
+  isOwnManifestWrite(uri: vscode.Uri): Promise<boolean> {
+    return this.manifestWriteBaselines.isOwnWrite(uri);
   }
 
   /**
@@ -998,11 +995,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.disposed) {
       return;
     }
-    for (const timer of this.writeSuppressionTimers) {
-      clearTimeout(timer);
-    }
-    this.writeSuppressionTimers.clear();
-    this.writeSuppressionDepth = 0;
+    this.manifestWriteBaselines.clear();
     this.loadLifecycle.cancel();
     this.cancelCheckUpdates();
     this.cancelAudit();

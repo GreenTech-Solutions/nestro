@@ -11,7 +11,7 @@ export { awaitTaskOutcome, awaitTaskProcessStart, createNoProcessTask } from './
 export type { WorkspaceFixture } from './types';
 export { archiveEntry, buildCleanVsixFixture, buildZipFixture, CLEAN_EXTENSION_IDENTITY, CLEAN_PACKAGE_MANIFEST, CLEAN_PACKAGE_NLS, CLEAN_TRACKED_SOURCE_PATHS, cleanVsixArchiveEntries, cleanVsixFixtureEntries, findZipFixtureEntryOffsets, SYMLINK_FILE_MODE, toBytes } from './vsixFixtures';
 export { waitUntil } from './wait';
-export { collectPackageItems, createPackageJsonWatcherHarness, createStubContext, DEBOUNCE_SETTLE_MS, delay, disposeStubContext, ensureExtensionActivated, NATIVE_WATCHER_ATTACH_TIMEOUT_MS, onceTreeChanged, setNestroConfigValue, SUPPRESSION_SETTLE_MS, writeUntil } from './watcherHarness';
+export { collectPackageItems, createPackageJsonWatcherHarness, createStubContext, DEBOUNCE_SETTLE_MS, delay, disposeStubContext, ensureExtensionActivated, NATIVE_WATCHER_ATTACH_TIMEOUT_MS, onceTreeChanged, setNestroConfigValue, writeUntil } from './watcherHarness';
 export type { PackageJsonWatcherHarness, StubExtensionContext } from './watcherHarness';
 export { MULTI_ROOT_FIXTURES, ROOT_MANIFEST_NESTED_PACKAGE, SINGLE_ROOT_FIXTURES } from './workspaceFixtures';
 export { closeFixtureWorkspace, closeIfOpen, countWorkspaceFolders, openTrackedFixture, trackedFixtureRoots } from './workspaceScope';

@@ -25,7 +25,6 @@ vi.mock('../providers', async () => {
       this.setFilter = vi.fn();
       this.resetUpdateData = vi.fn();
       this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
-      this.suppressingWrites = false;
       this.dispose = vi.fn();
     }),
   };

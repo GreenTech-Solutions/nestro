@@ -103,29 +103,35 @@ export function registerWorkspaceFoldersWatcher(
 
 export function registerPackageJsonWatcher(
   context: vscode.ExtensionContext,
-  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'>,
+  provider: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'isOwnManifestWrite'>,
 ): vscode.Disposable & { refresh(): void } {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  const pendingChanges = new Map<string, vscode.Uri>();
 
-  const scheduleRefresh = (): void => {
-    if (provider.suppressingWrites) {
+  const refreshIfExternalChange = async (): Promise<void> => {
+    const changedFiles = [...pendingChanges.values()];
+    pendingChanges.clear();
+    const ownWrites = await Promise.all(changedFiles.map(uri => provider.isOwnManifestWrite(uri)));
+    if (ownWrites.every(Boolean)) {
       return;
     }
+    provider.invalidateUpdateCache();
+    void provider.loadPackages();
+  };
+
+  const scheduleRefresh = (uri: vscode.Uri): void => {
+    pendingChanges.set(uri.fsPath, uri);
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      provider.invalidateUpdateCache();
-      void provider.loadPackages();
+      void refreshIfExternalChange();
     }, PACKAGE_JSON_WATCHER_DEBOUNCE_MS);
   };
 
   const createWatchers = (): vscode.Disposable[] => {
     const glob = getMonorepoGlob();
     const folders = vscode.workspace.workspaceFolders ?? [];
-
     return folders.flatMap((folder) => {
-      const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(folder, glob),
-      );
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, glob));
       return [
         watcher,
         watcher.onDidChange(scheduleRefresh),
@@ -136,15 +142,17 @@ export function registerPackageJsonWatcher(
   };
 
   let disposables = createWatchers();
-  const controller = {
-    refresh: (): void => {
+  const controller: vscode.Disposable & { refresh(): void } = {
+    refresh: () => {
       disposables.forEach(disposable => disposable.dispose());
       clearTimeout(debounceTimer);
+      pendingChanges.clear();
       disposables = createWatchers();
     },
-    dispose: (): void => {
+    dispose: () => {
       disposables.forEach(disposable => disposable.dispose());
       clearTimeout(debounceTimer);
+      pendingChanges.clear();
     },
   };
   context.subscriptions.push(controller);

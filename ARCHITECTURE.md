@@ -36,11 +36,12 @@ registers every command from `src/commands`, registers three watchers
 by `checkUpdates()`/`runAudit()` when the matching `*OnStartup` setting is enabled.
 
 `registerPackageJsonWatcher()` debounces filesystem events per
-`PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and skips scheduling entirely while
-`provider.suppressingWrites` is true — the write-suppression feedback-loop guard described in
-section 5. `registerWorkspaceFoldersWatcher()` refreshes the package-file watcher and reloads
-packages on `vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added or removed after
-activation is picked up without a window reload.
+`PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and asks the provider whether each changed manifest
+matches a recorded own-write digest. `PackagesProvider` owns those SHA-256 baselines and records
+only files whose content changed during a provider write. A missing baseline, unreadable file, or
+digest mismatch triggers a reload. `registerWorkspaceFoldersWatcher()` refreshes the package-file
+watcher and reloads packages on `vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added
+or removed after activation is picked up without a window reload.
 
 ### The provider as a thin adapter over four services
 
@@ -332,13 +333,13 @@ network — unless `checkUpdatesForceAlways` is set, or the debounce is `0`.
 
 ### Write suppression
 
-`withWriteSuppressed()` wraps every write a command makes to `package.json` so the watcher does
-not react to the extension's own edit as an external change. Suppression is reference-counted
-(`writeSuppressionDepth`), decremented only after a 600 ms timer fires on exit — not
-immediately — so a burst of near-simultaneous writes never lets the watcher's debounce window
-observe a gap. Every timer is tracked in `writeSuppressionTimers` and cleared in `dispose()`.
-`registerPackageJsonWatcher()` checks `provider.suppressingWrites` before scheduling its own
-debounced reload; the two debounce timers are independent mechanisms with similar durations.
+`withWriteSuppressed()` wraps every write a command makes to `package.json` and invalidates the
+update cache after a successful write. The provider captures digests for known manifests before
+and after the callback, then records a baseline only when a manifest's digest changed. A deleted
+or unreadable manifest drops its baseline, while unchanged manifests retain any existing baseline.
+At debounce, the watcher asks the provider to compare each changed file with its baseline; an
+absent or different digest triggers a reload. This keeps nested and overlapping writes from
+replacing baselines for files they did not change.
 
 ### Atomic multi-file write and switch-collision no-write
 

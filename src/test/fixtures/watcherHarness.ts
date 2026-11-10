@@ -28,15 +28,6 @@ const SETTLE_MARGIN_MS = 200;
  */
 export const DEBOUNCE_SETTLE_MS = PACKAGE_JSON_WATCHER_DEBOUNCE_MS + SETTLE_MARGIN_MS;
 
-/** How long after `fn()` returns `withWriteSuppressed()` lifts suppression. */
-const SUPPRESSION_LIFT_MS = 600;
-
-/**
- * How long to wait before a suppressed write can be called unobserved: the lift
- * delay plus a full debounce window for any event it released.
- */
-export const SUPPRESSION_SETTLE_MS = SUPPRESSION_LIFT_MS + DEBOUNCE_SETTLE_MS;
-
 export function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -164,15 +155,13 @@ export function createPackageJsonWatcherHarness(): PackageJsonWatcherHarness {
   const context = createStubContext();
   let count = 0;
 
-  const spy: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'> = {
+  const spy: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'isOwnManifestWrite'> = {
     invalidateUpdateCache: () => provider.invalidateUpdateCache(),
     loadPackages: async () => {
       count += 1;
       await provider.loadPackages();
     },
-    get suppressingWrites(): boolean {
-      return provider.suppressingWrites;
-    },
+    isOwnManifestWrite: uri => provider.isOwnManifestWrite(uri),
   };
 
   const controller = registerPackageJsonWatcher(context as unknown as vscode.ExtensionContext, spy);

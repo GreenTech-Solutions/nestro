@@ -69,7 +69,6 @@ vi.mock('../providers', () => ({
     this.showSearch = vi.fn().mockResolvedValue(undefined);
     this.clearSearch = vi.fn();
     this.getVisibleOutdatedPackages = vi.fn(() => []);
-    this.suppressingWrites = false;
     this.dispose = vi.fn();
     this.onDidChangeTreeData = vi.fn();
     this.getTreeItem = vi.fn();
