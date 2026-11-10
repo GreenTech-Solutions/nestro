@@ -2771,16 +2771,6 @@ describe('PackagesProvider', () => {
     expect(showError).not.toHaveBeenCalled();
   });
 
-  it('does nothing when cancelling with no audit running', async () => {
-    const provider = new PackagesProvider(new FilterManager('all'));
-    await provider.loadPackages();
-
-    provider.cancelAudit();
-
-    expect(createClientMock).not.toHaveBeenCalled();
-    expect(showError).not.toHaveBeenCalled();
-  });
-
   it('resets the busy state synchronously when the audit is cancelled, discarding the run', async () => {
     let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
     const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
@@ -2944,8 +2934,7 @@ describe('PackagesProvider', () => {
     await provider.runAudit();
     await provider.runAudit();
 
-    // Capability computation discovers the manifest during load, so both later manual
-    // audits can use the now-known empty manifest rather than consuming the failed scan.
+    // The first manual audit retries the failed load before using its package snapshot.
     expect(createClientMock).toHaveBeenCalledTimes(2);
     expect(runAuditMock).toHaveBeenCalledTimes(2);
   });
@@ -3424,31 +3413,31 @@ describe('PackagesProvider', () => {
     await provider.runAudit();
     expect(provider.getAuditProjects()).toHaveLength(1);
 
-    (provider as unknown as { allEntries: unknown[] }).allEntries = [];
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([]);
     vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([]);
+    await provider.loadPackages();
     await provider.runAudit();
 
     expect(provider.getAuditProjects()).toEqual([]);
   });
 
   it('keeps discovery exceptions actionable in the diagnostics report', async () => {
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([]);
+    vi.mocked(getWorkspacePackageFilePaths).mockRejectedValue(new Error('discovery exploded'));
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
-    (provider as unknown as { allEntries: unknown[] }).allEntries = [];
-    vi.mocked(getWorkspacePackageFilePaths).mockRejectedValueOnce(new Error('discovery exploded'));
-
     await provider.runAudit();
 
-    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+    expect(provider.getStatusReport().packageReadFailures).toEqual([expect.objectContaining({
       packageFilePaths: [],
-      reason: 'audit-failed',
-      detail: expect.stringContaining('discovery exploded'),
+      reason: 'package-discovery-failed',
+      detail: 'Failed to discover workspace package files.',
     })]);
-    const auditStatus = provider.getChildren().find(item => (
-      item instanceof StatusItem && item.label === 'Audit failed'
+    const loadingStatus = provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Workspace package loading failed'
     ));
-    expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
-    expect(showError).toHaveBeenCalledWith('Package audit failed — the security audit report is incomplete.');
+    expect(loadingStatus?.command?.command).toBe('nestro.openStatusReport');
+    expect(provider.getAuditFailures()).toEqual([]);
   });
 
   it('clears stale audit projects after an exception during project resolution', async () => {

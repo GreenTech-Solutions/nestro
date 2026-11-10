@@ -266,18 +266,19 @@ process/task actually stops would let a second operation start against the same 
 
 ### Generations
 
-`PackagesProvider` tracks three independent monotonic counters. `packageSnapshotGeneration` is
-bumped at the start of every `loadPackages()`; any outstanding update check or audit is aborted
-immediately, and `isLoadOutdated()` guards every await point inside `loadPackages()` against a
-still-later reload superseding it. `updateGeneration` pairs with an `UpdateOperation` record
-(`{generation, snapshotGeneration, abortController}`); `isUpdateCurrent()` requires the
-operation to still be the provider's `updateOperation`, its generation to match, its
-`snapshotGeneration` to match the *current* snapshot, `checkState` to still be `'running'`, and
-its signal not aborted — all five checked at every await boundary. `auditGeneration` mirrors
-this via `AuditOperation`/`isAuditCurrent()`. `checkUpdates()`/`runAuditCore()` both no-op
-immediately if already `'running'`, preventing two concurrent checks/audits from overlapping in
-the first place; the generation machinery exists for the case where a reload — which bumps the
-snapshot generation without going through that busy-check — supersedes an already-running one.
+`PackagesProvider` keeps one `OperationLifecycle<T>` (`src/providers/operationLifecycle.ts`) per
+operation — load, update check and audit. Each lifecycle owns a monotonic generation, the current
+`OperationRun` (`{kind, generation, snapshotGeneration, abortController}`), its completion promise
+and progress cancellation, including a progress token cancelled before the task starts.
+`packageSnapshotGeneration` is bumped at the start of every `loadPackages()`, which also cancels any
+outstanding update check or audit; `isLoadOutdated()` guards every await point inside the load
+against a still-later reload or disposal. `isUpdateCurrent()` and `isAuditCurrent()` require the
+run to still be its lifecycle's current run, its generation to match, its `snapshotGeneration` to
+match the *current* snapshot, the busy state to still be `'running'`, and its signal not aborted —
+checked at every await boundary. `checkUpdates()` and `runAudit()` wait for the current load
+(`waitForCurrent()`) before reading rows instead of reading packages in parallel, and retry the
+load first when the last discovery failed without finding package files. Both no-op immediately if
+already `'running'`; the generation machinery covers a reload that supersedes a running operation.
 
 ### Capability records
 

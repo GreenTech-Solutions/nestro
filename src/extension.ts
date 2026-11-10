@@ -77,14 +77,13 @@ export function activate(context: vscode.ExtensionContext): void {
   registerConfigurationWatcher(context, provider, () => packageJsonWatcher.refresh());
   registerWorkspaceFoldersWatcher(context, provider, () => packageJsonWatcher.refresh());
 
-  void provider.loadPackages().then(() => {
-    if (checkUpdatesOnStartup) {
-      void provider.checkUpdates();
-    }
-    if (runAuditOnStartup) {
-      void provider.runAudit();
-    }
-  });
+  void provider.loadPackages();
+  if (checkUpdatesOnStartup) {
+    void provider.checkUpdates();
+  }
+  if (runAuditOnStartup) {
+    void provider.runAudit();
+  }
 }
 
 export function deactivate(): void {}

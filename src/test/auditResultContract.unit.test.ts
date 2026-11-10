@@ -45,6 +45,7 @@ vi.mock('../clients', async () => {
 vi.mock('../utils', async () => {
   const auditClient = await vi.importActual<typeof import('../utils/auditClient')>('../utils/auditClient');
   const auditReport = await vi.importActual<typeof import('../utils/auditReport')>('../utils/auditReport');
+  const dependencySpec = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const { logger } = await vi.importActual<typeof import('../utils/logger')>('../utils/logger');
   const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   // Real scheduler primitives: runAudit() now schedules project audits through
@@ -56,6 +57,7 @@ vi.mock('../utils', async () => {
   return {
     ...auditClient,
     ...auditReport,
+    ...dependencySpec,
     ...operationCoordinator,
     ...rootOperation,
     ...localization,
