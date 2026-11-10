@@ -5,6 +5,8 @@ import * as utils from '../utils';
 import type { NcuUpdateTarget, OperationCoordinator, PackageMetadataOutcome, ReleaseAgeState } from '../utils';
 import { startRootOperations } from '../utils';
 import {
+  addPackageUpdatesByIdentity,
+  groupPackageIdentitiesByFile,
   packageIdentityKey,
   readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
@@ -389,6 +391,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
     }
 
     const upgrades = new Map<string, string>();
+    const identitiesByPackageFile = groupPackageIdentitiesByFile(request.identities);
     const failedPackageFilePaths = new Set<string>();
     const failures: UpdateRootFailure[] = [];
     let firstFailure: unknown;
@@ -418,9 +421,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
         return;
       }
       if (outcome.status === 'success') {
-        for (const [packageName, version] of outcome.value) {
-          upgrades.set(`${packageFilePath}\0${packageName}`, version);
-        }
+        addPackageUpdatesByIdentity(upgrades, identitiesByPackageFile.get(packageFilePath) ?? [], outcome.value);
       }
       else if (outcome.status === 'failure') {
         failedPackageFilePaths.add(packageFilePath);
@@ -433,8 +434,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
       return { kind: 'discarded', reason: 'cancelled' };
     }
 
-    const allFailed = request.packageFiles.length > 0
-      && failedPackageFilePaths.size === request.packageFiles.length;
+    const allFailed = request.packageFiles.length > 0 && failedPackageFilePaths.size === request.packageFiles.length;
     if (allFailed) {
       this.cache = undefined;
       request.onCheckCompleted?.();
@@ -464,7 +464,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
 
     const updateData = new Map<string, CachedUpdateData>();
     successfulIdentities.forEach((identity, index) => {
-      const acceptedVersion = upgrades.get(`${identity.packageFilePath}\0${identity.packageName}`);
+      const acceptedVersion = upgrades.get(packageIdentityKey(identity));
       updateData.set(
         packageIdentityKey(identity),
         {

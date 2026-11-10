@@ -43,28 +43,34 @@ digest mismatch triggers a reload. `registerWorkspaceFoldersWatcher()` refreshes
 watcher and reloads packages on `vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added
 or removed after activation is picked up without a window reload.
 
-### The provider as a thin adapter over four services
+### The provider, services, and row store
 
 `PackagesProvider` (`src/providers/PackagesProvider.ts`) implements
 `vscode.TreeDataProvider<vscode.TreeItem>` and `vscode.Disposable`. It owns mutable UI state —
-`allEntries` (the flat row list), `packageFilePaths`, `workspaceCapabilities`, operation
-generation and cancellation records, audit results and report summaries, and two `WeakMap`s
-backing the capability system (section 5). The update-result cache and its fingerprint belong to
-`UpdateOrchestrationService`. The provider delegates every non-trivial computation to one of four
-collaborators:
+`packageFilePaths`, `workspaceCapabilities`, operation generation and cancellation records, audit
+results and report summaries, and the `WeakMap` backing provider-issued row records (section 5).
+`PackageRowStore` owns the flat `allEntries` row list. `patchRow()` and `restoreAt()` record row
+mutations through `PackageCapabilityService.noteRowMutation()`. `replaceAll()` applies snapshot and
+presentation rebuilds while preserving row epochs; a new load invalidates old capabilities through
+the snapshot generation. The provider invalidates its owner-label cache whenever it replaces the
+tracked manifest-path list. The update-result cache and its fingerprint belong to
+`UpdateOrchestrationService`. The provider delegates row replacement to the row store
+and non-trivial loading, update, audit, and view work to four collaborators:
 
 | Service | File | Responsibility |
 |---|---|---|
-| `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json`, builds the flat entry list, snapshots a canonical-location baseline per manifest. |
+| `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json` and returns entries, paths, read failures, and canonical-location baselines. |
 | `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Runs `npm-check-updates` once per manifest, computes release-age state, owns the update-result cache and its fingerprint. |
 | `AuditOrchestrationService` | `auditOrchestrationService.ts` | Resolves the canonical audit project graph, runs one audit per project, attributes advisories back to rows. |
 | view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `projectStatusRows()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot of provider fields into contexts, badge, description, and status rows. |
+| `PackageRowStore` | `packageRowStore.ts` | Owns `allEntries`; `patchRow()` and `restoreAt()` record row mutations and `replaceAll()` applies bulk rebuilds. |
 
-(All four files live under `src/providers/`.) The first three are constructor-injectable —
-`PackagesProvider` accepts each as an optional parameter, defaulting to a production instance —
-which is how `src/test/packagesProvider.unit.test.ts` substitutes fakes without touching VS
-Code APIs. The fourth is not a class: it holds no state, so every call site builds a
-`ViewProjectionSnapshot` from current provider fields and gets a fresh `ViewProjection` back.
+(The four collaborators and the row store live under `src/providers/`.) The first three services
+are constructor-injectable — `PackagesProvider` accepts each as an optional parameter, defaulting
+to a production instance — which is how `src/test/packagesProvider.unit.test.ts` substitutes fakes
+without touching VS Code APIs. The view projection is stateless: every call site builds a
+`ViewProjectionSnapshot` from current provider fields and gets a fresh `ViewProjection` back. The
+row store reports row mutations through `PackageCapabilityService.noteRowMutation()`.
 
 `getChildren()` returns early while `loading` is true, and otherwise returns status rows from
 `buildStatusItems()` first, followed by the package groups from `buildTree()` in `treeBuilder.ts`.
@@ -76,7 +82,8 @@ Code APIs. The fourth is not a class: it holds no state, so every call site buil
 `emitTreeChanged()` — the provider's single mutation-notification path — computes one
 `ViewProjection` via `computeViewProjection()`, applies `badge`/`description` to the attached
 `TreeView`, publishes only the context keys that changed since the last publication
-(`publishViewContexts()` + `diffViewContexts()`), and fires `_onDidChangeTreeData`. The
+(`publishViewContexts()` + `diffViewContexts()`), and fires `_onDidChangeTreeData`. It is a no-op
+after disposal. The
 published keys are declared once in `VIEW_CONTEXT_KEYS` (`viewProjectionService.ts`):
 `canUpdateVisiblePackages`, `hasPackageFiles`, `hasReadablePackageFiles`,
 `hasDependencyEntries`, `hasAuditableProjects`, `canRunInstall`, `canRunAudit`,
@@ -189,6 +196,10 @@ still rejected. It then captures a `PackageFileStamp` (`dev`/`ino`/`size`/`mtime
 SHA-256 `manifestDigest` — the digest exists because a stat-only comparison cannot detect a
 rewrite that lands on the same size and millisecond-resolution mtime.
 
+`packageIdentityKey()` is the single row identity-key builder. It combines the exact manifest path,
+package name, and dependency section; the provider, update service, and audit attribution use this
+same key so multi-root rows stay distinct.
+
 Monorepo grouping and labels are built by `treeBuilder.ts` (`resolvePackageOwnerLabel()`,
 `resolvePackageFileLabels()`, `resolveWorkspaceFolderDisplayNames()`), entirely independent of
 the project graph above. Rows are labeled `<display name> — <relative path>` (root:
@@ -280,7 +291,7 @@ checked at every await boundary. `checkUpdates()` and `runAudit()` wait for the 
 (`waitForCurrent()`) before reading rows instead of reading packages in parallel, and retry the
 load first when the last discovery failed without finding package files. Both no-op immediately if
 already `'running'`; the generation machinery covers a reload that supersedes a running operation.
-On a rejected current load, the provider clears `allEntries`, records a `package-load-failed`
+On a rejected current load, the provider clears `PackageRowStore.allEntries`, records a `package-load-failed`
 status-report entry and leaves `nestro.noWorkspace` false. The tree never retains rows without
 their capabilities.
 

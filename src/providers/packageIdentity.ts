@@ -102,6 +102,31 @@ export function packageIdentityKey(identity: PackageIdentityTuple): string {
   return `${identity.packageFilePath}\0${identity.packageName}\0${identity.section}`;
 }
 
+export function groupPackageIdentitiesByFile(
+  identities: readonly PackageIdentityTuple[],
+): ReadonlyMap<string, readonly PackageIdentityTuple[]> {
+  const groups = new Map<string, PackageIdentityTuple[]>();
+  for (const identity of identities) {
+    const fileIdentities = groups.get(identity.packageFilePath) ?? [];
+    fileIdentities.push(identity);
+    groups.set(identity.packageFilePath, fileIdentities);
+  }
+  return groups;
+}
+
+export function addPackageUpdatesByIdentity(
+  updatesByIdentity: Map<string, string>,
+  identities: readonly PackageIdentityTuple[],
+  latestVersions: ReadonlyMap<string, string>,
+): void {
+  for (const identity of identities) {
+    const version = latestVersions.get(identity.packageName);
+    if (version !== undefined) {
+      updatesByIdentity.set(packageIdentityKey(identity), version);
+    }
+  }
+}
+
 /** Read the exact dependency spec captured for one provider row. */
 export async function readCanonicalDependencySpec(
   location: CanonicalPackageLocation,

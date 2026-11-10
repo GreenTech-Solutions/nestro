@@ -71,6 +71,7 @@ import type {
 import { PackageCapabilityService } from './capabilityService';
 import type { PackageCapabilityRecord } from './capabilityService';
 import { PackageLoadingService } from './packageLoadingService';
+import { PackageRowStore } from './packageRowStore';
 import type { PackageLoadingServiceContract } from './packageLoadingService';
 import { ManifestWriteBaselines } from './manifestWriteBaselines';
 import { OperationLifecycle } from './operationLifecycle';
@@ -89,6 +90,18 @@ import type { ViewContextKey, ViewContextMap, ViewProjection, ViewProjectionSnap
 export type PackageStateIdentity = PackageIdentityTuple;
 export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
 export type { PackageIdentityResolution, ResolvedPackageItem } from './packageIdentity';
+
+interface CreatePackageItemOptions {
+  readonly packageName: string;
+  readonly currentVersion: string;
+  readonly latest?: string;
+  readonly updateType: UpdateType;
+  readonly operation?: PackageOperation;
+  readonly packageFilePath: string;
+  readonly dev: boolean;
+  readonly versionPrefix: string;
+  readonly releaseAge?: ReleaseAgeState;
+}
 
 /** Global workspace capabilities used by toolbar and Command Palette contexts. */
 export interface WorkspaceCapabilities {
@@ -124,7 +137,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   private readonly filterChangeDisposable: vscode.Disposable;
   private readonly packageLoadingService: PackageLoadingServiceContract;
-  private allEntries: PackageTreeEntry[] = [];
   private packageFilePaths: string[] = [];
   /** Cache for `ownerLabels`; invalidated wherever `packageFilePaths` is reassigned. */
   private ownerLabelCache: ReadonlyMap<string, string> | undefined;
@@ -138,6 +150,15 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   private packageLocationBaselines = new Map<string, CanonicalPackageLocation>();
   private readonly packageItemRecords = new WeakMap<PackageItem, PackageItemRecord>();
   private readonly capabilities = new PackageCapabilityService();
+  private readonly rowStore = new PackageRowStore(identity => this.capabilities.noteRowMutation(identity));
+
+  private get allEntries(): readonly PackageTreeEntry[] {
+    return this.rowStore.allEntries;
+  }
+
+  private set allEntries(entries: PackageTreeEntry[]) {
+    this.rowStore.replaceAll(entries);
+  }
 
   private packageSnapshotGeneration = 0;
   private readonly loadLifecycle = new OperationLifecycle<'load'>('load');
@@ -209,7 +230,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return this.getPackageDetails(element);
     }
     return [...this.buildStatusItems(), ...buildTree(
-      this.allEntries,
+      this.rowStore.allEntries,
       this.filterManager.current,
       this.filterManager.search,
       this.workspaceFolderDescriptors,
@@ -396,13 +417,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (this.loading) {
       return [];
     }
-    return projectPackageTree(this.allEntries, this.filterManager.current, this.filterManager.search)
+    return projectPackageTree(this.rowStore.allEntries, this.filterManager.current, this.filterManager.search)
       .visibleOutdatedEntries
       .map(entry => entry.item);
   }
 
   getPackageIdentitiesForFile(packageFilePath: string): PackageStateIdentity[] {
-    return this.allEntries
+    return this.rowStore.allEntries
       .filter(entry => entry.packageFilePath === packageFilePath)
       .map(entry => this.packageItemRecords.get(entry.item)?.identity)
       .filter((identity): identity is PackageStateIdentity => identity !== undefined);
@@ -414,22 +435,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
-    const { dev, packageFilePath: entryPackageFilePath, item } = this.allEntries[index];
-    this.capabilities.noteRowMutation(identity);
-    this.allEntries[index] = {
-      item: this.createPackageItem(
-        identity.packageName,
-        item.versionPrefix + newVersion,
-        undefined,
-        'none',
-        undefined,
-        entryPackageFilePath,
-        dev,
-        item.versionPrefix,
-      ),
-      dev,
+    const entry = this.rowStore.allEntries[index];
+    if (entry === undefined) {
+      return;
+    }
+    const { dev, packageFilePath: entryPackageFilePath, item } = entry;
+    const replacement = this.createPackageItem({
+      packageName: identity.packageName,
+      currentVersion: item.versionPrefix + newVersion,
+      updateType: 'none',
       packageFilePath: entryPackageFilePath,
-    };
+      dev,
+      versionPrefix: item.versionPrefix,
+    });
+    if (this.rowStore.patchRow(identity, replacement) === undefined) {
+      return;
+    }
     this.emitTreeChanged();
   }
 
@@ -440,46 +461,41 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
     const index = this.findEntryIndex(record.identity);
-    const entry = index === -1 ? undefined : this.allEntries[index];
+    const entry = index === -1 ? undefined : this.rowStore.allEntries[index];
     const currentRecord = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
     if (entry === undefined || currentRecord === undefined) {
       return;
     }
     const row = currentRecord.row;
-    this.capabilities.noteRowMutation(record.identity);
-    this.allEntries[index] = {
-      item: this.createPackageItem(
-        row.packageName,
-        row.versionPrefix + newVersion,
-        undefined,
-        'none',
-        undefined,
-        row.packageFilePath,
-        row.dev,
-        row.versionPrefix,
-      ),
-      dev: row.dev,
+    const replacement = this.createPackageItem({
+      packageName: row.packageName,
+      currentVersion: row.versionPrefix + newVersion,
+      updateType: 'none',
       packageFilePath: row.packageFilePath,
-    };
+      dev: row.dev,
+      versionPrefix: row.versionPrefix,
+    });
+    if (this.rowStore.patchRow(record.identity, replacement) === undefined) {
+      return;
+    }
     this.emitTreeChanged();
   }
 
   resetUpdateData(): void {
     this.invalidateUpdateCache();
-    this.allEntries = this.allEntries.map(({ item, dev, packageFilePath }) => ({
-      item: this.createPackageItem(
-        item.packageName,
-        item.currentVersion,
-        undefined,
-        'none',
-        item.operation,
+    this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => ({
+      item: this.createPackageItem({
+        packageName: item.packageName,
+        currentVersion: item.currentVersion,
+        updateType: 'none',
+        operation: item.operation,
         packageFilePath,
         dev,
-        item.versionPrefix,
-      ),
+        versionPrefix: item.versionPrefix,
+      }),
       dev,
       packageFilePath,
-    }));
+    })));
     this.emitTreeChanged();
   }
 
@@ -495,27 +511,29 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return;
     }
 
-    const { item, dev, packageFilePath: entryPackageFilePath } = this.allEntries[index];
-    this.capabilities.noteRowMutation(identity);
+    const entry = this.rowStore.allEntries[index];
+    if (entry === undefined) {
+      return;
+    }
+    const { item, dev, packageFilePath: entryPackageFilePath } = entry;
     const activeOperation = normalizeOperation(operation, item.latest ?? item.currentVersion);
     const updateType = activeOperation !== undefined || item.latest === undefined
       ? item.updateType
       : getUpdateType(item.currentVersion, item.latest);
-    this.allEntries[index] = {
-      item: this.createPackageItem(
-        item.packageName,
-        item.currentVersion,
-        item.latest,
-        updateType,
-        activeOperation,
-        entryPackageFilePath,
-        dev,
-        item.versionPrefix,
-        item.releaseAge,
-      ),
-      dev,
+    const replacement = this.createPackageItem({
+      packageName: item.packageName,
+      currentVersion: item.currentVersion,
+      latest: item.latest,
+      updateType,
+      operation: activeOperation,
       packageFilePath: entryPackageFilePath,
-    };
+      dev,
+      versionPrefix: item.versionPrefix,
+      releaseAge: item.releaseAge,
+    });
+    if (this.rowStore.patchRow(identity, replacement) === undefined) {
+      return;
+    }
     this.emitTreeChanged();
   }
 
@@ -533,7 +551,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       return undefined;
     }
     const index = this.findEntryIndex(record.identity);
-    const currentEntry = index === -1 ? undefined : this.allEntries[index];
+    const currentEntry = index === -1 ? undefined : this.rowStore.allEntries[index];
     const currentRecord = currentEntry === undefined
       ? undefined
       : this.packageItemRecords.get(currentEntry.item);
@@ -548,23 +566,22 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const updateType = activeOperation !== undefined || row.latest === undefined
       ? row.updateType
       : getUpdateType(row.currentVersion, row.latest);
-    this.allEntries[index] = {
-      item: this.createPackageItem(
-        row.packageName,
-        row.currentVersion,
-        row.latest,
-        updateType,
-        activeOperation,
-        row.packageFilePath,
-        row.dev,
-        row.versionPrefix,
-        row.releaseAge,
-      ),
-      dev: row.dev,
+    const replacement = this.createPackageItem({
+      packageName: row.packageName,
+      currentVersion: row.currentVersion,
+      latest: row.latest,
+      updateType,
+      operation: activeOperation,
       packageFilePath: row.packageFilePath,
-    };
+      dev: row.dev,
+      versionPrefix: row.versionPrefix,
+      releaseAge: row.releaseAge,
+    });
+    if (this.rowStore.patchRow(record.identity, replacement) === undefined) {
+      return undefined;
+    }
     this.emitTreeChanged();
-    const replacementEntry = this.allEntries[index];
+    const replacementEntry = this.rowStore.allEntries[index];
     if (replacementEntry === undefined
       || generation !== this.packageSnapshotGeneration
       || this.loading
@@ -576,7 +593,6 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     if (replacementRecord === undefined) {
       return undefined;
     }
-    this.capabilities.noteRowMutation(record.identity);
     return this.capabilities.issue(record.identity, replacementRecord.row, record, this.packageSnapshotGeneration).value;
   }
 
@@ -586,33 +602,29 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     originalEntry: PackageTreeEntry,
     originalRecord: PackageItemRecord,
   ): void {
-    const currentEntry = this.allEntries[originalIndex];
+    const currentEntry = this.rowStore.allEntries[originalIndex];
     if (currentEntry?.item === originalEntry.item || currentEntry?.item === undefined) {
-      this.allEntries[originalIndex] = originalEntry;
+      this.rowStore.restoreAt(originalIndex, originalEntry);
       this.packageItemRecords.set(originalEntry.item, originalRecord);
     }
     else {
       const currentIndex = this.findEntryIndex(identity);
-      const entry = currentIndex === -1 ? undefined : this.allEntries[currentIndex];
+      const entry = currentIndex === -1 ? undefined : this.rowStore.allEntries[currentIndex];
       const record = entry === undefined ? undefined : this.packageItemRecords.get(entry.item);
       if (entry !== undefined && record !== undefined) {
         const row = record.row;
-        this.capabilities.noteRowMutation(identity);
-        this.allEntries[currentIndex] = {
-          item: this.createPackageItem(
-            row.packageName,
-            row.currentVersion,
-            row.latest,
-            row.updateType,
-            originalRecord.row.operation,
-            row.packageFilePath,
-            row.dev,
-            row.versionPrefix,
-            row.releaseAge,
-          ),
-          dev: row.dev,
+        const replacement = this.createPackageItem({
+          packageName: row.packageName,
+          currentVersion: row.currentVersion,
+          latest: row.latest,
+          updateType: row.updateType,
+          operation: originalRecord.row.operation,
           packageFilePath: row.packageFilePath,
-        };
+          dev: row.dev,
+          versionPrefix: row.versionPrefix,
+          releaseAge: row.releaseAge,
+        });
+        this.rowStore.patchRow(identity, replacement);
       }
     }
     this.emitTreeChanged();
@@ -646,7 +658,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       fileStamp: Object.freeze({ ...location.value.fileStamp }),
     });
     this.packageLocationBaselines.set(record.identity.packageFilePath, baselineLocation);
-    for (const entry of this.allEntries) {
+    for (const entry of this.rowStore.allEntries) {
       const entryRecord = this.packageItemRecords.get(entry.item);
       if (entryRecord?.identity.packageFilePath === record.identity.packageFilePath) {
         this.packageItemRecords.set(entry.item, Object.freeze({
@@ -686,10 +698,10 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
   }
 
   async showFilterPicker(): Promise<void> {
-    if (this.allEntries.length === 0) {
+    if (this.rowStore.allEntries.length === 0) {
       return;
     }
-    await this.filterManager.showPicker(getFilterCounts(this.allEntries, this.filterManager.search));
+    await this.filterManager.showPicker(getFilterCounts(this.rowStore.allEntries, this.filterManager.search));
   }
 
   loadPackages(): Promise<void> {
@@ -703,7 +715,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     const operation = this.loadLifecycle.start(snapshotGeneration);
     this.capabilities.reset();
     this.packageLocationBaselines = new Map();
-    this.packageFilePaths = [];
+    this.setPackageFilePaths([]);
     this.readablePackageFilePaths = [];
     // workspaceCapabilities is intentionally left in place here: it still holds the last
     // settled result (or the permissive pre-init default), so a reload never flashes global
@@ -743,8 +755,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
       } = snapshot;
       this.packageReadFailed = packageReadFailed;
       this.packageLocationBaselines = new Map(packageLocationBaselines);
-      this.packageFilePaths = [...packageFilePaths];
-      this.ownerLabelCache = undefined;
+      this.setPackageFilePaths(packageFilePaths);
       this.readablePackageFilePaths = [...readablePackageFilePaths];
       this.failedPackageReadPaths = [...failedPackageReadPaths];
       this.packageReadFailures = createPackageReadFailureSnapshot(
@@ -753,20 +764,13 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         packageReadFailed,
       );
       logger.info(`Loaded ${entries.length} workspace package(s).`);
-      const existingMap = new Map(this.allEntries.map(e => [
-        this.packageStateKey({
-          packageName: e.item.packageName,
-          packageFilePath: e.packageFilePath,
-          section: e.dev ? 'devDependencies' : 'dependencies',
-        }),
+      const existingMap = new Map(this.rowStore.allEntries.map(e => [
+        packageIdentityKey(packageIdentityFromValues(e.item.packageName, e.packageFilePath, e.dev)),
         e,
       ]));
-      this.allEntries = entries.map((e) => {
-        const existing = existingMap.get(this.packageStateKey({
-          packageName: e.name,
-          packageFilePath: e.packageFilePath,
-          section: e.dev ? 'devDependencies' : 'dependencies',
-        }));
+      this.rowStore.replaceAll(entries.map((e) => {
+        const identity = packageIdentityFromValues(e.name, e.packageFilePath, e.dev);
+        const existing = existingMap.get(packageIdentityKey(identity));
         // Compare bare semver (strip prefix) so that a pin operation (^1.2.3 → 1.2.3)
         // preserves existing update data rather than resetting it to 'none'.
         const existingSemver = existing?.item.currentVersion.slice(existing.item.versionPrefix.length);
@@ -775,27 +779,34 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           && (existing.item.operation !== undefined || existingSemver === newSemver);
         if (preserveExistingUpdateState) {
           return {
-            item: this.createPackageItem(
-              e.name,
-              e.current,
-              existing.item.latest,
-              existing.item.updateType,
-              existing.item.operation,
-              e.packageFilePath,
-              e.dev,
-              e.versionPrefix,
-              existing.item.releaseAge,
-            ),
+            item: this.createPackageItem({
+              packageName: e.name,
+              currentVersion: e.current,
+              latest: existing.item.latest,
+              updateType: existing.item.updateType,
+              operation: existing.item.operation,
+              packageFilePath: e.packageFilePath,
+              dev: e.dev,
+              versionPrefix: e.versionPrefix,
+              releaseAge: existing.item.releaseAge,
+            }),
             dev: e.dev,
             packageFilePath: e.packageFilePath,
           };
         }
         return {
-          item: this.createPackageItem(e.name, e.current, undefined, 'none', undefined, e.packageFilePath, e.dev, e.versionPrefix),
+          item: this.createPackageItem({
+            packageName: e.name,
+            currentVersion: e.current,
+            updateType: 'none',
+            packageFilePath: e.packageFilePath,
+            dev: e.dev,
+            versionPrefix: e.versionPrefix,
+          }),
           dev: e.dev,
           packageFilePath: e.packageFilePath,
         };
-      });
+      }));
       const workspaceCapabilities = await this.resolveWorkspaceCapabilities(
         packageFilePaths,
         readablePackageFilePaths,
@@ -812,12 +823,12 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
       this.packageLocationBaselines = new Map();
-      this.packageFilePaths = [];
+      this.setPackageFilePaths([]);
       this.readablePackageFilePaths = [];
       this.workspaceCapabilities = EMPTY_WORKSPACE_CAPABILITIES;
       this.packageReadFailed = true;
       this.capabilitiesInitialized = true;
-      this.allEntries = [];
+      this.rowStore.replaceAll([]);
       this.packageReadFailures = [{
         packageFilePaths: [],
         reason: 'package-load-failed',
@@ -866,7 +877,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           const forceAlways = getCheckUpdatesForceAlways();
           const { includePreReleases, minimumReleaseAgeDays, target } = getUpdatePolicySettings();
           const debounceSeconds = getCheckUpdatesDebounce();
-          const source = this.allEntries.map(e => ({
+          const source = this.rowStore.allEntries.map(e => ({
             name: e.item.packageName,
             current: e.item.currentVersion,
             dev: e.dev,
@@ -877,7 +888,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
           attemptedPackageFilePaths = packageFiles;
           const identities = source.map(entry => packageIdentityFromValues(entry.name, entry.packageFilePath, entry.dev));
           const currentVersions = new Map(identities.map((identity, index) => [
-            this.packageStateKey(identity),
+            packageIdentityKey(identity),
             source[index].current,
           ]));
           const result = await this.updateOrchestrationService.check({
@@ -924,28 +935,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
               : result.failure === undefined ? vscode.l10n.t('all package roots failed') : String(result.failure);
             showError(vscode.l10n.t('Failed to check updates — {0}', failureMessage), result.failure);
           }
-          this.allEntries = this.allEntries.map(({ item, dev, packageFilePath }) => {
-            const updateData = upgrades.get(this.packageStateKey(
-              packageIdentityFromValues(item.packageName, packageFilePath, dev),
-            ));
+          this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => {
+            const identity = packageIdentityFromValues(item.packageName, packageFilePath, dev);
+            const updateData = upgrades.get(packageIdentityKey(identity));
             const latest = updateData?.acceptedVersion;
             const updateType = latest === undefined ? 'none' : getUpdateType(item.currentVersion, latest);
             return {
-              item: this.createPackageItem(
-                item.packageName,
-                item.currentVersion,
+              item: this.createPackageItem({
+                packageName: item.packageName,
+                currentVersion: item.currentVersion,
                 latest,
                 updateType,
-                item.operation,
+                operation: item.operation,
                 packageFilePath,
                 dev,
-                item.versionPrefix,
-                updateData?.releaseAge,
-              ),
+                versionPrefix: item.versionPrefix,
+                releaseAge: updateData?.releaseAge,
+              }),
               dev,
               packageFilePath,
             };
-          });
+          }));
           logger.info(`Checked updates for ${source.length} package(s).`);
           this.checkState = this.failedUpdatePaths.length === 0 ? 'done' : 'incomplete';
           this.lastCheckTime = new Date();
@@ -1084,8 +1094,8 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     let shouldEmit = false;
 
     try {
-      const packageFilePaths = this.allEntries.length > 0
-        ? [...new Set(this.allEntries.map(entry => entry.packageFilePath))]
+      const packageFilePaths = this.rowStore.allEntries.length > 0
+        ? [...new Set(this.rowStore.allEntries.map(entry => entry.packageFilePath))]
         : this.readablePackageFilePaths;
       if (!this.isAuditCurrent(operation)) {
         return;
@@ -1096,7 +1106,7 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return;
       }
 
-      const rows: AuditableRow[] = this.allEntries.map(entry => ({
+      const rows: AuditableRow[] = this.rowStore.allEntries.map(entry => ({
         packageName: entry.item.packageName,
         packageFilePath: entry.packageFilePath,
         dev: entry.dev,
@@ -1208,6 +1218,9 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
   /** Computes the view projection once, applies it, and publishes only the contexts that changed. */
   private emitTreeChanged(): void {
+    if (this.disposed) {
+      return;
+    }
     const projection = computeViewProjection(this.buildViewProjectionSnapshot());
     this.applyTreeViewState(projection);
     this.publishViewContexts(projection.contexts);
@@ -1252,38 +1265,40 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     this.lastPublishedContexts = next;
   }
 
-  private createPackageItem(
-    packageName: string,
-    currentVersion: string,
-    latest: string | undefined,
-    updateType: UpdateType,
-    operation: PackageOperation | undefined = undefined,
-    packageFilePath = '',
-    dev = false,
-    versionPrefix = '',
-    releaseAge: ReleaseAgeState = { kind: 'accepted' },
-  ): PackageItem {
+  private createPackageItem(options: CreatePackageItemOptions): PackageItem {
+    const {
+      packageName,
+      currentVersion,
+      latest,
+      updateType,
+      operation,
+      packageFilePath,
+      dev,
+      versionPrefix,
+      releaseAge = { kind: 'accepted' },
+    } = options;
+    const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
+    const vulnerabilitySeverity = this.auditResults.get(packageIdentityKey(identity));
     const item = new PackageItem(
       packageName,
       currentVersion,
       latest,
       updateType,
       operation,
-      this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
+      vulnerabilitySeverity,
       packageFilePath,
       dev,
       versionPrefix,
       releaseAge,
       this.resolveOwnerLabel(packageFilePath),
     );
-    const identity = Object.freeze(packageIdentityFromValues(packageName, packageFilePath, dev));
     const row: CanonicalPackageItem = Object.freeze({
       packageName,
       currentVersion,
       latest,
       updateType,
       operation,
-      vulnerabilitySeverity: this.auditResults.get(this.auditEntryKey(packageName, packageFilePath, dev)),
+      vulnerabilitySeverity,
       packageFilePath,
       dev,
       versionPrefix,
@@ -1334,22 +1349,27 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     return this.ownerLabelCache;
   }
 
+  private setPackageFilePaths(packageFilePaths: readonly string[]): void {
+    this.packageFilePaths = [...packageFilePaths];
+    this.ownerLabelCache = undefined;
+  }
+
   private rebuildPackageItems(): void {
-    this.allEntries = this.allEntries.map(({ item, dev, packageFilePath }) => ({
-      item: this.createPackageItem(
-        item.packageName,
-        item.currentVersion,
-        item.latest,
-        item.updateType,
-        item.operation,
+    this.rowStore.replaceAll(this.rowStore.allEntries.map(({ item, dev, packageFilePath }) => ({
+      item: this.createPackageItem({
+        packageName: item.packageName,
+        currentVersion: item.currentVersion,
+        latest: item.latest,
+        updateType: item.updateType,
+        operation: item.operation,
         packageFilePath,
         dev,
-        item.versionPrefix,
-        item.releaseAge,
-      ),
+        versionPrefix: item.versionPrefix,
+        releaseAge: item.releaseAge,
+      }),
       dev,
       packageFilePath,
-    }));
+    })));
   }
 
   private get workspaceRoot(): string | undefined {
@@ -1420,41 +1440,18 @@ export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem
     }
   }
 
-  private auditEntryKey(packageName: string, packageFilePath: string, dev: boolean): string {
-    return this.packageStateKey({
-      packageName,
-      packageFilePath,
-      section: dev ? 'devDependencies' : 'dependencies',
-    });
-  }
-
-  private packageStateKey(identity: PackageStateIdentity): string {
-    return packageIdentityKey(identity);
-  }
-
   private findEntryIndex(identity: PackageStateIdentity): number {
-    const key = this.packageStateKey(identity);
-    return this.allEntries.findIndex((entry) => {
-      const record = this.packageItemRecords.get(entry.item);
-      if (record !== undefined) {
-        return this.packageStateKey(record.identity) === key;
-      }
-      return this.packageStateKey({
-        packageName: entry.item.packageName,
-        packageFilePath: entry.packageFilePath,
-        section: entry.dev ? 'devDependencies' : 'dependencies',
-      }) === key;
-    });
+    return this.rowStore.findEntryIndex(identity);
   }
 
   private findCurrentEntry(
     identity: PackageIdentityTuple,
     expectedItem?: PackageItem,
   ): PackageTreeEntry | undefined {
-    const key = this.packageStateKey(identity);
-    const matches = this.allEntries.filter((entry) => {
+    const key = packageIdentityKey(identity);
+    const matches = this.rowStore.allEntries.filter((entry) => {
       const entryIdentity = this.packageItemRecords.get(entry.item)?.identity;
-      return entryIdentity !== undefined && this.packageStateKey(entryIdentity) === key;
+      return entryIdentity !== undefined && packageIdentityKey(entryIdentity) === key;
     });
     if (matches.length !== 1) {
       return undefined;

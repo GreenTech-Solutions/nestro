@@ -15,10 +15,6 @@ export interface AuditableRow {
   readonly currentVersion: string;
 }
 
-function auditRowKey(row: Pick<AuditableRow, 'packageName' | 'packageFilePath' | 'dev'>): string {
-  return packageIdentityKey(packageIdentityFromValues(row.packageName, row.packageFilePath, row.dev));
-}
-
 /** Legacy Map-only adapters retain the conservative single-manifest behavior. */
 export function applyLegacyProjectAuditResults(
   rows: readonly AuditableRow[],
@@ -37,7 +33,14 @@ export function applyLegacyProjectAuditResults(
     ));
     if (matchingRows.length === 1) {
       const [matchingRow] = matchingRows;
-      auditResults.set(auditRowKey(matchingRow), severity);
+      auditResults.set(
+        packageIdentityKey(packageIdentityFromValues(
+          matchingRow.packageName,
+          matchingRow.packageFilePath,
+          matchingRow.dev,
+        )),
+        severity,
+      );
     }
   }
 }
@@ -85,7 +88,11 @@ export async function applyStructuredProjectAuditResults(
       // A package can own several proven advisories (npm v2 splits one package's report
       // into one advisory per `via` entry); the row badge must show the worst of them,
       // not whichever advisory happened to be attributed last.
-      const key = auditRowKey(match);
+      const key = packageIdentityKey(packageIdentityFromValues(
+        match.packageName,
+        match.packageFilePath,
+        match.dev,
+      ));
       const existing = auditResults.get(key);
       auditResults.set(key, existing === undefined ? advisory.severity : mergeSeverity(existing, advisory.severity));
     }

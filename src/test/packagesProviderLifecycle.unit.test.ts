@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { FilterManager, PackageItem, PackagesProvider, StatusItem } from '../providers';
+import {
+  FilterManager,
+  PackageItem,
+  PackagesProvider,
+  resolvePackageFileLabels,
+  StatusItem,
+} from '../providers';
 import type {
   AuditOrchestrationServiceContract,
   PackageLoadingServiceContract,
@@ -13,6 +19,14 @@ import type {
   UpdateOrchestrationServiceContract,
 } from '../providers/updateOrchestrationService';
 import type { AuditSeverity, PackageFileEntry } from '../utils';
+
+vi.mock('../providers/treeBuilder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/treeBuilder')>();
+  return {
+    ...actual,
+    resolvePackageFileLabels: vi.fn(actual.resolvePackageFileLabels),
+  };
+});
 
 const updateResult: UpdateOrchestrationResult = {
   kind: 'completed',
@@ -126,6 +140,20 @@ function mockCancelledProgress(): void {
   ));
 }
 
+function setWorkspaceFolder(name: string): void {
+  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+    configurable: true,
+    value: [{ name, uri: { fsPath: '/workspace' } }],
+  });
+}
+
+function restoreWorkspaceFolders(folders: typeof vscode.workspace.workspaceFolders): void {
+  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
+    configurable: true,
+    value: folders,
+  });
+}
+
 describe('PackagesProvider operation lifecycle', () => {
   it('waits for the current load before checking or auditing packages', async () => {
     const loadGate = deferred<PackageLoadingSnapshot>();
@@ -232,5 +260,54 @@ describe('PackagesProvider operation lifecycle', () => {
       expect.objectContaining({ reason: 'package-load-failed', detail: 'reload failed' }),
     ]);
     expect(readLastContextValue('nestro.noWorkspace')).toBe(false);
+  });
+
+  it('invalidates owner labels when a reload clears the tracked manifest paths', async () => {
+    const previousFolders = vscode.workspace.workspaceFolders;
+    const nextLoad = deferred<PackageLoadingSnapshot>();
+    const load = vi.fn<PackageLoadingServiceContract['load']>()
+      .mockResolvedValueOnce(createSnapshot())
+      .mockReturnValueOnce(nextLoad.promise);
+    const harness = createProvider(load);
+    try {
+      setWorkspaceFolder('old-workspace');
+      vi.mocked(resolvePackageFileLabels).mockClear();
+      await harness.provider.loadPackages();
+      expect(resolvePackageFileLabels).toHaveBeenCalledOnce();
+
+      setWorkspaceFolder('new-workspace');
+      const reloading = harness.provider.loadPackages();
+      harness.provider.markPackageUpdating(
+        {
+          packageName: 'react',
+          packageFilePath: '/workspace/package.json',
+          section: 'dependencies',
+        },
+        { kind: 'install' },
+      );
+      const callsBeforeLoadSettles = vi.mocked(resolvePackageFileLabels).mock.calls.length;
+      nextLoad.resolve(createSnapshot());
+      await reloading;
+
+      expect(callsBeforeLoadSettles).toBe(3);
+    }
+    finally {
+      harness.provider.dispose();
+      restoreWorkspaceFolders(previousFolders);
+    }
+  });
+
+  it('does not emit tree changes after disposal', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProvider(load);
+    await harness.provider.loadPackages();
+    const listener = vi.fn();
+    harness.provider.onDidChangeTreeData(listener);
+
+    harness.provider.dispose();
+    listener.mockClear();
+    harness.provider.setFilter('patch');
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
