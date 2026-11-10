@@ -1,7 +1,7 @@
 import { uniqueStrings } from '../shared';
 import type { StatusReportFailure, StatusReportFileLabel, StatusReportSnapshot } from '../utils';
-import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels } from './treeBuilder';
-import type { WorkspaceFolderDescriptor } from './treeBuilder';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels } from './packageLabels';
+import type { WorkspaceFolderDescriptor } from './packageLabels';
 import type { AuditProjectFailure } from './auditOrchestrationService';
 
 export interface StatusReportAssemblyInput {

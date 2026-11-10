@@ -172,7 +172,7 @@ describe('row mutation pipeline', () => {
     expect(showError).toHaveBeenCalledWith(expect.stringContaining('failed to install update'), expect.any(Error));
   });
 
-  it('keeps plural skipped-manifest wording in Pin All results', async () => {
+  it('names skipped Pin All manifests by their tree labels, not absolute paths', async () => {
     const provider = {
       getPackageIdentitiesForFile: vi.fn(() => []),
       markPackageUpdating: vi.fn(),
@@ -184,7 +184,7 @@ describe('row mutation pipeline', () => {
     await pinAllVersionsCommand(provider);
 
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Skipped unreadable manifests: /workspace/a/package.json, /workspace/b/package.json.'),
+      'All other versions are already pinned. Skipped unreadable manifests: workspace — a, workspace — b.',
     );
   });
 });

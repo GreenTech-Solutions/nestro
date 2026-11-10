@@ -70,9 +70,12 @@ coordinates its fingerprint gate, while `updateFingerprint.ts` computes the mani
 | `PackageCapabilityOperations` | `packageCapabilityOperations.ts` | Resolves and revalidates provider-issued package capabilities at command boundaries. |
 | `PackageRowMutationService` | `packageRowMutationService.ts` | Updates package row state and recovers from progress-render races. |
 | `PackageProviderState` | `packageProviderState.ts` | Owns shared snapshot state, row construction, and owner-label caching. |
-| tree view | `packageViewController.ts` | Builds tree/status items and publishes tree-view state and context keys. |
+| tree view | `packageViewController.ts` | Builds tree/status items, resolves package-detail paths through the shared label builder, and publishes tree-view state and context keys. |
+| package labels | `packageLabels.ts`, `packageLabelPaths.ts`, `packageLabelDisambiguation.ts` | Builds owner-qualified and package-file-relative labels, normalizes paths, disambiguates workspace names, and preserves folder-index ordering. |
 | status report | `statusReportAssembler.ts` | Builds defensive diagnostics snapshots and package read/update failure entries. |
-| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `projectStatusRows()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot into contexts, badge, description, and status rows. |
+| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot into contexts, badge, description, and the filtered tree projection. |
+| status-row projection | `statusRowProjection.ts` | Builds package-read, update, audit, filter, and search rows in display order from a plain snapshot. |
+| shared presentation | `src/shared/packagePresentation.ts` | Holds update-type icon/colors, dependency icons, filter colors, and the root-label string used by providers and reports. |
 | `PackageRowStore` | `packageRowStore.ts` | Owns `allEntries`; `patchRow()` and `restoreAt()` record row mutations and `replaceAll()` applies bulk rebuilds. |
 
 (All collaborators and the row store live under `src/providers/`.) Loading, update, and audit
@@ -210,13 +213,13 @@ rewrite that lands on the same size and millisecond-resolution mtime.
 package name, and dependency section; the provider, update service, and audit attribution use this
 same key so multi-root rows stay distinct.
 
-Monorepo grouping and labels are built by `treeBuilder.ts` (`resolvePackageOwnerLabel()`,
-`resolvePackageFileLabels()`, `resolveWorkspaceFolderDisplayNames()`), entirely independent of
-the project graph above. Rows are labeled `<display name> — <relative path>` (root:
+Monorepo grouping lives in `treeBuilder.ts`; owner-qualified and package-file-relative labels
+come from `packageLabels.ts` (`resolvePackageOwnerLabel()`, `resolvePackageFileLabels()`,
+`resolveWorkspaceFolderDisplayNames()`). Rows use `<display name> — <relative path>` (root:
 `<display name> — (root)`), grouped and sorted by the owning folder's `WorkspaceFolder.index`,
 root before subpaths, alphabetical beyond that (`comparePackageOwnerLabels()`) — never a flat
-cross-root sort. Folders sharing a `WorkspaceFolder.name` fall back to the shortest unique path
-suffix (`shortestUniqueSuffix()`), then to a stable `#<index>` suffix on a full collision.
+cross-root sort. `packageLabelDisambiguation.ts` chooses the shortest unique path suffix for
+repeated folder names, then a stable `#<index>` suffix on a full collision.
 
 ## 4. Operation coordinator
 
@@ -679,7 +682,7 @@ rather than trusting the raw argument; row-mutating commands use `runRowMutation
 lock acquisition, revalidation, provider marking, apply, and reconciliation; wrap manifest writes
 in `provider.withWriteSuppressed()`.
 
-**Adding a status row.** Add a case to `projectStatusRows()` in `viewProjectionService.ts`
+**Adding a status row.** Add a case to `projectStatusRows()` in `statusRowProjection.ts`
 reading from the `ViewProjectionSnapshot` fields `buildViewProjectionSnapshot()` already
 exposes; set `actionable: true` for a row that should open the diagnostics report, or an explicit
 `command: { command, title }` for a row that should invoke a different existing command instead —

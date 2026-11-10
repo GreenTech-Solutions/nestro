@@ -201,10 +201,9 @@ vi.mock('../utils', async () => {
   };
 });
 
-// Wraps the real projection in a spy so tests can assert it runs once per manifest-set
-// change, not once per row — a regression back to per-row calls would fail those counts.
-vi.mock('../providers/treeBuilder', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../providers/treeBuilder')>();
+// Wraps the shared label builder so tests can assert it runs once per manifest-set change.
+vi.mock('../providers/packageLabels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/packageLabels')>();
   return {
     ...actual,
     resolvePackageFileLabels: vi.fn(actual.resolvePackageFileLabels),

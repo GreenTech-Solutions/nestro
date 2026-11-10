@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { FILTER_TYPES, isFilterType } from '../shared';
+import { FILTER_TYPES, isFilterType, PACKAGE_PRESENTATION } from '../shared';
 import type { FilterType } from '../shared';
 
 export { FILTER_TYPES, isFilterType };
@@ -7,25 +7,25 @@ export type { FilterType };
 
 export interface FilterCounts extends Record<FilterType, number> {}
 
-const FILTER_CONFIG: Record<FilterType, { label: string; color?: string }> = {
-  all: { label: vscode.l10n.t('All') },
-  hasUpdates: { label: vscode.l10n.t('Has Updates'), color: 'charts.blue' },
-  patch: { label: vscode.l10n.t('Patch'), color: 'charts.green' },
-  minor: { label: vscode.l10n.t('Minor'), color: 'charts.yellow' },
-  breaking: { label: vscode.l10n.t('Breaking'), color: 'charts.red' },
+const FILTER_LABELS: Record<FilterType, string> = {
+  all: vscode.l10n.t('All'),
+  hasUpdates: vscode.l10n.t('Has Updates'),
+  patch: vscode.l10n.t('Patch'),
+  minor: vscode.l10n.t('Minor'),
+  breaking: vscode.l10n.t('Breaking'),
 };
 
 export function getFilterLabel(filterType: FilterType): string {
-  return FILTER_CONFIG[filterType].label;
+  return FILTER_LABELS[filterType];
 }
 
 export function getFilterIcon(
   filterType: FilterType,
   icon: string,
 ): vscode.ThemeIcon {
-  const cfg = FILTER_CONFIG[filterType];
-  return cfg.color
-    ? new vscode.ThemeIcon(icon, new vscode.ThemeColor(cfg.color))
+  const color = PACKAGE_PRESENTATION.filterColors[filterType];
+  return color !== undefined
+    ? new vscode.ThemeIcon(icon, new vscode.ThemeColor(color))
     : new vscode.ThemeIcon(icon);
 }
 

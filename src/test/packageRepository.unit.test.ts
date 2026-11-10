@@ -5,11 +5,11 @@ import {
   getWorkspacePackageFilePath,
   getWorkspacePackageFilePaths,
   readPackageFile,
-  toWorkspaceRelativePackageFilePath,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
 } from '../utils';
 import type { PreparedPackageFile } from '../utils';
+import { toWorkspaceRelativePackageFilePath } from '../utils/packageRepository';
 
 describe('getWorkspacePackageFilePath()', () => {
   resetWorkspaceFoldersBeforeEach();

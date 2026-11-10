@@ -13,7 +13,6 @@ import {
   findWorkspacePackageJsonFiles,
   getWorkspacePackageFilePath,
   readPackageFile,
-  toWorkspaceRelativePackageFilePath,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
 } from './packageRepository';
@@ -134,7 +133,7 @@ export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersion
       result = preparePinAllVersions(rawFile.raw);
     }
     catch (err) {
-      skippedFiles.push(toWorkspaceRelativePackageFilePath(uri.fsPath));
+      skippedFiles.push(uri.fsPath);
       logger.error(`Failed to read package.json at ${uri.toString()} for Pin All; skipping it.`, err);
       continue;
     }

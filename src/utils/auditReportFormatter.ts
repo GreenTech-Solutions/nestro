@@ -4,6 +4,7 @@ import { sanitizeAuditText } from './auditReport';
 import type { AuditAdvisory, AuditFixAvailability } from './auditReport';
 import { formatAdvisoryRows, formatPackageLevelFindings } from './localization';
 import type { AuditProjectFailure, AuditProjectSummary } from '../providers';
+import { PACKAGE_PRESENTATION } from '../shared';
 
 /** Formats all project reports as plain text; package-controlled values never create lines. */
 export function formatAuditReport(
@@ -105,7 +106,7 @@ function formatProjectLabel(summary: AuditProjectSummary): string {
   const root = summary.project.workspaceFolder;
   const relativeRoot = path.relative(root, summary.project.projectRoot).replace(/\\/g, '/');
   return safe(relativeRoot === ''
-    ? vscode.l10n.t('(root)')
+    ? vscode.l10n.t(PACKAGE_PRESENTATION.rootLabel)
     : relativeRoot.startsWith('..') ? vscode.l10n.t('(external project)') : relativeRoot);
 }
 

@@ -67,7 +67,7 @@ describe('pinAllVersionsCommand()', () => {
   it('names skipped manifests alongside a successful pin', async () => {
     vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce({
       count: 2,
-      skippedFiles: ['apps/broken/package.json'],
+      skippedFiles: ['/workspace/apps/broken/package.json'],
     });
     const provider = makeProvider();
 
@@ -75,14 +75,14 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'Pinned 2 package versions. Skipped unreadable manifest: apps/broken/package.json.',
+      'Pinned 2 package versions. Skipped unreadable manifest: workspace — apps/broken.',
     );
   });
 
   it('names skipped manifests when nothing else needed pinning', async () => {
     vi.mocked(pinAllWorkspaceDependencyVersions).mockResolvedValueOnce({
       count: 0,
-      skippedFiles: ['apps/broken/package.json'],
+      skippedFiles: ['/workspace/apps/broken/package.json'],
     });
     const provider = makeProvider();
 
@@ -90,7 +90,7 @@ describe('pinAllVersionsCommand()', () => {
 
     expect(provider.loadPackages).not.toHaveBeenCalled();
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      'All other versions are already pinned. Skipped unreadable manifest: apps/broken/package.json.',
+      'All other versions are already pinned. Skipped unreadable manifest: workspace — apps/broken.',
     );
   });
 

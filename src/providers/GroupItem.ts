@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CONTEXT_VALUE_TOKENS } from '../shared';
+import { CONTEXT_VALUE_TOKENS, PACKAGE_PRESENTATION } from '../shared';
 import { formatPackageGroupDescription } from '../utils';
 
 export class GroupItem extends vscode.TreeItem {
@@ -12,7 +12,10 @@ export class GroupItem extends vscode.TreeItem {
   ) {
     super(label, vscode.TreeItemCollapsibleState.Expanded);
     this.description = formatPackageGroupDescription(totalCount, outdatedCount);
-    this.iconPath = new vscode.ThemeIcon(isDev ? 'tools' : 'package');
+    const icon = isDev
+      ? PACKAGE_PRESENTATION.dependencyIcons.devDependencies
+      : PACKAGE_PRESENTATION.dependencyIcons.dependencies;
+    this.iconPath = new vscode.ThemeIcon(icon);
     this.contextValue = CONTEXT_VALUE_TOKENS.group;
   }
 }

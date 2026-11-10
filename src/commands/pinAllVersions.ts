@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { PackagesProvider } from '../providers';
+import {
+  getLocalizedPackageLabelFormatting,
+  PackagesProvider,
+  resolvePackageFileLabels,
+  toWorkspaceFolderDescriptors,
+} from '../providers';
 import { describeError } from '../shared';
 import {
   formatPinnedPackageVersions,
@@ -53,27 +58,35 @@ async function reconcilePinAll(execution: PinAllExecution): Promise<void> {
   }
   clearMutationProgress(execution.marked);
   logger.info(`Pinned ${execution.result.count} package version(s).`);
-  if (execution.result.skippedFiles.length > 0) {
-    logger.warn(`Pin All could not read: ${execution.result.skippedFiles.join(', ')}.`);
+  const skippedLabels = labelPackageFiles(execution.result.skippedFiles);
+  if (skippedLabels.length > 0) {
+    logger.warn(`Pin All could not read: ${skippedLabels.join(', ')}.`);
   }
-  const message = formatPinAllMessage(execution.result.count, execution.result.skippedFiles);
+  const message = formatPinAllMessage(execution.result.count, skippedLabels);
   if (execution.result.count > 0) {
     await execution.checked.provider.loadPackages();
   }
   void vscode.window.showInformationMessage(message);
 }
 
-function formatPinAllMessage(count: number, skippedFiles: readonly string[]): string {
+/** Names manifests by the same owner-qualified labels the tree shows. */
+function labelPackageFiles(packageFilePaths: readonly string[]): string[] {
+  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
+  return resolvePackageFileLabels(packageFilePaths, folders, getLocalizedPackageLabelFormatting())
+    .map(({ owner }) => owner.label);
+}
+
+function formatPinAllMessage(count: number, skippedLabels: readonly string[]): string {
   const base = count === 0
-    ? skippedFiles.length === 0
+    ? skippedLabels.length === 0
       ? vscode.l10n.t('All versions are already pinned.')
       : vscode.l10n.t('All other versions are already pinned.')
     : formatPinnedPackageVersions(count);
-  if (skippedFiles.length === 0) {
+  if (skippedLabels.length === 0) {
     return base;
   }
-  const skipped = skippedFiles.length === 1
-    ? vscode.l10n.t('Skipped unreadable manifest: {0}.', skippedFiles[0])
-    : vscode.l10n.t('Skipped unreadable manifests: {0}.', skippedFiles.join(', '));
+  const skipped = skippedLabels.length === 1
+    ? vscode.l10n.t('Skipped unreadable manifest: {0}.', skippedLabels[0])
+    : vscode.l10n.t('Skipped unreadable manifests: {0}.', skippedLabels.join(', '));
   return vscode.l10n.t('{0} {1}', base, skipped);
 }

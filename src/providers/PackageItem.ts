@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CONTEXT_VALUE_TOKENS, sanitizeInlineText } from '../shared';
+import { CONTEXT_VALUE_TOKENS, PACKAGE_PRESENTATION, sanitizeInlineText } from '../shared';
 import {
   AuditSeverity,
   formatAuditSeverityLabel,
@@ -9,6 +9,7 @@ import {
   ReleaseAgeState,
   UpdateType,
 } from '../utils';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './packageLabels';
 
 export type PackageOperation
   = | { readonly kind: 'update'; readonly target: string }
@@ -86,15 +87,9 @@ export class PackageItem extends vscode.TreeItem {
       this.description = vscode.l10n.t('{0} {1}', this.description, releaseAgeText);
       this.tooltip = vscode.l10n.t('{0}\n{1}', this.tooltip, releaseAgeText);
     }
-    const icons: Record<UpdateType, vscode.ThemeIcon> = {
-      breaking: new vscode.ThemeIcon('triangle-up', new vscode.ThemeColor('charts.red')),
-      minor: new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.yellow')),
-      patch: new vscode.ThemeIcon('arrow-small-up', new vscode.ThemeColor('charts.green')),
-      none: new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
-    };
     this.iconPath = this.operation === undefined
       ? vulnerabilitySeverity === undefined
-        ? icons[updateType]
+        ? getUpdateTypeIcon(updateType)
         : getVulnerabilityIcon(vulnerabilitySeverity)
       : getOperationIcon(this.operation);
     this.accessibilityInformation = {
@@ -142,7 +137,12 @@ function resolveWorkspaceOwner(packageFilePath: string): string | undefined {
     if (folder === undefined) {
       return undefined;
     }
-    return folder.name || folder.uri.fsPath.split(/[\\/]/).at(-1);
+    const workspaceFolders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
+    return resolvePackageFileLabels(
+      [packageFilePath],
+      workspaceFolders,
+      getLocalizedPackageLabelFormatting(),
+    ).find(label => label.packageFilePath === packageFilePath)?.owner.label;
   }
   catch {
     return undefined;
@@ -151,6 +151,11 @@ function resolveWorkspaceOwner(packageFilePath: string): string | undefined {
 
 function getUpdateTypeLabel(updateType: UpdateType): string {
   return vscode.l10n.t('{0} update', formatUpdateTypeLabel(updateType));
+}
+
+function getUpdateTypeIcon(updateType: UpdateType): vscode.ThemeIcon {
+  const presentation = PACKAGE_PRESENTATION.updateTypes[updateType];
+  return new vscode.ThemeIcon(presentation.icon, new vscode.ThemeColor(presentation.color));
 }
 
 function getAccessibilityLabel(

@@ -24,7 +24,7 @@ export { CHECK_CONCURRENCY_CAP, createCheckCoordinator, MUTATION_CONCURRENCY_CAP
 export { detectPackageManager } from './packageManager';
 export { getPackageDirectory, pinAllWorkspaceDependencyVersions, readAllWorkspaceDependencies, readWorkspaceDependencies, setVersionPin, switchDependencyType, updateDependencyVersionsInFile, updateDependencyVersionsInFilesAtomically, updateWorkspaceDependencyVersions } from './packageReader';
 export type { PackageFileEntries, PackageFileEntry, PackageReadFailure, SkippedPackageFile } from './packageReader';
-export { findWorkspacePackageJsonFiles, getWorkspacePackageFilePath, getWorkspacePackageFilePaths, readPackageFile, toWorkspaceRelativePackageFilePath, writeManyPreparedPackageFilesAtomically, writePreparedPackageFile } from './packageRepository';
+export { findWorkspacePackageJsonFiles, getWorkspacePackageFilePath, getWorkspacePackageFilePaths, readPackageFile, writeManyPreparedPackageFilesAtomically, writePreparedPackageFile } from './packageRepository';
 export type { PreparedPackageFile } from './packageRepository';
 export { DependencyTypeConflictError, extractVersionPrefix, parsePackageJson, prepareDependencyType, prepareDependencyVersions, preparePinAllVersions, prepareVersionPin, serializePackageJson, transformDependencyType, transformDependencyVersions, transformPinAllVersions, transformVersionPin, VersionPinConflictError } from './packageTransforms';
 export type { PackageFileDependencyUpdates, PackageJsonDocument } from './packageTransforms';

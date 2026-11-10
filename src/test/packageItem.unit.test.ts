@@ -169,6 +169,13 @@ describe('PackageItem', () => {
     expect(item.accessibilityInformation?.label).not.toMatch(/[\u0000-\u001f\u007f\u2028\u2029]/);
   });
 
+  it('uses the shared owner-qualified label when no workspace label is supplied', () => {
+    const item = new PackageItem('pkg', '^1.0.0', undefined, 'none', undefined, undefined, '/workspace/package.json');
+
+    expect(item.workspaceOwner).toBe('workspace — (root)');
+    expect(item.accessibilityInformation?.label).toContain('Workspace owner: workspace — (root)');
+  });
+
   it('strips 8-bit CSI and OSC sequences and bounds the length', () => {
     expect(sanitizePackageText('a\u009b31mb\u001b]0;title\u0007c\td\u0000e')).toBe('abc d e');
     expect(sanitizePackageText('x'.repeat(300))).toHaveLength(240);

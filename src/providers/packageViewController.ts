@@ -1,5 +1,5 @@
-import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { PACKAGE_PRESENTATION } from '../shared';
 import { formatAuditSeverityLabel, formatUpdateTypeLabel } from '../utils';
 import { FilterManager } from './FilterManager';
 import { GroupItem } from './GroupItem';
@@ -18,6 +18,7 @@ import {
 } from './viewProjectionService';
 import type { ViewContextKey, ViewContextMap, ViewProjection, ViewProjectionSnapshot } from './viewProjectionService';
 import { buildTree } from './treeBuilder';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels } from './packageLabels';
 
 /** Owns tree projection, status rows, and VS Code context publication. */
 export class PackageViewController implements vscode.Disposable {
@@ -133,7 +134,12 @@ export class PackageViewController implements vscode.Disposable {
 
   private getPackageDetails(item: PackageItem): vscode.TreeItem[] {
     const details = [
-      new PackageDetailItem(item.dev ? vscode.l10n.t('Dev dependency') : vscode.l10n.t('Dependency'), item.dev ? 'tools' : 'package'),
+      new PackageDetailItem(
+        item.dev ? vscode.l10n.t('Dev dependency') : vscode.l10n.t('Dependency'),
+        item.dev
+          ? PACKAGE_PRESENTATION.dependencyIcons.devDependencies
+          : PACKAGE_PRESENTATION.dependencyIcons.dependencies,
+      ),
       new PackageDetailItem(vscode.l10n.t('Current: {0}', sanitizePackageText(item.currentVersion)), 'tag'),
     ];
     if (item.latest !== undefined) {
@@ -151,23 +157,17 @@ export class PackageViewController implements vscode.Disposable {
       ), 'warning'));
     }
     if (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath !== undefined) {
-      const relativeFile = this.toRelativePackageFilePath(item.packageFilePath);
-      if (relativeFile !== undefined) {
+      const relativeFile = item.packageFilePath === ''
+        ? undefined
+        : resolvePackageFileLabels(
+          [item.packageFilePath],
+          this.state.workspaceFolderDescriptors,
+          getLocalizedPackageLabelFormatting(),
+        )[0]?.relativePackageFilePath ?? item.packageFilePath;
+      if (relativeFile !== undefined && relativeFile !== 'package.json') {
         details.push(new PackageDetailItem(vscode.l10n.t('File: {0}', sanitizePackageText(relativeFile)), 'file'));
       }
     }
     return details;
-  }
-
-  private toRelativePackageFilePath(packageFilePath: string): string | undefined {
-    if (packageFilePath === '') {
-      return undefined;
-    }
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath));
-    if (workspaceFolder === undefined) {
-      return packageFilePath;
-    }
-    const relativeFile = path.relative(workspaceFolder.uri.fsPath, packageFilePath).replace(/\\/g, '/');
-    return relativeFile === 'package.json' ? undefined : relativeFile;
   }
 }

@@ -9,8 +9,9 @@ import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity
 import type { CanonicalPackageItem, CanonicalPackageLocation, PackageItemRecord } from './packageIdentity';
 import { PackageRowStore } from './packageRowStore';
 import { OperationLifecycle } from './operationLifecycle';
-import type { PackageTreeEntry, WorkspaceFolderDescriptor } from './treeBuilder';
-import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './treeBuilder';
+import type { PackageTreeEntry } from './treeBuilder';
+import type { WorkspaceFolderDescriptor } from './packageLabels';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './packageLabels';
 import { EMPTY_WORKSPACE_CAPABILITIES } from './workspaceCapabilityResolver';
 import type { WorkspaceCapabilities } from './workspaceCapabilityResolver';
 

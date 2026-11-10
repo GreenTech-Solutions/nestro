@@ -417,7 +417,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
 
     await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({
       count: 1,
-      skippedFiles: ['b/package.json'],
+      skippedFiles: ['/workspace/b/package.json'],
     });
 
     expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(1);

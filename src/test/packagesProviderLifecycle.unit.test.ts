@@ -20,8 +20,8 @@ import type {
 } from '../providers/updateOrchestrationService';
 import type { AuditSeverity, PackageFileEntry } from '../utils';
 
-vi.mock('../providers/treeBuilder', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../providers/treeBuilder')>();
+vi.mock('../providers/packageLabels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/packageLabels')>();
   return {
     ...actual,
     resolvePackageFileLabels: vi.fn(actual.resolvePackageFileLabels),
