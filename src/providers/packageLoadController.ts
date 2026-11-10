@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { describeError } from '../shared';
 import { logger, showError } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
 import { createPackageReadFailureSnapshot } from './statusReportAssembler';
@@ -132,7 +133,7 @@ export class PackageLoadController {
     this.state.packageReadFailed = true;
     this.state.capabilitiesInitialized = true;
     this.state.rowStore.replaceAll([]);
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = describeError(error);
     this.state.packageReadFailures = [{ packageFilePaths: [], reason: 'package-load-failed', detail }];
     showError(vscode.l10n.t('Failed to load packages — {0}', detail), error);
   }

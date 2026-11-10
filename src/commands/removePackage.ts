@@ -1,14 +1,13 @@
 import * as vscode from 'vscode';
-import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
+import { ClientManager } from '../clients';
 import { isPackageItem, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
-import { COMMAND_IDS } from '../shared';
+import { COMMAND_IDS, describeError } from '../shared';
 import {
   formatDependencySectionLabel,
   formatShellTaskCommandForLog,
   formatShellTaskFailureMessage,
   logger,
-  mutationCoordinator,
   runShellTaskAndWait,
   showError,
 } from '../utils';
@@ -17,75 +16,109 @@ import {
   resolveUnambiguousManifestEntry,
   revalidateCommandPackageItem,
 } from './packageIdentity';
+import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
+import type { RowMutationExecution, RowMutationProgress } from './rowMutation';
 
 const clientManager = new ClientManager();
 
+interface RemoveInput {
+  readonly item: unknown;
+  readonly provider: PackagesProvider;
+}
+
+interface RemoveMutation {
+  readonly capability: ResolvedPackageItem;
+  readonly provider: PackagesProvider;
+}
+
+interface RemoveChecked {
+  readonly capability: ResolvedPackageItem;
+  readonly client: Awaited<ReturnType<ClientManager['getClient']>>;
+}
+
+interface RemoveMarked {
+  readonly capability: ResolvedPackageItem;
+  readonly progress: RowMutationProgress;
+}
+
+interface RemoveOutcome {
+  readonly exitCode: number | undefined;
+  readonly taskName: string;
+}
+
+type RemoveExecution = RowMutationExecution<RemoveChecked, RemoveMarked, RemoveOutcome>;
+
 export async function removePackageCommand(item: unknown, provider: PackagesProvider): Promise<void> {
-  if (!isPackageItem(item)) {
-    logger.warn(`${COMMAND_IDS.removePackage} invoked without a valid package item; ignoring.`);
-    return;
-  }
+  await runRowMutation<RemoveInput, RemoveMutation, RemoveChecked, RemoveMarked, RemoveOutcome>({ item, provider }, {
+    guard: input => guardRemoveItem(input.item),
+    resolve: async (input) => {
+      const capability = await resolveCommandPackageItem(input.item, input.provider);
+      return capability === undefined || !await confirmRemoval(capability)
+        ? undefined
+        : { capability, provider: input.provider };
+    },
+    lockTargets: ({ capability }) => [capability.packageFilePath],
+    revalidate: async ({ capability, provider: currentProvider }) => {
+      const checked = await resolveUnambiguousManifestEntry(capability, currentProvider);
+      if (checked === undefined) {
+        return undefined;
+      }
+      const client = await clientManager.getClient(checked.packageDirectory);
+      const beforeTask = await revalidateCommandPackageItem(checked, currentProvider);
+      return beforeTask === undefined ? undefined : { capability: beforeTask, client };
+    },
+    mark: checked => markRemove(checked, provider),
+    apply: async ({ capability: checked, client }) => {
+      const command = client.buildRemoveCommand([checked.item.packageName]);
+      logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
+      const taskName = vscode.l10n.t('Remove {0}', sanitizePackageText(checked.item.packageName));
+      const exitCode = await runShellTaskAndWait(command, taskName, checked.packageDirectory);
+      provider.invalidateUpdateCache();
+      return { exitCode, taskName };
+    },
+    reconcile: execution => reconcileRemove(execution, provider),
+    reportError: error => showError(vscode.l10n.t('failed to remove package — {0}', describeError(error)), error),
+  });
+}
 
-  const capability = await resolveCommandPackageItem(item, provider);
-  if (capability === undefined) {
-    return;
+function guardRemoveItem(item: unknown): boolean {
+  if (isPackageItem(item)) {
+    return true;
   }
+  logger.warn(`${COMMAND_IDS.removePackage} invoked without a valid package item; ignoring.`);
+  return false;
+}
 
-  const current = capability.item;
+async function confirmRemoval(capability: ResolvedPackageItem): Promise<boolean> {
   const removeAction = vscode.l10n.t('Remove Package');
   const confirmed = await vscode.window.showWarningMessage(
     vscode.l10n.t(
       'Remove {0} from {1}?',
-      sanitizePackageText(current.packageName),
+      sanitizePackageText(capability.item.packageName),
       formatDependencySectionLabel(capability.identity.section),
     ),
     { modal: true },
     removeAction,
   );
-  if (confirmed !== removeAction) {
+  return confirmed === removeAction;
+}
+
+function markRemove(checked: RemoveChecked, provider: PackagesProvider): RemoveMarked | undefined {
+  const progress = markPackageCapabilities(provider, [{ capability: checked.capability, operation: { kind: 'remove' } }]);
+  return progress === undefined
+    ? undefined
+    : { capability: progress.capabilities[0], progress };
+}
+
+async function reconcileRemove(execution: RemoveExecution, provider: PackagesProvider): Promise<void> {
+  if (execution.kind === 'apply-failed') {
+    clearMutationProgress(execution.marked.progress);
     return;
   }
-
-  // Locked from the pre-task manifest re-read through the remove task and the
-  // reload/rollback that follows it. The confirmation dialog above stays outside the
-  // lock so it never blocks an unrelated project root.
-  const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
-  await mutationCoordinator.runExclusive(projectKey, async () => {
-    const checked = await resolveUnambiguousManifestEntry(capability, provider);
-    if (checked === undefined) {
-      return;
-    }
-
-    let activeCapability: ResolvedPackageItem | undefined;
-    try {
-      const client = await clientManager.getClient(checked.packageDirectory);
-      const beforeTask = await revalidateCommandPackageItem(checked, provider);
-      if (beforeTask === undefined) {
-        activeCapability = undefined;
-        return;
-      }
-      activeCapability = provider.markPackageUpdatingForCapability(beforeTask, { kind: 'remove' });
-      if (activeCapability === undefined) {
-        return;
-      }
-      const command = client.buildRemoveCommand([beforeTask.item.packageName]);
-      logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
-      const taskName = vscode.l10n.t('Remove {0}', sanitizePackageText(beforeTask.item.packageName));
-      const exitCode = await runShellTaskAndWait(command, taskName, beforeTask.packageDirectory);
-      provider.invalidateUpdateCache();
-      if (exitCode === 0) {
-        await provider.loadPackages();
-        return;
-      }
-      provider.markPackageUpdatingForCapability(activeCapability, undefined);
-      showError(formatShellTaskFailureMessage(taskName, exitCode));
-      await provider.loadPackages();
-    }
-    catch (err) {
-      if (activeCapability !== undefined) {
-        provider.markPackageUpdatingForCapability(activeCapability, undefined);
-      }
-      showError(vscode.l10n.t('failed to remove package — {0}', err instanceof Error ? err.message : String(err)), err);
-    }
-  });
+  const { exitCode, taskName } = execution.result;
+  if (exitCode !== 0) {
+    clearMutationProgress(execution.marked.progress);
+    showError(formatShellTaskFailureMessage(taskName, exitCode));
+  }
+  await provider.loadPackages();
 }

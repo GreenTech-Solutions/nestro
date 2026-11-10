@@ -1,74 +1,66 @@
 import * as vscode from 'vscode';
-import { resolveMutationCoordinatorKey } from '../clients';
 import { PackagesProvider } from '../providers';
+import { describeError } from '../shared';
 import {
   formatPinnedPackageVersions,
   getWorkspacePackageFilePaths,
   logger,
-  mutationCoordinator,
   pinAllWorkspaceDependencyVersions,
   showError,
 } from '../utils';
+import { reconcileFailedPackageMutation } from './packageUpdateSteps';
+import { clearMutationProgress, markPackageIdentities, runRowMutation } from './rowMutation';
+import type { IdentityMutationProgress, RowMutationExecution } from './rowMutation';
+
+interface PinAllMutation {
+  readonly packageFilePaths: readonly string[];
+  readonly provider: PackagesProvider;
+}
+
+type PinAllOutcome = Awaited<ReturnType<typeof pinAllWorkspaceDependencyVersions>>;
+type PinAllExecution = RowMutationExecution<PinAllMutation, IdentityMutationProgress, PinAllOutcome>;
 
 export async function pinAllVersionsCommand(provider: PackagesProvider): Promise<void> {
-  try {
-    // Pin All can touch every workspace package.json, so it locks every project root for
-    // the full write + reload rather than one at a time: a concurrent single-row
-    // Pin/Update/Remove on any of these manifests waits behind this bulk write.
-    const packageFilePaths = await getWorkspacePackageFilePaths();
-    const projectKeys = await Promise.all(
-      packageFilePaths.map(packageFilePath => resolveMutationCoordinatorKey(packageFilePath)),
+  await runRowMutation<PackagesProvider, PinAllMutation, PinAllMutation, IdentityMutationProgress, PinAllOutcome>(provider, {
+    guard: () => true,
+    resolve: async currentProvider => ({
+      packageFilePaths: await getWorkspacePackageFilePaths(),
+      provider: currentProvider,
+    }),
+    lockTargets: mutation => mutation.packageFilePaths,
+    revalidate: mutation => mutation,
+    mark: ({ packageFilePaths, provider: currentProvider }) => markPackageIdentities(
+      currentProvider,
+      packageFilePaths.flatMap(packageFilePath => currentProvider.getPackageIdentitiesForFile(packageFilePath)),
+      { kind: 'pin' },
+    ),
+    apply: async ({ provider: currentProvider }) => await currentProvider.withWriteSuppressed(
+      () => pinAllWorkspaceDependencyVersions(),
+    ),
+    reconcile: execution => reconcilePinAll(execution),
+    reportError: error => showError(vscode.l10n.t('Failed to pin all versions — {0}', describeError(error)), error),
+  });
+}
+
+async function reconcilePinAll(execution: PinAllExecution): Promise<void> {
+  if (execution.kind === 'apply-failed') {
+    clearMutationProgress(execution.marked);
+    await reconcileFailedPackageMutation(
+      execution.checked.provider,
+      'Failed to reconcile package state after a failed Pin All.',
     );
-
-    await mutationCoordinator.runManyExclusive(projectKeys, async () => {
-      let count = 0;
-      let skippedFiles: readonly string[] = [];
-      const activeIdentities = packageFilePaths.flatMap(packageFilePath => (
-        provider.getPackageIdentitiesForFile?.(packageFilePath) ?? []
-      ));
-      activeIdentities.forEach(identity => provider.markPackageUpdating(identity, { kind: 'pin' }));
-      // Set only after withWriteSuppressed() fully returns, so a throw anywhere in
-      // that call — including its own post-write bookkeeping, not just the pin work
-      // itself — is treated as a failure rather than inferred from a stray variable.
-      let succeeded = false;
-      try {
-        const outcome = await provider.withWriteSuppressed(() => pinAllWorkspaceDependencyVersions());
-        count = outcome.count;
-        skippedFiles = outcome.skippedFiles;
-        succeeded = true;
-      }
-      finally {
-        activeIdentities.forEach(identity => provider.markPackageUpdating(identity, undefined));
-        if (!succeeded) {
-          // The bulk write may have applied to a subset of files even though it tries
-          // to roll itself back; reconcile from disk. A reload failure here is logged,
-          // not raised, so it never replaces the pin failure the user is about to see.
-          try {
-            provider.invalidateUpdateCache();
-            await provider.loadPackages();
-          }
-          catch (reconcileErr) {
-            logger.error('Failed to reconcile package state after a failed Pin All.', reconcileErr);
-          }
-        }
-      }
-
-      logger.info(`Pinned ${count} package version(s).`);
-      if (skippedFiles.length > 0) {
-        logger.warn(`Pin All could not read: ${skippedFiles.join(', ')}.`);
-      }
-      const message = formatPinAllMessage(count, skippedFiles);
-      if (count === 0) {
-        void vscode.window.showInformationMessage(message);
-        return;
-      }
-      await provider.loadPackages();
-      void vscode.window.showInformationMessage(message);
-    });
+    return;
   }
-  catch (err) {
-    showError(vscode.l10n.t('Failed to pin all versions — {0}', err instanceof Error ? err.message : String(err)), err);
+  clearMutationProgress(execution.marked);
+  logger.info(`Pinned ${execution.result.count} package version(s).`);
+  if (execution.result.skippedFiles.length > 0) {
+    logger.warn(`Pin All could not read: ${execution.result.skippedFiles.join(', ')}.`);
   }
+  const message = formatPinAllMessage(execution.result.count, execution.result.skippedFiles);
+  if (execution.result.count > 0) {
+    await execution.checked.provider.loadPackages();
+  }
+  void vscode.window.showInformationMessage(message);
 }
 
 function formatPinAllMessage(count: number, skippedFiles: readonly string[]): string {

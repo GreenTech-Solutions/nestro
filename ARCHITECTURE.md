@@ -674,8 +674,9 @@ distinct registry configuration format.
 internal-only command additionally gets a `commandPalette` entry with `"when": "false"`);
 register it in `activate()`; if it targets a row, resolve identity through
 `resolveCommandPackageItem()`/`revalidateCommandPackageItem()` (`src/commands/packageIdentity.ts`)
-rather than trusting the raw argument; if it mutates `package.json`, acquire
-`mutationCoordinator` on the row's `resolveMutationCoordinatorKey()` result and wrap the write
+rather than trusting the raw argument; row-mutating commands use `runRowMutation()`
+(`src/commands/rowMutation.ts`) for guard, resolution, canonical project-key resolution, sorted
+lock acquisition, revalidation, provider marking, apply, and reconciliation; wrap manifest writes
 in `provider.withWriteSuppressed()`.
 
 **Adding a status row.** Add a case to `projectStatusRows()` in `viewProjectionService.ts`

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
-import { uniqueStrings } from '../shared';
+import { describeError, uniqueStrings } from '../shared';
 import { getUpdateType, logger, showError } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
 import type { PackageIdentityTuple } from './packageIdentity';
@@ -193,7 +193,7 @@ export class PackageUpdateController {
       return;
     }
     this.state.failedUpdatePaths = uniqueStrings(attemptedPackageFilePaths);
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = describeError(error);
     this.state.updateFailures = [{
       packageFilePaths: [...attemptedPackageFilePaths],
       reason: 'update-check-failed',
