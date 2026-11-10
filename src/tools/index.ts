@@ -29,6 +29,8 @@ export { mainReleaseCandidate, parseReleaseCandidateArgs } from './releaseCandid
 export { parseTagVersion, runReleasePrepare } from './releasePrepare';
 export type { ReleasePrepareIo } from './releasePrepare';
 export { createNodeReleasePrepareDependencies, mainReleasePrepare, parseCommitLog, parseReleasePrepareArgs } from './releasePrepareCli';
+export { evaluatePublishToolPolicy, idTokenViolations, marketplaceStepViolations, PUBLISH_TOOL_LOCKFILE_PATH, PUBLISH_TOOL_MANIFEST_PATH, ROOT_MANIFEST_PATH } from './releasePublishToolPolicy';
+export type { PublishToolFiles } from './releasePublishToolPolicy';
 export { evaluateReleaseCandidateWorkflowPolicy, evaluateReleaseConfigPolicy, evaluateReleaseDispatchWorkflowPolicy, evaluateReleasePrepareWorkflowPolicy, evaluateReleaseWorkflowPolicy, RELEASE_CANDIDATE_WORKFLOW_PATH, RELEASE_CONFIG_PATH, RELEASE_DISPATCH_WORKFLOW_PATH, RELEASE_PREPARE_WORKFLOW_PATH, RELEASE_WORKFLOW_PATH } from './releaseWorkflowPolicy';
 export { bundleFileName, bundleMemberNames, bundleUploadPaths, candidateKey, CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, COMPRESSED_SIZE_BUDGET_BYTES, loadReleaseContract, PACKAGED_FILE_COUNT_BUDGET, parseReleaseContract, RELEASE_CONTRACT, RELEASE_CONTRACT_PATH, registryDownloadUrl, VSIX_FILE_PATTERN } from './releaseContract';
 export type { BundleKind, BundleRole, ReleaseContract } from './releaseContract';

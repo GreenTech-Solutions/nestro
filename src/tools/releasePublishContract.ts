@@ -1,17 +1,23 @@
 import { RELEASE_CONTRACT } from './releaseContract';
-import { CANDIDATE_DIRECTORY, GITHUB_TOKEN_EXPRESSION, SCRIPT_CHECKOUT_STEP, scriptRun, sh } from './releaseWorkflowParts';
+import {
+  CANDIDATE_DIRECTORY,
+  GITHUB_TOKEN_EXPRESSION,
+  MARKETPLACE_STEP_NAMES,
+  PUBLISH_SCRIPT_CHECKOUT_STEP,
+  PUBLISH_TOOL_INSTALL_COMMAND,
+  SCRIPT_CHECKOUT_STEP,
+  scriptRun,
+  sh,
+} from './releaseWorkflowParts';
 import type { StepContract, WorkflowContract } from './workflowContract';
 
-const { marketplace: MARKETPLACE_SECRET, openVsx: OPEN_VSX_SECRET } = RELEASE_CONTRACT.secrets;
+const OPEN_VSX_SECRET = RELEASE_CONTRACT.secrets.openVsx;
 const CANDIDATE_RUN_INPUT = '${{ inputs.candidate_run_id }}';
 const MANIFEST_VSIX_PATH = '${{ steps.manifest.outputs.vsix-path }}';
 const FINALIZE_RELEASE_INPUTS = { TAG: '${{ steps.release.outputs.tag }}', VSIX_FILE: '${{ steps.release.outputs.vsix-file }}' };
 
-/** Publish steps that may receive registry credentials, keyed by `job/step`. */
-export const RELEASE_SECRET_STEPS: ReadonlySet<string> = new Set([
-  'publish/Publish to the Visual Studio Marketplace',
-  'publish/Publish to Open VSX',
-]);
+/** Publish steps that may receive registry credentials, keyed by `job/step`; the Marketplace publishes through OIDC. */
+export const RELEASE_SECRET_STEPS: ReadonlySet<string> = new Set(['publish/Publish to Open VSX']);
 
 const RESOLVE_CANDIDATE_ARTIFACT = sh(
   'set -euo pipefail',
@@ -24,17 +30,25 @@ const RESOLVE_CANDIDATE_ARTIFACT = sh(
   'echo "id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"',
 );
 
-function publishStep(name: string, secret: string, registryUrl: string): StepContract {
-  return {
-    name,
-    uses: 'HaaLeo/publish-vscode-extension',
-    env: { [secret]: `\${{ secrets.${secret} }}` },
-    with: { extensionFile: MANIFEST_VSIX_PATH, pat: `\${{ env.${secret} }}`, registryUrl, skipDuplicate: true },
-  };
-}
+const OPEN_VSX_STEP: StepContract = {
+  name: 'Publish to Open VSX',
+  uses: 'HaaLeo/publish-vscode-extension',
+  env: { [OPEN_VSX_SECRET]: `\${{ secrets.${OPEN_VSX_SECRET} }}` },
+  with: { extensionFile: MANIFEST_VSIX_PATH, pat: `\${{ env.${OPEN_VSX_SECRET} }}`, registryUrl: RELEASE_CONTRACT.registries.openVsx.url, skipDuplicate: true },
+};
+
+const MARKETPLACE_STEPS: readonly StepContract[] = [
+  {
+    name: MARKETPLACE_STEP_NAMES.setupNode,
+    uses: 'actions/setup-node',
+    with: { 'node-version-file': 'reviewed-source/.nvmrc', 'package-manager-cache': false },
+  },
+  { name: MARKETPLACE_STEP_NAMES.install, run: PUBLISH_TOOL_INSTALL_COMMAND },
+  { name: MARKETPLACE_STEP_NAMES.publish, shell: 'bash', env: { VSIX_PATH: MANIFEST_VSIX_PATH }, run: scriptRun('publish-marketplace') },
+];
 
 const PUBLISH_STEPS: readonly StepContract[] = [
-  SCRIPT_CHECKOUT_STEP,
+  PUBLISH_SCRIPT_CHECKOUT_STEP,
   {
     name: 'Verify the candidate workflow run',
     shell: 'bash',
@@ -71,8 +85,8 @@ const PUBLISH_STEPS: readonly StepContract[] = [
     env: { GH_TOKEN: GITHUB_TOKEN_EXPRESSION, VSIX_PATH: MANIFEST_VSIX_PATH, SOURCE_SHA: '${{ steps.manifest.outputs.source-sha }}' },
     run: scriptRun('verify-attestation'),
   },
-  publishStep('Publish to the Visual Studio Marketplace', MARKETPLACE_SECRET, RELEASE_CONTRACT.registries.marketplace.url),
-  publishStep('Publish to Open VSX', OPEN_VSX_SECRET, RELEASE_CONTRACT.registries.openVsx.url),
+  ...MARKETPLACE_STEPS,
+  OPEN_VSX_STEP,
   {
     name: 'Compare post-publish registry copies',
     shell: 'bash',
@@ -124,7 +138,7 @@ export const RELEASE_PUBLISH_CONTRACT: WorkflowContract = {
         name: 'Publish the verified candidate',
         if: '${{ startsWith(github.ref, \'refs/tags/v\') }}',
         environment: 'release',
-        permissions: { actions: 'read', attestations: 'read', contents: 'read' },
+        permissions: { actions: 'read', attestations: 'read', contents: 'read', 'id-token': 'write' },
         'runs-on': 'ubuntu-latest',
         outputs: {
           'artifact-id': '${{ steps.artifact.outputs.id }}',

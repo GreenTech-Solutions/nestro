@@ -53,9 +53,8 @@ describe('release contract', () => {
     });
     expect(RELEASE_CONTRACT.artifactPrefixes).toEqual({ releaseCandidate: 'release-candidate-', verifyEvidence: 'verify-evidence-' });
     expect(RELEASE_CONTRACT.secrets).toEqual({
-      marketplace: 'VSCE_PAT',
       openVsx: 'OVSX_PAT',
-      rejectedAliases: ['VSCE_TOKEN', 'OPEN_VSX_TOKEN'],
+      rejectedAliases: ['VSCE_PAT', 'VSCE_TOKEN', 'OPEN_VSX_TOKEN'],
     });
     expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(1126757);
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(26);
@@ -204,7 +203,7 @@ describe('release contract', () => {
       value.registries.marketplace.url = 'https://marketplace.visualstudio.com/items';
     })],
     ['a lowercase secret name', contractWith((value) => {
-      value.secrets.marketplace = 'vsce_pat';
+      value.secrets.openVsx = 'ovsx_pat';
     })],
     ['a signer outside the workflows directory', contractWith((value) => {
       value.workflows.signerPath = 'scripts/ci.yml';

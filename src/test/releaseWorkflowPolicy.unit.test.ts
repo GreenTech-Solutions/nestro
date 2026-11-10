@@ -375,7 +375,10 @@ describe('release workflow policies', () => {
 
   it('rejects publish actions that rebuild or publish a different VSIX', () => {
     expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
-      mapping(stepNamed(workflow, 'publish', 'Publish to the Visual Studio Marketplace').with).extensionFile = 'dist/other.vsix';
+      mapping(stepNamed(workflow, 'publish', 'Publish to Open VSX').with).extensionFile = 'dist/other.vsix';
+    })), 'step-contract');
+    expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
+      mapping(stepNamed(workflow, 'publish', 'Publish to the Visual Studio Marketplace').env).VSIX_PATH = 'dist/other.vsix';
     })), 'step-contract');
     expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
       stepNamed(workflow, 'publish', 'Publish to Open VSX').uses = 'HaaLeo/publish-vscode-extension@v2';

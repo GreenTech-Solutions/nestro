@@ -95,6 +95,16 @@ policies behind `ci:policy` read it, so a bump is two edits and no TypeScript: c
 entry, and change its `uses: <action>@<sha> # <tag>` lines in `.github/workflows/`. The registry holds
 only pins in use; a rollback is the same reviewed edit. `.github/` is under CODEOWNERS.
 
+### Bumping the Marketplace publishing tool
+
+The Marketplace publish step runs `@vscode/vsce` from [.github/publish-tool/](.github/publish-tool/), not from
+the root dependencies, and authenticates through GitHub OIDC (trusted publishing) with no stored secret. A
+bump of `@vscode/vsce` is the root `devDependencies` edit plus the same exact version in
+`.github/publish-tool/package.json` and a regenerated `package-lock.json`
+(`npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org/` in that
+directory); `ci:policy` fails while the two versions differ or a locked package lacks an npmjs
+`resolved` URL or a `sha512` integrity. See [RELEASING.md](RELEASING.md) §5.
+
 ## Run and debug the extension
 
 The **Run Extension** configuration in [.vscode/launch.json](.vscode/launch.json) opens an

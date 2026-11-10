@@ -42,8 +42,8 @@ Release dispatch starts Release (.github/workflows/release.yml) on that tag thro
 workflow_dispatch — release.yml has no tag-push trigger and needs the artifact_id and
 candidate_run_id inputs, so pushing a tag by hand publishes nothing
   └─ job `publish` (environment: release, required reviewer gate) verifies the candidate,
-     verifies the GitHub attestation, publishes to the Marketplace and to Open VSX, then
-     compares both freshly published copies against the candidate
+     verifies the GitHub attestation, publishes to the Marketplace (GitHub OIDC trusted publishing)
+     and to Open VSX (stored token), then compares both freshly published copies against the candidate
   └─ job `finalize` creates the GitHub Release and attaches the VSIX, manifest, digest, SBOM,
      provenance and candidate.json
 ```
@@ -134,7 +134,7 @@ the working tree — do not run them by hand on a release commit.
 |---|---|---|---|
 | `pnpm run audit:dependencies` | no arguments (an extra argument is a hard error) | Runs `pnpm audit --prod --json` and `pnpm audit --json`: no advisory at Moderate or above in a production (bundled) dependency and no Critical advisory anywhere; every other advisory is printed as a warning (`::warning` in GitHub Actions). A registry error, empty, malformed, or inconsistent report is rejected rather than read as a pass. | CLI stdout/stderr |
 | `pnpm run audit:signatures` | no arguments (an extra argument is a hard error) | `pnpm audit signatures --json` and validates the report shape itself: every audited package carried a verified registry signature; an empty, malformed, mismatched-count, or plain-advisory report is rejected rather than read as a pass. | CLI stdout/stderr |
-| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against the reviewed-actions registry (`.github/reviewed-actions.json`), `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
+| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against the reviewed-actions registry (`.github/reviewed-actions.json`), `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, `id-token` scoping, environment scoping, permission scoping, exact publish-step shape), and the publishing tool pinned in `.github/publish-tool/` (manifest and lockfile). | CLI stdout/stderr |
 | `pnpm run ci:evidence --out-dir <relative-directory>` | exactly `--out-dir <dir>` | Well-formed CI identity for the current run (full 40-char commit SHA, positive-integer run id/attempt, an `eventName`, the VSIX file name and digest) and writes `evidence.json` (`releaseEligible: false` always — this file is never itself release authority). | `<out-dir>/evidence.json` |
 | `pnpm run release:provenance --artifact-dir <relative-directory>` | exactly `--artifact-dir <dir>` | Builds the SBOM (`sbom.json`, runtime dependency list) and the provenance evidence file (`provenance.json`: source SHA, CI run id/attempt, event name, artifact digest, attestation subject/digest, signer workflow) for the artifact already in that directory. | `<artifact-dir>/sbom.json`, `<artifact-dir>/provenance.json` |
 | `pnpm run release:prepare --out-dir <relative-directory>` | exactly `--out-dir <dir>`; requires `RELEASE_REPOSITORY_URL` | Computes the next semantic-release version and changelog entry from commit history. **Mutating:** when a release is needed it rewrites `package.json` and `CHANGELOG.md` in the working tree; only `release-prepare.yml` runs it, to draft the version PR. | `<out-dir>/notes.md` and the tool's own release-needed/version outputs |
@@ -169,22 +169,31 @@ mid-publish and cannot cancel one in flight.
 
 What the `publish` job does today, once approved:
 
-1. Checks out only `.github/scripts` and `.github/release-contract.json` (sparse, non-cone) into
-   `reviewed-source/` at `github.sha` — the commit of the tag the workflow was dispatched on, the
-   same commit that defines the workflow file itself — with `persist-credentials: false`. It is the
-   only checkout in the job and its first step, so it precedes every credential step. The shell steps
-   then run as `bash reviewed-source/.github/scripts/release/<script>.sh`: `verify-run.sh` re-verifies
+1. Checks out only `.github/scripts`, `.github/release-contract.json`, `.github/publish-tool` and
+   `.nvmrc` (sparse, non-cone) into `reviewed-source/` at `github.sha` — the commit of the tag the
+   workflow was dispatched on, the same commit that defines the workflow file itself — with
+   `persist-credentials: false`. It is the only checkout in the job and its first step, so it
+   precedes every credential step. The shell steps then run as
+   `bash reviewed-source/.github/scripts/release/<script>.sh`: `verify-run.sh` re-verifies
    the candidate run, `verify-candidate.sh publish` re-verifies the artifact and `candidate.json` (§2;
    it also asserts that `github.sha` equals the manifest's `sourceSha`, i.e. the scripts that ran are
    the released commit), and `verify-attestation.sh` runs `gh attestation verify` against the GitHub
-   attestation created in `ci.yml`. None of these steps receives `VSCE_PAT` or `OVSX_PAT`.
-2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension`
-   (SHA and tag pinned in `.github/reviewed-actions.json`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
-   secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:
-   https://marketplace.visualstudio.com`, `skipDuplicate: true`.
-3. Publishes to Open VSX with the same pinned action and the same shape (`env: OVSX_PAT: ${{
-   secrets.OVSX_PAT }}`, `with: pat: ${{ env.OVSX_PAT }}`), `registryUrl: https://open-vsx.org`,
-   `skipDuplicate: true`.
+   attestation created in `ci.yml`. None of these steps receives a registry credential.
+2. Publishes to the Visual Studio Marketplace with GitHub OIDC trusted publishing and no stored
+   secret. The reviewed `actions/setup-node` (SHA and tag pinned in `.github/reviewed-actions.json`)
+   installs the Node.js version in `.nvmrc` with `package-manager-cache: false` and no `cache`
+   input. `npm ci --ignore-scripts --no-audit --no-fund --prefix reviewed-source/.github/publish-tool`
+   then installs the tool pinned by `.github/publish-tool/package-lock.json` (one dependency,
+   `@vscode/vsce` at the exact version of the root `devDependencies`; every locked package carries an
+   npmjs `resolved` URL and a `sha512` integrity). `publish-marketplace.sh` checks that the
+   installed `@vscode/vsce` version equals the pin and runs `vsce publish --oidc --packagePath
+   <verified .vsix> --skip-duplicate`. The step passes only `VSIX_PATH`; there is no `--pat`, no
+   `secrets.*` reference and no fallback: without the job's OIDC token, or without a matching policy
+   on the Marketplace side, the step fails.
+3. Publishes to Open VSX with `HaaLeo/publish-vscode-extension` (SHA and tag pinned in
+   `.github/reviewed-actions.json`), passing the token through a step-level `env:` block —
+   `env: OVSX_PAT: ${{ secrets.OVSX_PAT }}`, `with: pat: ${{ env.OVSX_PAT }}` —
+   `registryUrl: https://open-vsx.org`, `skipDuplicate: true`.
 4. Downloads both freshly published copies and compares them against the candidate (§6).
 
 `release-dispatch.yml` and the `finalize` job take the same first-step sparse checkout at `github.sha`
@@ -192,26 +201,28 @@ What the `publish` job does today, once approved:
 file, which is no less trusted than the workflow itself, and never from a commit that is still being
 validated. The checkout is the only place a release job fetches repository content.
 
-Dated facts about the credentials in use, current as of 2026-09-18:
+Marketplace trusted publishing (current as of 2026-11-10):
 
-- `VSCE_PAT` is a global Azure DevOps personal access token (all accessible organizations),
-  created 2026-05-28, expiring 2027-05-27. **Azure DevOps retires every global PAT on
-  2026-12-01** — the Marketplace publish step above stops working on that date regardless of the
-  token's own expiry, unless publishing has migrated off it first.
-- The intended replacement is `vsce publish --oidc` (GitHub OIDC trusted publishing, no stored
-  Marketplace secret), which needs `@vscode/vsce` ≥ `4.0.0` (currently pinned to `3.9.2` in
-  `devDependencies`) and a trusted-publishing policy configured on the Marketplace publisher
-  portal. That policy feature has not been released by Microsoft yet, so the migration cannot
-  start; the current PAT-based publish step above remains the actual publish path until it can.
-  This is tracked outside this file with its own recheck date; do not attempt the migration
-  before the Marketplace-side policy form exists — it would break the very next release with no
-  PAT fallback.
+- The Marketplace authenticates the job by its GitHub OIDC token. The policy lives on the
+  publisher's **Trusted Publishing** page and is owned by the repository owner, not by any file in
+  this repository: GitHub owner `GreenTech-Solutions`, repository `nestro`, workflow `release.yml`,
+  environment `release`. A workflow, repository, or environment rename needs the policy updated
+  first, or the Marketplace step fails.
+- The publish job is the only job in any release workflow with `permissions: id-token: write` (the
+  workflow-level `permissions` stay `{}`); `ci.yml`'s `package` job holds the same permission only
+  for the GitHub attestation. `ci:policy` rejects `id-token` anywhere else in the four release
+  workflows, any reference to `VSCE_PAT` in them, and any drift of the install or publish steps.
+- Updating the publishing tool: bump `@vscode/vsce` in the root `devDependencies`, set the same exact
+  version in `.github/publish-tool/package.json`, and regenerate the lockfile in that directory with
+  `npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org/`.
+  `ci:policy` fails while the two versions differ or the lockfile is incomplete. Dependabot does not
+  cover this directory. `@vscode/vsce` ≥ `4.1.0` is required (4.0.0 does not complete the token
+  exchange) and needs Node.js ≥ 22.
+- The repository secret `VSCE_PAT` is no longer used by any workflow. The owner deletes it after the
+  first release that publishes through OIDC succeeds. Azure DevOps retires global PATs on
+  2026-12-01, so reverting to the PAT-based Marketplace step is possible only before that date.
 - `OVSX_PAT` is rotated on a fixed 180-day cadence by the repository owner; last rotated
   2026-09-17, next rotation due 2027-03-16.
-- `permissions.id-token: write` exists only on `ci.yml`'s `package` job today (for the GitHub
-  attestation, unrelated to Marketplace publishing); `release.yml`'s `publish` job currently
-  requests no `id-token` permission at all, since it authenticates with the two stored PATs
-  above, not OIDC.
 
 ## 6. Post-publish verification
 

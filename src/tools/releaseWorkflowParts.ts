@@ -32,6 +32,23 @@ export const SCRIPT_CHECKOUT_STEP: StepContract = {
   },
 };
 
+export const PUBLISH_TOOL_DIRECTORY = '.github/publish-tool';
+export const PUBLISH_TOOL_INSTALL_PREFIX = `reviewed-source/${PUBLISH_TOOL_DIRECTORY}`;
+export const PUBLISH_TOOL_INSTALL_COMMAND = `npm ci --ignore-scripts --no-audit --no-fund --prefix ${PUBLISH_TOOL_INSTALL_PREFIX}`;
+
+/** Names of the publish steps that install the publishing tool and publish to the Marketplace. */
+export const MARKETPLACE_STEP_NAMES = {
+  install: 'Install the pinned publishing tool',
+  publish: 'Publish to the Visual Studio Marketplace',
+  setupNode: 'Set up Node.js for the publishing tool',
+} as const;
+
+/** The publish job also needs the pinned publishing tool and the Node.js version file. */
+export const PUBLISH_SCRIPT_CHECKOUT_STEP: StepContract = {
+  ...SCRIPT_CHECKOUT_STEP,
+  with: { ...SCRIPT_CHECKOUT_STEP.with, 'sparse-checkout': `.github/scripts\n${RELEASE_CONTRACT_PATH}\n${PUBLISH_TOOL_DIRECTORY}\n.nvmrc\n` },
+};
+
 export const ASSERT_CHECKOUT_STEP: StepContract = {
   name: 'Assert checkout identity',
   shell: 'bash',

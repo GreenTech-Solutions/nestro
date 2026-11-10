@@ -8,6 +8,8 @@ import {
   createNodeCiPolicyCliDependencies,
   DEPENDABOT_CONFIG_PATH,
   loadReviewedActionsRegistry,
+  PUBLISH_TOOL_LOCKFILE_PATH,
+  PUBLISH_TOOL_MANIFEST_PATH,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
   RELEASE_CONFIG_PATH,
   RELEASE_DISPATCH_WORKFLOW_PATH,
@@ -15,6 +17,7 @@ import {
   RELEASE_WORKFLOW_PATH,
   REVIEWED_ACTIONS_PATH,
   reviewedActionReference,
+  ROOT_MANIFEST_PATH,
   runCiPolicyCli,
 } from '../tools';
 import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
@@ -26,13 +29,18 @@ const downloadArtifactSha = loadReviewedActionsRegistry(repositoryRoot).actions[
 
 const canonicalPolicyReaders: Pick<
   CiPolicyCliDependencies,
-  'readCodeowners' | 'readDependabotConfigs' | 'readReleaseConfig' | 'readReviewedActions'
+  'readCodeowners' | 'readDependabotConfigs' | 'readPublishToolFiles' | 'readReleaseConfig' | 'readReviewedActions'
 > = {
   readCodeowners: () => readFile(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8'),
   readDependabotConfigs: async () => [{
     path: DEPENDABOT_CONFIG_PATH,
     source: await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8'),
   }],
+  readPublishToolFiles: async () => ({
+    rootManifest: await readFile(resolve(repositoryRoot, ROOT_MANIFEST_PATH), 'utf8'),
+    toolLockfile: await readFile(resolve(repositoryRoot, PUBLISH_TOOL_LOCKFILE_PATH), 'utf8'),
+    toolManifest: await readFile(resolve(repositoryRoot, PUBLISH_TOOL_MANIFEST_PATH), 'utf8'),
+  }),
   readReleaseConfig: () => readFile(resolve(repositoryRoot, RELEASE_CONFIG_PATH), 'utf8'),
   readReviewedActions: () => readFile(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8'),
 };
@@ -86,6 +94,7 @@ describe('CI policy CLI', () => {
     ['the CODEOWNERS reader', 'readCodeowners'],
     ['the Dependabot reader', 'readDependabotConfigs'],
     ['the release config reader', 'readReleaseConfig'],
+    ['the publishing tool reader', 'readPublishToolFiles'],
     ['the reviewed registry reader', 'readReviewedActions'],
   ] as const)('reports a failure from %s', async (_label, rejectedReader) => {
     const writeError = vi.fn();
@@ -98,6 +107,9 @@ describe('CI policy CLI', () => {
       readDependabotConfigs: rejectedReader === 'readDependabotConfigs'
         ? rejected
         : canonicalPolicyReaders.readDependabotConfigs,
+      readPublishToolFiles: rejectedReader === 'readPublishToolFiles'
+        ? rejected
+        : canonicalPolicyReaders.readPublishToolFiles,
       readReleaseConfig: rejectedReader === 'readReleaseConfig'
         ? rejected
         : canonicalPolicyReaders.readReleaseConfig,
@@ -144,6 +156,11 @@ describe('CI policy CLI', () => {
       expect(dependabotConfigs.map(config => config.path)).toEqual([DEPENDABOT_CONFIG_PATH]);
       expect(dependabotConfigs[0].source).toContain('package-ecosystem: github-actions');
       await expect(dependencies.readReleaseConfig?.()).resolves.toContain('@semantic-release/commit-analyzer');
+      await expect(dependencies.readPublishToolFiles?.()).resolves.toMatchObject({
+        rootManifest: expect.stringContaining('"@vscode/vsce"') as unknown,
+        toolLockfile: expect.stringContaining('"lockfileVersion": 3') as unknown,
+        toolManifest: expect.stringContaining('nestro-publish-tool') as unknown,
+      });
       await expect(dependencies.readReviewedActions()).resolves.toContain('"actionlint"');
       dependencies.writeOut('accepted');
       dependencies.writeError('rejected');
@@ -291,7 +308,9 @@ describe('CI policy CLI', () => {
     const workflowsDirectory = resolve(temporaryRoot, '.github/workflows');
     try {
       await mkdir(workflowsDirectory, { recursive: true });
+      await mkdir(resolve(temporaryRoot, '.github/publish-tool'));
       await Promise.all([
+        ...[ROOT_MANIFEST_PATH, PUBLISH_TOOL_MANIFEST_PATH, PUBLISH_TOOL_LOCKFILE_PATH].map(async path => writeFile(resolve(temporaryRoot, path), await readFile(resolve(repositoryRoot, path)))),
         writeFile(resolve(temporaryRoot, CODEOWNERS_PATH), await readFile(resolve(repositoryRoot, CODEOWNERS_PATH))),
         writeFile(
           resolve(temporaryRoot, DEPENDABOT_CONFIG_PATH),
@@ -350,6 +369,40 @@ describe('CI policy CLI', () => {
     expect(writeError).toHaveBeenCalledWith(expect.stringContaining(
       `[step-contract] ${CI_WORKFLOW_PATH}:`,
     ));
+  });
+
+  it('fails closed when the publishing tool files are not read', async () => {
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readPublishToolFiles: undefined,
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledExactlyOnceWith(
+      `[publish-tool] ${PUBLISH_TOOL_MANIFEST_PATH}: required publishing tool files are missing`,
+    );
+  });
+
+  it('path-qualifies a publishing tool lockfile package without integrity', async () => {
+    const files = await canonicalPolicyReaders.readPublishToolFiles?.();
+    if (files === undefined) {
+      throw new Error('publishing tool fixture is missing');
+    }
+    const lockfile = JSON.parse(files.toolLockfile) as { packages: Record<string, Record<string, unknown>> };
+    delete lockfile.packages['node_modules/@vscode/vsce'].integrity;
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readPublishToolFiles: () => Promise.resolve({ ...files, toolLockfile: JSON.stringify(lockfile) }),
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledExactlyOnceWith(
+      `[publish-tool] ${PUBLISH_TOOL_MANIFEST_PATH}: ${PUBLISH_TOOL_LOCKFILE_PATH}: node_modules/@vscode/vsce must carry a sha512 integrity`,
+    );
   });
 
   it('reports a malformed registry as a path-qualified violation', async () => {

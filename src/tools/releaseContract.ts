@@ -36,7 +36,7 @@ export interface ReleaseContract {
   readonly candidateKeys: readonly string[];
   readonly registries: Readonly<Record<RegistryName, { readonly downloadPath: string; readonly url: string }>>;
   readonly schemaVersions: { readonly candidate: number; readonly evidence: number; readonly provenance: number };
-  readonly secrets: { readonly marketplace: string; readonly openVsx: string; readonly rejectedAliases: readonly string[] };
+  readonly secrets: { readonly openVsx: string; readonly rejectedAliases: readonly string[] };
   readonly vsixBudget: {
     readonly baselineCompressedBytes: number;
     readonly baselinePackagedFileCount: number;
@@ -149,7 +149,7 @@ export function parseReleaseContract(source: string): ReleaseContract {
   const root = exactRecord(value, ['artifactPrefixes', 'bundle', 'candidateKeys', 'registries', 'schemaVersions', 'secrets', 'vsixBudget', 'workflows'], 'contract');
   const prefixes = section(root, 'artifactPrefixes', ['releaseCandidate', 'verifyEvidence']);
   const versions = section(root, 'schemaVersions', ['candidate', 'evidence', 'provenance']);
-  const secrets = section(root, 'secrets', ['marketplace', 'openVsx', 'rejectedAliases']);
+  const secrets = section(root, 'secrets', ['openVsx', 'rejectedAliases']);
   const workflows = section(root, 'workflows', ['releaseCandidateName', 'signerPath', 'verifyName']);
   return {
     artifactPrefixes: {
@@ -165,7 +165,6 @@ export function parseReleaseContract(source: string): ReleaseContract {
       provenance: integer(versions, 'provenance', 1, 'schemaVersions'),
     },
     secrets: {
-      marketplace: text(secrets, 'marketplace', SECRET_NAME_PATTERN, 'secrets'),
       openVsx: text(secrets, 'openVsx', SECRET_NAME_PATTERN, 'secrets'),
       rejectedAliases: list(secrets, 'rejectedAliases', entry => SECRET_NAME_PATTERN.test(entry), 'secrets'),
     },
