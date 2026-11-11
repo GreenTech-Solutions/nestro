@@ -12,7 +12,7 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
   'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },
   'src/test/extension.test.ts': { maxLines: 1035 },
-  'src/test/installUpdate.unit.test.ts': { maxLines: 1484 },
+  'src/test/installUpdate.unit.test.ts': { maxLines: 1483 },
   'src/test/packagesProvider.unit.test.ts': { maxLines: 4098 },
   'src/test/registryClient.unit.test.ts': { maxLines: 1358 },
   'src/test/verifyVsix.unit.test.ts': { maxLines: 885 },

@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { buildPackageItem, setWorkspaceFolders } from './fixtures';
 import { mockNestroConfiguration } from './fixtures/config';
 import { makeProvider } from './fixtures/providerStub';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { formatDependencySectionLabel, formatHeldBackDate, formatShellTaskFailureMessage, logger, type ReleaseAgeState } from '../utils';
@@ -13,6 +14,8 @@ const expectErrorNotification = (message: string): void => expect(vscode.window.
 const expectLocalizedErrorNotification = (messageKey: string, ...args: string[]): void =>
   expectErrorNotification(vscode.l10n.t(messageKey, ...args));
 const unverifiedUpdateMessage = (): string => vscode.l10n.t('Package update could not be verified. Refresh the package list and try again.');
+const mockWorkspaceWithLockfile = (lockfileName: 'pnpm-lock.yaml' | 'yarn.lock'): void =>
+  mockWorkspaceFiles({ '/workspace/package.json': '{}', [`/workspace/${lockfileName}`]: '' });
 
 function expectedPartialUpdateMessage(
   reason: string,
@@ -109,9 +112,7 @@ describe('installUpdateCommand()', () => {
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
     });
-    vi.mocked(vscode.workspace.findFiles)
-      .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
-      .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
+    mockWorkspaceWithLockfile('pnpm-lock.yaml');
 
     await installUpdateCommand(buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor', packageFilePath: '/workspace/package.json', versionPrefix: '^' }), provider);
 
@@ -132,9 +133,7 @@ describe('installUpdateCommand()', () => {
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
     });
-    vi.mocked(vscode.workspace.findFiles)
-      .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
-      .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
+    mockWorkspaceWithLockfile('yarn.lock');
 
     // A registry-valid name (apostrophe and asterisk are real, unescaped-by-URL
     // characters) that would still break out of naive shell interpolation.
@@ -145,7 +144,7 @@ describe('installUpdateCommand()', () => {
 
     const task = vi.mocked(vscode.tasks.executeTask).mock.calls[0][0];
     const shellExecution = task.execution as vscode.ShellExecution;
-    expect(shellExecution.command).toBe('pnpm');
+    expect(shellExecution.command).toBe('yarn');
     expect(shellExecution.args).toEqual([
       'add',
       '--',
@@ -683,9 +682,9 @@ describe('runInstallCommand()', () => {
     // Persistent, not "once": coordinator key resolution reads this same
     // manifest (for its own ancestor package-manager signal) before ClientManager's
     // own detection read does.
-    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
-      Buffer.from(JSON.stringify({ packageManager: `${packageManager}@1.0.0` })),
-    );
+    mockWorkspaceFiles({
+      '/workspace/package.json': JSON.stringify({ packageManager: `${packageManager}@1.0.0` }),
+    });
 
     await runInstallCommand();
 
