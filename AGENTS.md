@@ -252,4 +252,4 @@ Every type in this table is active and may be used in new commits. Types with no
 
 Scope examples: `toolbar`, `audit`, `picker`, `provider`, `deps`.
 
-Agent configuration synchronization is managed manually by the user; AI must not run synchronization commands before commits.
+AI mirrors every `CLAUDE.md` edit into `AGENTS.md` in the same change; other agent-configuration synchronization is the owner's, and AI never runs synchronization commands before commits.
