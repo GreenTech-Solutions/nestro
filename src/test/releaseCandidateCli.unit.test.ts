@@ -10,7 +10,7 @@ import {
   buildArtifactSbom,
   buildNormalizedManifest,
   mainReleaseCandidate,
-  parsePackagedIdentity,
+  parseExtensionIdentity,
   parseReleaseCandidateArgs,
   readRuntimeDependencies,
   readVsixArchive,
@@ -65,7 +65,7 @@ async function createCandidateFixture(): Promise<{ root: string; artifact: strin
   if (packageEntry === undefined) {
     throw new Error('fixture package manifest missing');
   }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const identity = parseExtensionIdentity(packageEntry.bytes);
   const packagedManifest = JSON.parse(new TextDecoder('utf-8').decode(packageEntry.bytes)) as unknown;
   const runtimeDependencies = readRuntimeDependencies(packagedManifest);
   const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
@@ -273,13 +273,14 @@ describe('release candidate CLI', () => {
     ['a non-push event', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.eventName = 'workflow_dispatch';
+      evidence.pullRequestHeadSha = SOURCE_SHA;
       await writeFile(path, `${JSON.stringify(evidence)}\n`, 'utf8');
     }, 'push run'],
     ['a pull request head', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.pullRequestHeadSha = SOURCE_SHA;
       await writeFile(path, `${JSON.stringify(evidence)}\n`, 'utf8');
-    }, 'null pull request head'],
+    }, 'does not match eventName'],
     ['release eligibility', async (path: string) => {
       const evidence = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
       evidence.releaseEligible = true;

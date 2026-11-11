@@ -3,7 +3,6 @@ import {
   evaluateSignatureAudit,
   MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION,
   parseSignatureAuditArgs,
-  resolvePnpmLauncher,
   runSignatureAuditCli,
   SIGNATURE_AUDIT_ARGS,
 } from '../tools';
@@ -58,16 +57,6 @@ function execution(overrides: Partial<SignatureAuditExecution> = {}): SignatureA
 function signatureReport(report: Record<string, unknown>): string {
   return JSON.stringify(report);
 }
-
-describe('resolvePnpmLauncher()', () => {
-  it.each([
-    ['win32', true],
-    ['darwin', false],
-    ['linux', false],
-  ])('starts the bare pnpm command, through a shell only where it is a .cmd shim (%s)', (platform, shell) => {
-    expect(resolvePnpmLauncher(platform)).toStrictEqual({ executable: 'pnpm', shell });
-  });
-});
 
 describe('parseSignatureAuditArgs()', () => {
   it('accepts the only supported invocation, which takes no arguments', () => {

@@ -88,7 +88,7 @@ export const window = {
     _options: unknown,
     task: (progress: { report: () => void }, token: {
       isCancellationRequested: boolean;
-      onCancellationRequested: () => { dispose: () => void };
+      onCancellationRequested: (listener: (event: void) => unknown) => { dispose: () => void };
     }) => Promise<unknown>,
   ) => task(
     { report: vi.fn() },
@@ -100,6 +100,13 @@ export const ProgressLocation = {
   SourceControl: 1,
   Window: 10,
   Notification: 15,
+} as const;
+
+export const FileType = {
+  Unknown: 0,
+  File: 1,
+  Directory: 2,
+  SymbolicLink: 64,
 } as const;
 
 export const tasks = {
@@ -139,6 +146,11 @@ export const workspace = {
   fs: {
     readFile: vi.fn().mockResolvedValue(Buffer.from('{}')),
     writeFile: vi.fn().mockResolvedValue(undefined),
+    // A file exists when `readFile` resolves, so a test that stages files through `readFile` stages them for `stat` too.
+    stat: vi.fn(async (uri: { fsPath: string }) => {
+      const contents = await workspace.fs.readFile(uri);
+      return { type: FileType.File, ctime: 0, mtime: 0, size: contents.length };
+    }),
   },
 };
 

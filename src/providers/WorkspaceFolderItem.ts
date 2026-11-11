@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CONTEXT_VALUE_TOKENS } from '../shared';
 import { GroupItem } from './GroupItem';
 
 export class WorkspaceFolderItem extends vscode.TreeItem {
@@ -9,6 +10,6 @@ export class WorkspaceFolderItem extends vscode.TreeItem {
   ) {
     super(folderLabel, vscode.TreeItemCollapsibleState.Expanded);
     this.iconPath = new vscode.ThemeIcon('folder');
-    this.contextValue = 'workspaceFolder';
+    this.contextValue = CONTEXT_VALUE_TOKENS.workspaceFolder;
   }
 }

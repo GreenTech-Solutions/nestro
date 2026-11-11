@@ -1,9 +1,11 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
-import { resolveSpawnTarget } from './processRunner';
+import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
+import { describeError, isRecord, PACKAGE_MANAGERS, parsePackageManagerField, parseYarnSemverMajor, resolveSpawnTarget, YARN_DIALECTS } from '../shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -20,15 +22,35 @@ export interface YarnFamilyResolution {
   source: YarnFamilySource;
 }
 
-export const yarnVersionProbeTimeoutMs = 5_000;
-export const yarnVersionProbeMaxBufferBytes = 8_192;
+const operationMemo = new AsyncLocalStorage<Map<string, Promise<YarnFamilyResolution>>>();
+
+/** Runs one operation with a Yarn family memo per project root; a nested call joins the enclosing memo. */
+export function runWithYarnFamilyMemo<T>(operation: () => Promise<T>): Promise<T> {
+  return operationMemo.getStore() === undefined
+    ? operationMemo.run(new Map(), operation)
+    : operation();
+}
 
 /**
  * Resolves the Yarn command family for one already-selected project root. Explicit
  * packageManager metadata wins, same-root markers are considered as a set, and PATH
- * probing is the bounded last resort. Nothing defaults to Yarn Classic.
+ * probing is the bounded last resort. Nothing defaults to Yarn Classic. Inside
+ * runWithYarnFamilyMemo() each root resolves once; outside it every call resolves afresh.
  */
-export async function resolveYarnFamily(projectRoot: string): Promise<YarnFamilyResolution> {
+export function resolveYarnFamily(projectRoot: string): Promise<YarnFamilyResolution> {
+  const memo = operationMemo.getStore();
+  if (memo === undefined) {
+    return resolveYarnFamilyUncached(projectRoot);
+  }
+  let resolution = memo.get(projectRoot);
+  if (resolution === undefined) {
+    resolution = resolveYarnFamilyUncached(projectRoot);
+    memo.set(projectRoot, resolution);
+  }
+  return resolution;
+}
+
+async function resolveYarnFamilyUncached(projectRoot: string): Promise<YarnFamilyResolution> {
   const packageManager = await readPackageManager(projectRoot);
   const metadataFamily = parsePackageManagerFamily(packageManager);
   if (metadataFamily !== 'unknown') {
@@ -44,14 +66,14 @@ export async function resolveYarnFamily(projectRoot: string): Promise<YarnFamily
 }
 
 async function readPackageManager(projectRoot: string): Promise<string | undefined> {
-  const contents = await readOptionalFile(path.join(projectRoot, 'package.json'));
+  const contents = await readFileOrUndefined(path.join(projectRoot, 'package.json'));
   if (contents === undefined) {
     return undefined;
   }
 
   try {
     const manifest = JSON.parse(contents) as unknown;
-    if (!isPlainObject(manifest)) {
+    if (!isRecord(manifest)) {
       return undefined;
     }
     return typeof manifest.packageManager === 'string' ? manifest.packageManager : undefined;
@@ -65,18 +87,21 @@ function parsePackageManagerFamily(packageManager: string | undefined): YarnFami
   if (packageManager === undefined) {
     return 'unknown';
   }
-  const match = /^yarn@(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(packageManager.trim());
-  if (match === null) {
+  const field = parsePackageManagerField(packageManager.trim());
+  const major = field?.packageManager === 'yarn' && field.version !== undefined
+    ? parseYarnSemverMajor(field.version)
+    : undefined;
+  if (major === undefined) {
     return 'unknown';
   }
-  return familyFromMajor(Number(match[1]));
+  return familyFromMajor(major);
 }
 
 async function resolveMarkerFamily(projectRoot: string): Promise<YarnFamilyResolution | undefined> {
   const [modernConfig, classicConfig, lockfile] = await Promise.all([
-    readOptionalFile(path.join(projectRoot, '.yarnrc.yml')),
-    readOptionalFile(path.join(projectRoot, '.yarnrc')),
-    readOptionalFile(path.join(projectRoot, 'yarn.lock')),
+    readFileOrUndefined(path.join(projectRoot, YARN_DIALECTS.modern.configFile)),
+    readFileOrUndefined(path.join(projectRoot, YARN_DIALECTS.classic.configFile)),
+    readFileOrUndefined(path.join(projectRoot, PACKAGE_MANAGERS.yarn.lockfiles[0])),
   ]);
 
   const modern = modernConfig !== undefined || hasModernLockMarker(lockfile);
@@ -109,7 +134,7 @@ function hasClassicLockMarker(lockfile: string | undefined): boolean {
 }
 
 async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResolution> {
-  const target = resolveSpawnTarget('yarn', ['--version']);
+  const target = resolveSpawnTarget(PACKAGE_MANAGERS.yarn.bin, ['--version']);
   if (target.kind === 'unresolved') {
     logger.warn(`Unable to identify Yarn family: ${target.message}`);
     return { family: 'unknown', source: 'version-probe' };
@@ -118,14 +143,14 @@ async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResoluti
   try {
     const result = await execFileAsync(target.command, target.args, {
       cwd: projectRoot,
-      maxBuffer: yarnVersionProbeMaxBufferBytes,
-      timeout: yarnVersionProbeTimeoutMs,
+      maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+      timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
       ...(target.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
     }) as { stdout: string } | string;
     const stdout = typeof result === 'string' ? result : result.stdout;
-    const match = /^(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(stdout.trim());
+    const major = parseYarnSemverMajor(stdout.trim());
     return {
-      family: match === null ? 'unknown' : familyFromMajor(Number(match[1])),
+      family: major === undefined ? 'unknown' : familyFromMajor(major),
       source: 'version-probe',
     };
   }
@@ -142,7 +167,7 @@ function familyFromMajor(major: number): YarnFamily {
   return major >= 2 ? 'modern' : 'unknown';
 }
 
-async function readOptionalFile(filePath: string): Promise<string | undefined> {
+async function readFileOrUndefined(filePath: string): Promise<string | undefined> {
   try {
     const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
     return Buffer.from(raw).toString('utf8');
@@ -150,12 +175,4 @@ async function readOptionalFile(filePath: string): Promise<string | undefined> {
   catch {
     return undefined;
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

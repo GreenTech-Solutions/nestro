@@ -1,14 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describeError, hasExactKeys, isPlainNumericSemver, isRecord } from '../shared';
 
 export const REVIEWED_ACTIONS_PATH = '.github/reviewed-actions.json';
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 
 const ACTION_LOCATOR_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const ACTION_TAG_PATTERN = /^v\d+\.\d+\.\d+$/u;
-const ACTIONLINT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-const REPOSITORY_ROOT = resolve(__dirname, '../..');
 
 export interface ReviewedAction {
   readonly sha: string;
@@ -22,15 +18,6 @@ export interface ReviewedActionsRegistry {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: UnknownRecord, expected: readonly string[]): boolean {
-  const actual = Object.keys(value).sort((left, right) => left.localeCompare(right));
-  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
 function registryError(detail: string): Error {
   return new Error(`${REVIEWED_ACTIONS_PATH}: ${detail}`);
 }
@@ -41,7 +28,7 @@ export function parseReviewedActionsRegistry(source: string): ReviewedActionsReg
     value = JSON.parse(source);
   }
   catch (error) {
-    throw registryError(`invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw registryError(`invalid JSON: ${describeError(error)}`);
   }
   if (!isRecord(value) || !hasExactKeys(value, ['actionlint', 'actions'])) {
     throw registryError('must contain exactly the actionlint and actions entries');
@@ -52,7 +39,7 @@ export function parseReviewedActionsRegistry(source: string): ReviewedActionsReg
     || typeof actionlint.sha256 !== 'string'
     || !SHA256_PATTERN.test(actionlint.sha256)
     || typeof actionlint.version !== 'string'
-    || !ACTIONLINT_VERSION_PATTERN.test(actionlint.version)) {
+    || !isPlainNumericSemver(actionlint.version)) {
     throw registryError('actionlint must be { sha256: lowercase SHA-256, version: x.y.z }');
   }
   if (!isRecord(actions) || Object.keys(actions).length === 0) {
@@ -66,26 +53,11 @@ export function parseReviewedActionsRegistry(source: string): ReviewedActionsReg
       || typeof entry.sha !== 'string'
       || !FULL_SHA_PATTERN.test(entry.sha)
       || typeof entry.tag !== 'string'
-      || !ACTION_TAG_PATTERN.test(entry.tag)) {
+      || !entry.tag.startsWith('v')
+      || !isPlainNumericSemver(entry.tag.slice(1))) {
       throw registryError(`${locator} must be an <owner>/<repo> key with { sha: lowercase 40-hex commit, tag: vX.Y.Z }`);
     }
     parsed[locator] = { sha: entry.sha, tag: entry.tag };
   }
   return { actionlint: { sha256: actionlint.sha256, version: actionlint.version }, actions: parsed };
-}
-
-export function loadReviewedActionsRegistry(rootDirectory: string = REPOSITORY_ROOT): ReviewedActionsRegistry {
-  return parseReviewedActionsRegistry(readFileSync(resolve(rootDirectory, REVIEWED_ACTIONS_PATH), 'utf8'));
-}
-
-let repositoryRegistry: ReviewedActionsRegistry | undefined;
-
-/** Loads the repository registry on first use, so a malformed file fails the caller instead of the import. */
-export function reviewedActionReference(locator: string): string {
-  repositoryRegistry ??= loadReviewedActionsRegistry();
-  const action = Object.hasOwn(repositoryRegistry.actions, locator) ? repositoryRegistry.actions[locator] : undefined;
-  if (action === undefined) {
-    throw registryError(`${locator} is not a reviewed action`);
-  }
-  return `${locator}@${action.sha}`;
 }

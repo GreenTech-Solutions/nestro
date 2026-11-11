@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { DependencyTypeConflictError, parsePackageJson, VersionPinConflictError } from '../utils';
 import {
-  DependencyTypeConflictError,
-  parsePackageJson,
   prepareDependencyType,
   prepareDependencyVersions,
   preparePinAllVersions,
@@ -11,9 +10,8 @@ import {
   transformDependencyVersions,
   transformPinAllVersions,
   transformVersionPin,
-  VersionPinConflictError,
-} from '../utils';
-import type { PackageJsonDocument } from '../utils';
+} from '../utils/packageTransforms';
+import type { PackageJsonDocument } from '../utils/packageTransforms';
 
 describe('parsePackageJson()', () => {
   it('parses a package.json document into a plain object', () => {
@@ -100,6 +98,12 @@ describe('transformDependencyVersions()', () => {
     ])).toThrow('Packages not found in package.json: vue (dependencies), vite (devDependencies)');
   });
 
+  it('rejects array dependency sections before updating indexed entries', () => {
+    expect(() => prepareDependencyVersions('{"dependencies":["^1.0.0"]}', [
+      { name: '0', version: '2.0.0', section: 'dependencies' },
+    ])).toThrow('Dependency sections must be objects.');
+  });
+
   it('does not mutate the input document', () => {
     const json: PackageJsonDocument = { dependencies: { react: '^17.0.0' } };
     transformDependencyVersions(json, [{ name: 'react', version: '18.0.0', section: 'dependencies' }]);
@@ -130,6 +134,12 @@ describe('transformDependencyType()', () => {
     const json: PackageJsonDocument = { dependencies: { pkg: '~2.0.0' } };
     expect(() => transformDependencyType(json, 'pkg', false, '^1.2.3'))
       .toThrow('source spec changed from ^1.2.3 to ~2.0.0');
+  });
+
+  it('sanitizes spec text in the conflict message', () => {
+    const json: PackageJsonDocument = { dependencies: { pkg: '~2.0.0\u009b31m\tx' } };
+    expect(() => transformDependencyType(json, 'pkg', false, '^1.2.3'))
+      .toThrow('source spec changed from ^1.2.3 to ~2.0.0 x.');
   });
 
   it('throws a typed conflict when the target already has the package', () => {
@@ -240,6 +250,19 @@ describe('transformPinAllVersions()', () => {
     expect(result.count).toBe(1);
   });
 
+  it('leaves an array section untouched while pinning the other section', () => {
+    const json: PackageJsonDocument = { dependencies: ['^1.0.0'], devDependencies: { vite: '~5.0.0' } };
+    const result = transformPinAllVersions(json);
+    expect(result.count).toBe(1);
+    expect(result.json).toEqual({ dependencies: ['^1.0.0'], devDependencies: { vite: '5.0.0' } });
+  });
+
+  it('leaves string, number and boolean sections untouched', () => {
+    const json: PackageJsonDocument = { dependencies: '^1.0.0', devDependencies: 5 };
+    const result = transformPinAllVersions(json);
+    expect(result).toEqual({ count: 0, json });
+  });
+
   it('does not mutate the input document', () => {
     const json: PackageJsonDocument = { dependencies: { react: '^18.0.0' } };
     transformPinAllVersions(json);
@@ -272,6 +295,11 @@ describe('prepareDependencyVersions() / prepareDependencyType() / prepareVersion
     const raw = JSON.stringify({ dependencies: { react: '18.0.0' } }, undefined, 2);
     const result = preparePinAllVersions(raw);
     expect(result).toEqual({ count: 0, updated: undefined });
+  });
+
+  it('reports nothing to pin for a document whose only section is an array', () => {
+    const raw = '{\n  "dependencies": ["^1.0.0"]\n}\n';
+    expect(preparePinAllVersions(raw)).toEqual({ count: 0, updated: undefined });
   });
 
   it('serializes the pinned document with 4-space indentation when pinning is needed', () => {

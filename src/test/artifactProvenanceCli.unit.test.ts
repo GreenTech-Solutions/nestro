@@ -144,7 +144,7 @@ describe('artifact provenance CLI', () => {
     ['invalid schema', (path: string) => mutateEvidence(path, (evidence) => { evidence.schemaVersion = 2; }), 'schemaVersion 1'],
     ['unsupported event', (path: string) => mutateEvidence(path, (evidence) => { evidence.eventName = 'release'; }), 'unsupported eventName'],
     ['non-string identity', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 42; }), 'non-empty string'],
-    ['malformed source SHA', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 'short'; }), 'identity fields are malformed'],
+    ['malformed source SHA', (path: string) => mutateEvidence(path, (evidence) => { evidence.sourceSha = 'short'; }), 'full lowercase 40-character commit SHA'],
     ['push pull-request head', (path: string) => mutateEvidence(path, (evidence) => { evidence.pullRequestHeadSha = SOURCE_SHA; }), 'does not match eventName'],
     ['workflow dispatch without head', (path: string) => mutateEvidence(path, (evidence) => {
       evidence.eventName = 'workflow_dispatch';
@@ -187,7 +187,7 @@ describe('artifact provenance CLI', () => {
     const invalidIdentity = await createProvenanceFixture(cleanVsixFixtureEntries().map(entry => entry.path === 'extension/package.json'
       ? { ...entry, content: '{}' }
       : entry));
-    await expectMainFailure(invalidIdentity.root, 'must contain non-empty name');
+    await expectMainFailure(invalidIdentity.root, 'non-empty string "name"');
 
     const invalidDependencies = await createProvenanceFixture(cleanVsixFixtureEntries().map(entry => entry.path === 'extension/package.json'
       ? { ...entry, content: JSON.stringify({ name: 'nestro', version: '9.9.9', publisher: 'greentech-solutions', dependencies: [] }) }

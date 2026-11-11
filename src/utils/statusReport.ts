@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { sanitizeLogText } from './logger';
+import { MAX_DETAIL_LENGTH } from '../config';
+import { compareCodeUnits, redactCredentials, sanitizeInlineText } from '../shared';
 
 /** One failure captured by a package read, update check, or security audit. */
 export interface StatusReportFailure {
@@ -23,23 +24,14 @@ export interface StatusReportSnapshot {
   readonly fileLabels: readonly StatusReportFileLabel[];
 }
 
-const MAX_DETAIL_LENGTH = 2000;
 const FILE_URI_PATTERN = /\bfile:\/\/[^\s"'`<>(){}[\],;!?]+/giu;
 const ABSOLUTE_PATH_PATTERN = /(^|[\s("'`=])((?:\/(?!\/)|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>(){}[\],;:!?]*)/g;
-const REPORT_CREDENTIAL_PATTERN = /(\b(?:password|passwd|_password|_authToken|_auth|token|api-key|api_key|apikey)\b\s*[:=]\s*)\S+/giu;
-const ESC = String.fromCharCode(27);
-const BEL = String.fromCharCode(7);
-const CSI_8BIT = String.fromCharCode(155);
-// OSC (ESC ] ... BEL or ESC \), 7-bit CSI (ESC [ ...) and 8-bit CSI.
-const ANSI_ESCAPE_PATTERN = new RegExp(
-  `${ESC}(?:\\](?:[^${BEL}${ESC}]|${ESC}(?!\\\\))*(?:${BEL}|${ESC}\\\\)|\\[[0-?]*[ -/]*[@-~])|${CSI_8BIT}[0-?]*[ -/]*[@-~]`,
-  'g',
-);
+const REPORT_GENERIC_VALUE_MIN_LENGTH = 1;
 
 /** Formats read, update, and audit failures as bounded, plain-text diagnostics. */
 export function formatStatusReport(snapshot: StatusReportSnapshot): string {
   const labels = [...snapshot.fileLabels]
-    .sort((left, right) => left.order - right.order || compareText(left.label, right.label));
+    .sort((left, right) => left.order - right.order || compareCodeUnits(left.label, right.label));
   const labelByPath = new Map(labels.map(label => [label.packageFilePath, sanitizeLabel(label.label)]));
   const orderByPath = new Map(labels.map(label => [label.packageFilePath, label.order]));
   const knownPaths = [...labelByPath.keys()].sort((left, right) => right.length - left.length);
@@ -95,7 +87,7 @@ function appendFailureSection(
       ? vscode.l10n.t('(workspace operation)')
       : failure.packageFilePaths
           .map(path => labelByPath.get(path) ?? vscode.l10n.t('(package file)'))
-          .sort(compareText)
+          .sort(compareCodeUnits)
           .join(', ');
     const reason = failure.reason === undefined
       ? undefined
@@ -122,9 +114,9 @@ function sortFailures(
 ): StatusReportFailure[] {
   return [...failures].sort((left, right) => (
     compareNumber(failureOrderKey(left, orderByPath), failureOrderKey(right, orderByPath))
-    || compareText(failureSortKey(left, labelByPath), failureSortKey(right, labelByPath))
-    || compareText(left.reason ?? '', right.reason ?? '')
-    || compareText(left.detail ?? '', right.detail ?? '')
+    || compareCodeUnits(failureSortKey(left, labelByPath), failureSortKey(right, labelByPath))
+    || compareCodeUnits(left.reason ?? '', right.reason ?? '')
+    || compareCodeUnits(left.detail ?? '', right.detail ?? '')
   ));
 }
 
@@ -141,7 +133,7 @@ function failureSortKey(
 ): string {
   return failure.packageFilePaths
     .map(path => labelByPath.get(path) ?? vscode.l10n.t('(package file)'))
-    .sort(compareText)
+    .sort(compareCodeUnits)
     .join('\u0000');
 }
 
@@ -150,11 +142,7 @@ function sanitizeReportText(
   labelByPath: ReadonlyMap<string, string>,
   knownPaths: readonly string[],
 ): string {
-  let sanitized = sanitizeLogText(value)
-    .replace(REPORT_CREDENTIAL_PATTERN, '$1[REDACTED]')
-    .replace(ANSI_ESCAPE_PATTERN, '')
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+  let sanitized = redactCredentials(sanitizeInlineText(value, Number.POSITIVE_INFINITY), REPORT_GENERIC_VALUE_MIN_LENGTH)
     .replace(FILE_URI_PATTERN, '[path]');
   // Replace paths captured by this report with their owner-qualified labels first;
   // unknown absolute paths are hidden rather than leaking local filesystem details.
@@ -174,10 +162,6 @@ function sanitizeReportText(
 
 function sanitizeLabel(value: string): string {
   return sanitizeReportText(value, new Map(), []).replace(/[\\/]+/g, '/');
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function compareNumber(left: number, right: number): number {

@@ -1,0 +1,7 @@
+{
+  "name": "nestro-publish-tool",
+  "private": true,
+  "dependencies": {
+    "@vscode/vsce": "4.1.0"
+  }
+}

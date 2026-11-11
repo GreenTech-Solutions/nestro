@@ -62,7 +62,7 @@ describe('logger', () => {
     const logged = channel.entries[0]?.message;
     expect(logged).toBe('Fetching versions for evil\n↳ [error] forged\n↳ [warn] lone\n↳ [warn] forged\n↳ [debug] forged\n↳ red');
     expect(logged).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(logged).not.toContain('[error] Nestro:');
+    expect(logged).not.toContain(`[error] ${freshVscode.l10n.t('Nestro: ').trimEnd()}`);
   });
 
   it('redacts shaped credentials in registry and audit text', async () => {
@@ -137,6 +137,36 @@ describe('logger', () => {
     expect(sanitized).toContain('git+ssh://git@github.com/acme/lib.git#v1.2.3');
     expect(sanitized).toContain('https://registry.internal/npm');
     expect(sanitized).not.toContain('https://ci:s3cr3t@registry.internal/npm');
+  });
+
+  it('keeps closing brackets around a redacted value', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const genericSecret = 'abcdefghijklmnopqrstuv';
+
+    expect(sanitizeLogText(`(token=${genericSecret})`)).toBe('(token=[REDACTED])');
+    expect(sanitizeLogText('[password=hunter2]')).toBe('[password=[REDACTED]]');
+    expect(sanitizeLogText('(_authToken=abc) and [passwd: xyz]')).toBe('(_authToken=[REDACTED]) and [passwd: [REDACTED]]');
+    expect(sanitizeLogText('password=ab)cd')).toBe('password=[REDACTED]');
+    expect(sanitizeLogText('password=)))')).toBe('password=[REDACTED]');
+  });
+
+  it('turns tabs into spaces instead of gluing words together', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+
+    expect(sanitizeLogText('name\tversion\t1.0.0')).toBe('name version 1.0.0');
+  });
+
+  it('redacts URL user info in linear time on a long run of separators', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const input = `${`https://a:b ${'x'.repeat(100)} `.repeat(10_000)}https://ci:s3cr3t@registry.internal/npm`;
+
+    const started = performance.now();
+    const sanitized = sanitizeLogText(input);
+    const elapsed = performance.now() - started;
+
+    expect(sanitized).toContain('https://registry.internal/npm');
+    expect(sanitized).not.toContain('s3cr3t');
+    expect(elapsed).toBeLessThan(500);
   });
 
   it('keeps ordinary short credential-like words and package text intact', async () => {

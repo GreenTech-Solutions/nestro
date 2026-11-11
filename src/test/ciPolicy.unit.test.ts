@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -12,12 +11,10 @@ import {
   evaluateDependabotConfigPolicy,
   evaluateWorkflowActionPolicy,
   findUnusedReviewedActions,
-  loadReviewedActionsRegistry,
   loadReviewedRegistryForPolicy,
   parseReviewedActionsRegistry,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
   REVIEWED_ACTIONS_PATH,
-  reviewedActionReference,
 } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
@@ -27,7 +24,7 @@ const canonicalReleaseSource = readFileSync(resolve(repositoryRoot, releaseWorkf
 const canonicalCodeownersSource = readFileSync(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8');
 const canonicalDependabotSource = readFileSync(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8');
 const canonicalRegistrySource = readFileSync(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8');
-const registry = loadReviewedActionsRegistry(repositoryRoot);
+const registry = parseReviewedActionsRegistry(canonicalRegistrySource);
 const checkout = registry.actions['actions/checkout'];
 const unreviewedSha = 'f'.repeat(40);
 
@@ -413,7 +410,7 @@ describe('CI workflow shell scripts', () => {
 });
 
 describe('immutable workflow action policy', () => {
-  const checkoutReference = reviewedActionReference('actions/checkout');
+  const checkoutReference = `actions/checkout@${checkout.sha}`;
 
   it('accepts every reviewed action reference and version comment in the current workflows', () => {
     expect(evaluateWorkflowActionPolicy(canonicalSource, registry)).toEqual([]);
@@ -493,7 +490,7 @@ describe('immutable workflow action policy', () => {
 });
 
 describe('reviewed action update policy', () => {
-  const reviewedCheckout = `${reviewedActionReference('actions/checkout')} # ${checkout.tag}`;
+  const reviewedCheckout = `actions/checkout@${checkout.sha} # ${checkout.tag}`;
 
   it('accepts only the canonical standalone GitHub Actions updater and .github owner', () => {
     expect(evaluateDependabotConfigPolicy(canonicalDependabotSource)).toEqual([]);
@@ -643,12 +640,6 @@ describe('reviewed actions registry', () => {
     ]));
   });
 
-  it('builds action references from registry entries and rejects unknown actions', () => {
-    expect(reviewedActionReference('actions/checkout')).toBe(`actions/checkout@${checkout.sha}`);
-    expect(() => reviewedActionReference('attacker/checkout')).toThrow('not a reviewed action');
-    expect(() => reviewedActionReference('toString')).toThrow('not a reviewed action');
-  });
-
   it.each([
     ['malformed JSON', '{ "actions": '],
     ['a non-object root', '[]'],
@@ -701,18 +692,8 @@ describe('reviewed actions registry', () => {
     expect(() => parseReviewedActionsRegistry(source)).toThrow(REVIEWED_ACTIONS_PATH);
   });
 
-  it('fails closed when the registry file is missing from the repository root', () => {
-    const root = mkdtempSync(resolve(tmpdir(), 'nestro-registry-'));
-    try {
-      expect(() => loadReviewedActionsRegistry(root)).toThrow();
-    }
-    finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
   it('rejects a workflow pinned to a SHA the registry no longer lists', () => {
-    const stale = canonicalReleaseSource.replace(reviewedActionReference('actions/checkout'), `actions/checkout@${unreviewedSha}`);
+    const stale = canonicalReleaseSource.replace(`actions/checkout@${checkout.sha}`, `actions/checkout@${unreviewedSha}`);
     expectRejectedAction(stale, 'reviewed-action');
   });
 

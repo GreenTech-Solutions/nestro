@@ -101,14 +101,13 @@ export const SINGLE_ROOT_FIXTURES: readonly WorkspaceFixture[] = [
     'yarn-ambiguous-app/yarn.lock': YARN_CLASSIC_LOCK,
     'yarn-ambiguous-app/.yarnrc.yml': YARN_MODERN_RC,
   }),
-  // `packageManager` is checked before any lock file at the same directory
-  // (`ClientManager.detectPackageManagerFromManifest` runs first in the ancestor loop) —
+  // `detectPackageManagerFromManifest()` in `projectResolver.ts` runs before lockfile detection;
   // the yarn.lock here is real and present, and must still lose.
   singleRoot('precedence-field-over-lockfile', 'field-over-lockfile-app', 'pnpm', {
     'field-over-lockfile-app/package.json': manifest('field-over-lockfile-app', { packageManager: 'pnpm@9.1.0' }),
     'field-over-lockfile-app/yarn.lock': YARN_CLASSIC_LOCK,
   }),
-  // `detectPackageManagerFromLockfile` checks lock files in a fixed order (pnpm-lock.yaml,
+  // `findLockfile()` checks files in fixed order (pnpm-lock.yaml,
   // yarn.lock, bun.lock/bun.lockb, package-lock.json/npm-shrinkwrap.json) and returns on the
   // first match; these three fixtures stack every lower-priority file behind the winner.
   singleRoot('precedence-pnpm-over-yarn-bun-npm', 'pnpm-wins-app', 'pnpm', {

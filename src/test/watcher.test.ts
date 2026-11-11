@@ -18,7 +18,6 @@ import {
   openTrackedFixture,
   removeFixturePath,
   SINGLE_ROOT_FIXTURES,
-  SUPPRESSION_SETTLE_MS,
   waitUntil,
   writeUntil,
 } from './fixtures';
@@ -167,7 +166,7 @@ suite('Package.json Watcher (real Extension Host)', function () {
     }
   });
 
-  test('events are ignored while provider writes are suppressed', async () => {
+  test('events for provider writes are ignored when their digest matches', async () => {
     const { harness, baseline } = await startHarness();
     const original = await readFile(rootPackageJsonPath, 'utf8');
 
@@ -176,15 +175,31 @@ suite('Package.json Watcher (real Extension Host)', function () {
         await writeFile(rootPackageJsonPath, original.replace('"1.0.0"', '"1.0.2"'), 'utf8');
       });
 
-      await delay(SUPPRESSION_SETTLE_MS);
-      assert.strictEqual(harness.loadCount(), baseline, 'suppressed writes must not trigger a reload');
+      await delay(DEBOUNCE_SETTLE_MS);
+      assert.strictEqual(harness.loadCount(), baseline, 'matching provider writes must not trigger a reload');
 
-      // The zero above has to be suppression, not a dead watcher.
+      // The zero above has to be a matching digest, not a dead watcher.
       await writeFile(rootPackageJsonPath, original.replace('"1.0.0"', '"1.0.3"'), 'utf8');
       await waitUntil(
         () => Promise.resolve(harness.loadCount() === baseline + 1),
-        'a reload once suppression has lifted',
+        'a reload after the manifest changes externally',
       );
+    }
+    finally {
+      await writeFile(rootPackageJsonPath, original, 'utf8');
+    }
+  });
+
+  test('an external edit immediately after a provider write triggers a reload', async () => {
+    const { harness, baseline } = await startHarness();
+    const original = await readFile(rootPackageJsonPath, 'utf8');
+
+    try {
+      await harness.provider.withWriteSuppressed(async () => {
+        await writeFile(rootPackageJsonPath, original.replace('"1.0.0"', '"1.0.2"'), 'utf8');
+      });
+      await writeFile(rootPackageJsonPath, original.replace('"1.0.0"', '"1.0.6"'), 'utf8');
+      await expectSingleReload(harness, baseline, 'an external edit immediately after a provider write');
     }
     finally {
       await writeFile(rootPackageJsonPath, original, 'utf8');

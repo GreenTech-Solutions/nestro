@@ -2,16 +2,18 @@ import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { normalizeArtifactOutDir } from './artifactOutDir';
 import { parsePrepareReleaseConfig } from './releaseAnalyzer';
 import type { RawCommit } from './releaseAnalyzer';
 import { runReleasePrepare } from './releasePrepare';
 import type { ReleasePrepareIo } from './releasePrepare';
-import { normalizeArtifactOutDir } from './verifyVsix';
+import { runCliAsEntry } from './cliBootstrap';
+import { compareNumericSemvers, describeError, isPlainNumericSemver, parsePlainNumericSemver, readOptionalFile } from '../shared';
 
 const execFileAsync = promisify(execFile);
+const GIT_LOG_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const RECORD_SEPARATOR = '';
 const FIELD_SEPARATOR = '';
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 function parsePackageJson(source: string): Record<string, unknown> {
   let value: unknown;
@@ -21,7 +23,7 @@ function parsePackageJson(source: string): Record<string, unknown> {
   catch (error) {
     throw new Error(
       'package.json is not valid JSON: '
-      + (error instanceof Error ? error.message : String(error)),
+      + (describeError(error)),
       { cause: error },
     );
   }
@@ -33,7 +35,7 @@ function parsePackageJson(source: string): Record<string, unknown> {
 
 function readPlainPackageVersion(source: string): string {
   const value = parsePackageJson(source).version;
-  if (typeof value !== 'string' || !VERSION_PATTERN.test(value)) {
+  if (typeof value !== 'string' || !isPlainNumericSemver(value)) {
     throw new Error('package.json must declare a plain major.minor.patch version');
   }
   return value;
@@ -77,7 +79,7 @@ export function createNodeReleasePrepareDependencies(
     cwd,
     async latestReleaseTag() {
       const { stdout } = await execFileAsync('git', ['tag', '-l', 'v*'], { cwd });
-      const tags = stdout.split('\n').map(line => line.trim()).filter(line => /^v\d+\.\d+\.\d+$/u.test(line));
+      const tags = stdout.split('\n').map(line => line.trim()).filter(tag => tag.startsWith('v') && isPlainNumericSemver(tag.slice(1)));
       if (tags.length === 0) {
         return undefined;
       }
@@ -89,7 +91,7 @@ export function createNodeReleasePrepareDependencies(
       const { stdout } = await execFileAsync(
         'git',
         ['log', range, `--format=%H${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`],
-        { cwd, maxBuffer: 1024 * 1024 * 16 },
+        { cwd, maxBuffer: GIT_LOG_MAX_BUFFER_BYTES },
       );
       return parseCommitLog(stdout);
     },
@@ -99,7 +101,7 @@ export function createNodeReleasePrepareDependencies(
     },
     async writePackageVersion(version) {
       const source = await readFile(packageJsonPath, 'utf8');
-      if (!VERSION_PATTERN.test(version)) {
+      if (!isPlainNumericSemver(version)) {
         throw new Error('package.json version update must be a plain major.minor.patch version');
       }
       const packageJson = parsePackageJson(source);
@@ -107,12 +109,7 @@ export function createNodeReleasePrepareDependencies(
       await writeFile(packageJsonPath, JSON.stringify(packageJson, undefined, 2) + '\n', 'utf8');
     },
     async prependChangelog(entry) {
-      const existing = await readFile(changelogPath, 'utf8').catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return '';
-        }
-        throw error;
-      });
+      const existing = await readOptionalFile(changelogPath) ?? '';
       await writeFile(changelogPath, `${entry}${existing}`, 'utf8');
     },
     async writeNotes(notes) {
@@ -130,10 +127,11 @@ export function createNodeReleasePrepareDependencies(
 }
 
 function compareVersions(left: string, right: string): number {
-  const parse = (value: string): readonly number[] => value.slice(1).split('.').map(Number);
-  const [leftMajor, leftMinor, leftPatch] = parse(left);
-  const [rightMajor, rightMinor, rightPatch] = parse(right);
-  return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
+  const leftVersion = parsePlainNumericSemver(left.slice(1));
+  const rightVersion = parsePlainNumericSemver(right.slice(1));
+  return leftVersion === undefined || rightVersion === undefined
+    ? 0
+    : compareNumericSemvers(leftVersion, rightVersion);
 }
 
 export async function mainReleasePrepare(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<number> {
@@ -164,15 +162,11 @@ export async function mainReleasePrepare(argv: readonly string[], cwd: string, e
     return 0;
   }
   catch (error) {
-    process.stderr.write(`Release preparation failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`Release preparation failed: ${describeError(error)}\n`);
     return 1;
   }
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainReleasePrepare(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainReleasePrepare(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */

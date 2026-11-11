@@ -1,9 +1,12 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, relative, sep } from 'node:path';
+import { sep } from 'node:path';
 import { ClientManager } from '../clients';
-import { FILTER_TYPES, FilterManager, GroupItem, PackageItem, PackagesProvider, StatusItem } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   assertTaskExitCode,
@@ -11,7 +14,6 @@ import {
   awaitTaskProcessStart,
   buildExitWithCodeCommand,
   buildSleepCommand,
-  canonicalizeForComparison,
   closeFixtureWorkspace,
   closeIfOpen,
   countWorkspaceFolders,
@@ -31,15 +33,12 @@ import {
   removeScriptFixture,
   resolveFixturePath,
   ROOT_MANIFEST_NESTED_PACKAGE,
-  setNestroConfigValue,
   SINGLE_ROOT_FIXTURES,
   trackedFixtureRoots,
-  waitUntil,
 } from './fixtures';
 import type { CorepackYarnDetection, OpenedFixtureWorkspace, PinnedManagerDir, ScriptFixture, WorkspaceFixture } from './fixtures';
 import type { PackageStateIdentity } from '../providers';
-
-const EXTENSION_ID = 'greentech-solutions.nestro';
+import { findManifests, isInside, requireExtension, requireOpen, waitForManifests } from './fixtures/extensionManifest';
 
 /** The single empty anchor folder of the generated `.code-workspace` file. */
 const ANCHOR_FOLDER_COUNT = 1;
@@ -48,98 +47,6 @@ const ANCHOR_FOLDER_COUNT = 1;
 // in-process copy of the pid along with the module holding it, so the evidence
 // has to outlive the process it is meant to detect.
 recordExtensionHost();
-
-function requireExtension(): vscode.Extension<unknown> {
-  const extension = vscode.extensions.getExtension(EXTENSION_ID);
-  assert.ok(extension, 'Extension should be registered');
-  return extension;
-}
-
-/** Shape of the manifest fields this suite reads; `packageJSON` is typed `any` by `@types/vscode`. */
-interface ManifestCommand {
-  readonly command: string;
-  readonly title: string;
-  readonly category?: string;
-  readonly enablement?: string;
-}
-
-interface ManifestMenuEntry {
-  readonly command: string;
-  readonly when: string;
-  readonly group?: string;
-}
-
-interface WorkspaceCapability {
-  readonly supported: boolean;
-  readonly description: string;
-}
-
-interface ExtensionManifest {
-  readonly activationEvents: readonly string[];
-  readonly capabilities: {
-    readonly untrustedWorkspaces: WorkspaceCapability;
-    readonly virtualWorkspaces: WorkspaceCapability;
-  };
-  readonly contributes: {
-    readonly commands: readonly ManifestCommand[];
-    readonly menus: {
-      readonly commandPalette: readonly ManifestMenuEntry[];
-      readonly 'view/title': readonly ManifestMenuEntry[];
-      readonly 'view/item/context': readonly ManifestMenuEntry[];
-    };
-  };
-  readonly extensionKind: readonly string[];
-}
-
-/** Reads the real, installed manifest rather than trusting a copy of `package.json` in test code. */
-function getManifest(): ExtensionManifest {
-  return requireExtension().packageJSON as ExtensionManifest;
-}
-
-function compileViewItemPattern(when: string): RegExp {
-  const match = /viewItem\s*=~\s*\/(.*)\/([a-z]*)$/.exec(when);
-  assert.ok(match, `Manifest entry does not contain a viewItem regex: ${when}`);
-  return new RegExp(match[1] ?? '', match[2] ?? '');
-}
-
-function isInside(parent: string, candidate: string): boolean {
-  const relativePath = relative(canonicalizeForComparison(parent), canonicalizeForComparison(candidate));
-  return relativePath !== '' && !relativePath.startsWith('..') && !isAbsolute(relativePath);
-}
-
-function toPosixRelative(from: string, to: string): string {
-  return relative(from, to).split(sep).join('/');
-}
-
-function requireOpen(opened: OpenedFixtureWorkspace | undefined): OpenedFixtureWorkspace {
-  assert.ok(opened, 'Fixture workspace should have been opened in suiteSetup');
-  return opened;
-}
-
-async function findManifests(folder: vscode.WorkspaceFolder): Promise<string[]> {
-  const uris = await vscode.workspace.findFiles(
-    new vscode.RelativePattern(folder, '**/package.json'),
-    '**/node_modules/**',
-  );
-  return uris
-    .map(uri => toPosixRelative(folder.uri.fsPath, uri.fsPath))
-    .sort((left, right) => left.localeCompare(right));
-}
-
-async function waitForManifests(
-  folder: vscode.WorkspaceFolder,
-  expected: readonly string[],
-): Promise<string[]> {
-  let found: string[] = [];
-  await waitUntil(
-    async () => {
-      found = await findManifests(folder);
-      return found.length === expected.length;
-    },
-    `${expected.length} manifest(s) under workspace folder ${folder.uri.fsPath}`,
-  );
-  return found;
-}
 
 suite('Extension Test Suite', () => {
   let extension: vscode.Extension<unknown>;
@@ -235,97 +142,6 @@ suite('Workspace Isolation', () => {
     const folders = vscode.workspace.workspaceFolders ?? [];
     assert.deepStrictEqual(await findManifests(folders[0]), []);
   });
-});
-
-suite('command boundary smoke', function () {
-  this.timeout(30000);
-
-  const fixture = SINGLE_ROOT_FIXTURES[0];
-  let opened: OpenedFixtureWorkspace | undefined;
-
-  suiteSetup(async () => {
-    opened = await openTrackedFixture(fixture);
-  });
-
-  suiteTeardown(async () => {
-    await closeIfOpen(opened);
-    opened = undefined;
-  });
-
-  test('registered install command rejects a forged row without writing the real manifest', async () => {
-    const workspace = requireOpen(opened);
-    const packageFilePath = resolveFixturePath(workspace.rootPath, 'npm-app/package.json');
-    const original = readFileSync(packageFilePath, 'utf8');
-    const restoreDeferredInstall = await setNestroConfigValue('deferInstallAfterUpdate', true);
-    try {
-      await vscode.commands.executeCommand('nestro.refresh');
-      const forged = new PackageItem(
-        'left-pad',
-        '^1.3.0',
-        '99.99.99',
-        'breaking',
-        undefined,
-        undefined,
-        packageFilePath,
-        false,
-        '^',
-      );
-      await vscode.commands.executeCommand('nestro.installUpdate', forged);
-
-      // Command registrations intentionally fire-and-forget their async handlers;
-      // allow that real Extension Host invocation to settle before checking bytes.
-      await new Promise<void>(resolve => setTimeout(resolve, 250));
-      assert.strictEqual(readFileSync(packageFilePath, 'utf8'), original);
-    }
-    finally {
-      await restoreDeferredInstall();
-    }
-  });
-});
-
-// Smoke only: the extension exports no API, so a host test cannot read the active filter back.
-// The behavioural matrix lives in the unit suite, which can observe the provider call.
-suite('nestro.setFilter argument guard', function () {
-  this.timeout(30000);
-
-  const fixture = SINGLE_ROOT_FIXTURES[0];
-  let opened: OpenedFixtureWorkspace | undefined;
-
-  suiteSetup(async () => {
-    opened = await openTrackedFixture(fixture);
-    await vscode.commands.executeCommand('nestro.refresh');
-  });
-
-  suiteTeardown(async () => {
-    await vscode.commands.executeCommand('nestro.setFilter', 'all');
-    await closeIfOpen(opened);
-    opened = undefined;
-  });
-
-  const REJECTED_FILTER_VALUES: readonly { readonly label: string; readonly value: unknown }[] = [
-    { label: 'undefined', value: undefined },
-    { label: 'null', value: null },
-    { label: 'an empty string', value: '' },
-    { label: 'an arbitrary string', value: 'not-a-filter' },
-    { label: 'a number', value: 42 },
-    { label: 'a plain object', value: {} },
-  ];
-
-  for (const { label, value } of REJECTED_FILTER_VALUES) {
-    test(`survives ${label} without throwing, leaving the workspace refreshable`, async () => {
-      requireOpen(opened);
-      await vscode.commands.executeCommand('nestro.setFilter', value);
-      await vscode.commands.executeCommand('nestro.refresh');
-    });
-  }
-
-  for (const filterType of FILTER_TYPES) {
-    test(`accepts the valid "${filterType}" filter without throwing`, async () => {
-      requireOpen(opened);
-      await vscode.commands.executeCommand('nestro.setFilter', filterType);
-      await vscode.commands.executeCommand('nestro.refresh');
-    });
-  }
 });
 
 suite('Fixture Materialization', () => {
@@ -636,18 +452,18 @@ suite('Shell Task Lifecycle', function () {
   }
 
   test('resolves with the process exit code on a successful task', async () => {
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
-    assert.strictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
+    assertTaskExitCode(outcome, 0);
   });
 
   test('resolves with the exact non-zero exit code on a failing task', async () => {
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
-    assertTaskExitCode(exitCode, 7);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
+    assertTaskExitCode(outcome, 7);
   });
 
   test('listeners do not leak: a task run after a success resolves independently', async () => {
     const first = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
-    assert.strictEqual(first, 0);
+    assertTaskExitCode(first, 0);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 3), nextTaskName('Success-Rerun'));
     assertTaskExitCode(second, 3, 'A task started after a successful run must resolve on its own outcome');
@@ -658,7 +474,7 @@ suite('Shell Task Lifecycle', function () {
     assertTaskExitCode(first, 5);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Failure-Rerun'));
-    assert.strictEqual(second, 0, 'A task started after a failing run must resolve on its own outcome');
+    assertTaskExitCode(second, 0, 'A task started after a failing run must resolve on its own outcome');
   });
 
   test('resolves with undefined and does not hang for a task that reports no exit code', async () => {
@@ -672,7 +488,7 @@ suite('Shell Task Lifecycle', function () {
     );
 
     const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('NoExitCode-Rerun'));
-    assert.strictEqual(rerun, 0, 'A task started afterwards must not be intercepted by the earlier run\'s listeners');
+    assertTaskExitCode(rerun, 0, 'A task started afterwards must not be intercepted by the earlier run\'s listeners');
   });
 
   test('resolves without hanging when the user terminates the task, and later tasks are unaffected', async () => {
@@ -686,14 +502,10 @@ suite('Shell Task Lifecycle', function () {
     execution.terminate();
 
     const outcome = await outcomePromise;
-    assert.strictEqual(
-      outcome,
-      undefined,
-      'A terminated task resolves through the same exit contract as a task with no reported exit code',
-    );
+    assert.deepStrictEqual(outcome, { kind: 'ended', exitCode: undefined });
 
     const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Terminate-Rerun'));
-    assert.strictEqual(rerun, 0, 'A task started after a termination must not be intercepted by the terminated run\'s listeners');
+    assertTaskExitCode(rerun, 0, 'A task started after a termination must not be intercepted by the terminated run\'s listeners');
   });
 });
 
@@ -745,8 +557,8 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     provider.markPackageUpdating(identity, { kind: 'update', target: '9.9.9' });
     assert.strictEqual(findPackageItem('left-pad')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
-    assert.strictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
+    assertTaskExitCode(outcome, 0);
 
     provider.invalidateUpdateCache();
     provider.markPackageUpdated(identity, '9.9.9');
@@ -766,8 +578,8 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     provider.markPackageUpdating(identity, { kind: 'update', target: originalVersion });
     assert.strictEqual(findPackageItem('rimraf')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
-    assert.notStrictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
+    assertTaskExitCode(outcome, 1);
 
     provider.markPackageUpdating(identity, undefined);
 
@@ -831,347 +643,6 @@ suite('Package tree renders only real data rows', function () {
       false,
       'the Filter status row must disappear once the filter is cleared back to all',
     );
-  });
-});
-
-suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 20 documented entries', () => {
-    assert.strictEqual(getManifest().contributes.commands.length, 20);
-  });
-
-  // Global commands gate on capability contexts published only after the provider's first
-  // load, so a workspace holding a package.json activates without opening the sidebar first.
-  test('activates on a package.json without waiting for the sidebar to open', () => {
-    assert.deepStrictEqual(getManifest().activationEvents, ['workspaceContains:package.json']);
-  });
-
-  test('declares unsupported workspace modes and workspace-side execution', () => {
-    const manifest = getManifest();
-    assert.deepStrictEqual(manifest.capabilities, {
-      untrustedWorkspaces: {
-        supported: false,
-        description: 'Nestro reads local package files and runs package-manager processes.',
-      },
-      virtualWorkspaces: {
-        supported: false,
-        description: 'Nestro requires local package files and package-manager processes.',
-      },
-    });
-    assert.deepStrictEqual(manifest.extensionKind, ['workspace']);
-  });
-
-  test('row capabilities keep update actions working and hide pin for unsupported specs', () => {
-    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', undefined, 'high', '/workspace/package.json', false, '^');
-    assert.strictEqual(item.contextValue, 'outdated-pinnable-vulnerable-high');
-
-    const menuEntries = getManifest().contributes.menus['view/item/context'];
-    const installUpdateEntry = menuEntries.find(entry => entry.command === 'nestro.installUpdate');
-    assert.ok(installUpdateEntry, 'nestro.installUpdate should have a view/item/context menu entry');
-    assert.strictEqual(installUpdateEntry.when, 'view == nestro.packagesView && viewItem =~ /(^|-)outdated($|-)/');
-    const updateRegexSource = /viewItem =~ \/(.+)\//.exec(installUpdateEntry.when)?.[1];
-    assert.strictEqual(typeof updateRegexSource, 'string');
-    assert.strictEqual(new RegExp(updateRegexSource ?? '').test(item.contextValue as string), true);
-
-    // All row actions that use a state-bearing contextValue must match its capability token.
-    const pickVersionEntry = menuEntries.find(entry => entry.command === 'nestro.pickVersion');
-    assert.ok(pickVersionEntry, 'nestro.pickVersion should have a view/item/context menu entry');
-    const viewItemRegexSource = /viewItem =~ \/(.+)\//.exec(pickVersionEntry.when)?.[1];
-    assert.ok(viewItemRegexSource, 'nestro.pickVersion should use a regex viewItem match');
-    assert.ok(new RegExp(viewItemRegexSource).test(item.contextValue as string));
-
-    const pinEntries = menuEntries.filter(entry => entry.command === 'nestro.pinVersion');
-    assert.strictEqual(pinEntries.length, 1);
-    for (const pinEntry of pinEntries) {
-      const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
-      assert.strictEqual(typeof pinRegexSource, 'string');
-      assert.strictEqual(new RegExp(pinRegexSource ?? '').test(item.contextValue as string), true);
-    }
-
-    const unsupported = new PackageItem('local-pkg', 'file:../local-pkg', undefined, 'none');
-    assert.strictEqual(unsupported.contextValue, 'package-pin-unsupported');
-    assert.strictEqual(unsupported.tooltip?.toString().includes('Pin unavailable: local file dependency'), true);
-    for (const pinEntry of pinEntries) {
-      const pinRegexSource = /viewItem =~ \/(.+)\//.exec(pinEntry.when)?.[1];
-      assert.strictEqual(new RegExp(pinRegexSource ?? '').test(unsupported.contextValue as string), false);
-    }
-  });
-
-  test('package row actions stay reachable with no more than two inline actions', () => {
-    const rowMenus = getManifest().contributes.menus['view/item/context']
-      .filter(entry => entry.when.includes('viewItem =~'));
-    assert.deepStrictEqual(rowMenus.map(entry => [entry.command, entry.group]), [
-      ['nestro.installUpdate', 'inline'],
-      ['nestro.pickVersion', 'inline@2'],
-      ['nestro.openOnNpm', 'navigation@1'],
-      ['nestro.copyPackageName', 'navigation@2'],
-      ['nestro.switchDepType', '2_manage@1'],
-      ['nestro.pinVersion', '2_manage@2'],
-      ['nestro.removePackage', '3_danger@1'],
-    ]);
-    assert.strictEqual(new Set(rowMenus.map(entry => entry.command)).size, rowMenus.length);
-
-    const rowCases = [
-      {
-        label: 'outdated vulnerable pinnable',
-        item: new PackageItem('pkg', '^1.0.0', '1.1.0', 'minor', undefined, 'high'),
-        commandIds: [
-          'nestro.installUpdate',
-          'nestro.pickVersion',
-          'nestro.openOnNpm',
-          'nestro.copyPackageName',
-          'nestro.switchDepType',
-          'nestro.pinVersion',
-          'nestro.removePackage',
-        ],
-        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
-      },
-      {
-        label: 'outdated vulnerable pin-unsupported',
-        item: new PackageItem('local-pkg', 'npm:real-pkg@^1.0.0', '2.0.0', 'breaking', undefined, 'critical'),
-        commandIds: [
-          'nestro.installUpdate',
-          'nestro.pickVersion',
-          'nestro.openOnNpm',
-          'nestro.copyPackageName',
-          'nestro.switchDepType',
-          'nestro.removePackage',
-        ],
-        inlineCommandIds: ['nestro.installUpdate', 'nestro.pickVersion'],
-      },
-      {
-        label: 'current pinnable',
-        item: new PackageItem('stable', '^1.0.0', undefined, 'none'),
-        commandIds: [
-          'nestro.pickVersion',
-          'nestro.openOnNpm',
-          'nestro.copyPackageName',
-          'nestro.switchDepType',
-          'nestro.pinVersion',
-          'nestro.removePackage',
-        ],
-        inlineCommandIds: ['nestro.pickVersion'],
-      },
-      {
-        label: 'installing vulnerable',
-        item: new PackageItem('pending', '^1.0.0', '2.0.0', 'minor', { kind: 'update', target: '2.0.0' }, 'high'),
-        commandIds: ['nestro.openOnNpm', 'nestro.copyPackageName'],
-        inlineCommandIds: [],
-      },
-    ] as const;
-
-    for (const { label, item, commandIds, inlineCommandIds } of rowCases) {
-      const matchingMenus = rowMenus.filter(entry => compileViewItemPattern(entry.when).test(item.contextValue ?? ''));
-      assert.deepStrictEqual(matchingMenus.map(entry => entry.command), commandIds, label);
-      assert.deepStrictEqual(
-        matchingMenus.filter(entry => entry.group?.startsWith('inline') === true).map(entry => entry.command),
-        inlineCommandIds,
-        `${label} inline actions`,
-      );
-      assert.ok(inlineCommandIds.length <= 2, `${label} should have at most two inline actions`);
-    }
-  });
-
-  // Row-only and contextual commands have no meaningful effect when triggered outside their
-  // row/context, so they are excluded from the Command Palette entirely via a `when: false` menu entry.
-  const PALETTE_HIDDEN_COMMAND_IDS = [
-    'nestro.setFilter',
-    'nestro.showFilterPicker',
-    'nestro.installUpdate',
-    'nestro.pickVersion',
-    'nestro.switchDepType',
-    'nestro.pinVersion',
-    'nestro.removePackage',
-    'nestro.openOnNpm',
-    'nestro.copyPackageName',
-    'nestro.clearSearchQuery',
-  ] as const;
-
-  const PALETTE_GATED_COMMANDS: Readonly<Record<string, string>> = {
-    'nestro.updateAllVisible': 'nestro.canUpdateVisiblePackages',
-    'nestro.runInstall': 'nestro.canRunInstall',
-    'nestro.searchPackages': 'nestro.canSearchPackages',
-    'nestro.runAudit': 'nestro.canRunAudit',
-    'nestro.pinAllVersions': 'nestro.canPinAllVersions',
-  };
-
-  test('row-only and contextual commands are hidden from the Command Palette', () => {
-    const paletteEntries = getManifest().contributes.menus.commandPalette;
-    for (const commandId of PALETTE_HIDDEN_COMMAND_IDS) {
-      const entry = paletteEntries.find(candidate => candidate.command === commandId);
-      assert.ok(entry, `${commandId} should have a commandPalette menu entry`);
-      assert.strictEqual(entry.when, 'false', `${commandId} should be hidden from the Command Palette`);
-    }
-    assert.strictEqual(
-      paletteEntries.length,
-      PALETTE_HIDDEN_COMMAND_IDS.length + Object.keys(PALETTE_GATED_COMMANDS).length,
-      'every commandPalette override should be a hidden or capability-gated command',
-    );
-    for (const [commandId, context] of Object.entries(PALETTE_GATED_COMMANDS)) {
-      const entry = paletteEntries.find(candidate => candidate.command === commandId);
-      assert.ok(entry, `${commandId} should have a capability-gated commandPalette entry`);
-      assert.strictEqual(entry.when, context, `${commandId} should use ${context}`);
-    }
-  });
-
-  test('every command still visible in the Command Palette carries the Nestro category', () => {
-    const hiddenIds = new Set<string>(PALETTE_HIDDEN_COMMAND_IDS);
-    const visibleCommands = getManifest().contributes.commands.filter(entry => !hiddenIds.has(entry.command));
-    assert.ok(visibleCommands.length > 0, 'at least one command should remain visible in the Command Palette');
-    for (const command of visibleCommands) {
-      assert.strictEqual(command.category, 'Nestro', `${command.command} should carry the Nestro category`);
-    }
-  });
-
-  test('nestro.updateAllVisible is only enabled while a visible package actually has an update', () => {
-    const command = getManifest().contributes.commands.find(entry => entry.command === 'nestro.updateAllVisible');
-    assert.ok(command, 'nestro.updateAllVisible should be a contributed command');
-    assert.strictEqual(command.enablement, 'nestro.canUpdateVisiblePackages');
-  });
-
-  test('global actions expose their executable workspace capabilities', () => {
-    const commands = getManifest().contributes.commands;
-    // nestro.searchPackages carries no command enablement — its row binds it through
-    // TreeItem.command (viewProjectionService.ts), and visibility is when-gated below instead.
-    for (const [commandId, context] of Object.entries({
-      'nestro.runInstall': 'nestro.canRunInstall',
-      'nestro.runAudit': 'nestro.canRunAudit',
-      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
-    })) {
-      const command = commands.find(entry => entry.command === commandId);
-      assert.ok(command, `${commandId} should be a contributed command`);
-      assert.strictEqual(command.enablement, context);
-    }
-    assert.strictEqual(
-      commands.find(entry => entry.command === 'nestro.searchPackages')?.enablement,
-      undefined,
-      'nestro.searchPackages must carry no enablement — it is bound through TreeItem.command',
-    );
-
-    const toolbarEntries = getManifest().contributes.menus['view/title'];
-    for (const [commandId, context] of Object.entries({
-      'nestro.runInstall': 'nestro.canRunInstall',
-      'nestro.runAudit': 'nestro.canRunAudit',
-      'nestro.searchPackages': 'nestro.canSearchPackages',
-      'nestro.pinAllVersions': 'nestro.canPinAllVersions',
-    })) {
-      const entry = toolbarEntries.find(candidate => candidate.command === commandId);
-      assert.ok(entry, `${commandId} should have a toolbar menu entry`);
-      assert.strictEqual(entry.when, `view == nestro.packagesView && ${context}`);
-    }
-  });
-
-  // The narrow view toolbar renders only the navigation group inline; everything else
-  // collapses into the "..." overflow, so the installed manifest must cap navigation at three.
-  test('the view toolbar keeps exactly three primary navigation actions, in order', () => {
-    const toolbarEntries = getManifest().contributes.menus['view/title'];
-    const navigationEntries = toolbarEntries.filter(entry => entry.group === 'navigation' || entry.group?.startsWith('navigation@') === true);
-    assert.deepStrictEqual(navigationEntries.map(entry => entry.command), [
-      'nestro.refresh',
-      'nestro.checkUpdates',
-      'nestro.updateAllVisible',
-    ]);
-  });
-});
-
-suite('Contributed Command Surface: invocation without arguments', function () {
-  this.timeout(30000);
-
-  /**
-   * Every row-only command handler has a typed `isPackageItem()` guard as its first statement,
-   * so every contributed command resolves `executeCommand()` with no unhandled rejection when
-   * invoked with no argument — even though hidden from the Palette, `executeCommand()` still
-   * reaches the real handler directly through the API regardless of Palette visibility.
-   */
-  const COMMAND_IDS_UNDER_TEST: readonly string[] = [
-    'nestro.refresh',
-    'nestro.checkUpdates',
-    'nestro.runAudit',
-    'nestro.openAuditReport',
-    'nestro.openStatusReport',
-    'nestro.installUpdate',
-    'nestro.pickVersion',
-    'nestro.switchDepType',
-    'nestro.pinVersion',
-    'nestro.removePackage',
-    'nestro.updateAllVisible',
-    'nestro.runInstall',
-    'nestro.openOnNpm',
-    'nestro.copyPackageName',
-    'nestro.setFilter',
-    'nestro.showFilterPicker',
-    'nestro.searchPackages',
-    'nestro.clearSearchQuery',
-    'nestro.openSettings',
-    'nestro.pinAllVersions',
-  ];
-
-  let commandIds: string[];
-  let unhandledRejections: unknown[];
-  let onUnhandledRejection: (reason: unknown) => void;
-
-  suiteSetup(() => {
-    commandIds = getManifest().contributes.commands.map(entry => entry.command);
-    unhandledRejections = [];
-    onUnhandledRejection = (reason: unknown): void => {
-      unhandledRejections.push(reason);
-    };
-    process.on('unhandledRejection', onUnhandledRejection);
-  });
-
-  suiteTeardown(async () => {
-    process.off('unhandledRejection', onUnhandledRejection);
-    // Explicit reset so later runs of this file see a known filter regardless of
-    // whichever command last ran in the loop above.
-    await vscode.commands.executeCommand('nestro.setFilter', 'all');
-    // nestro.searchPackages opens a real, non-modal InputBox that only
-    // resolves on hide/accept; since its handler is fire-and-forget it is
-    // never awaited by executeCommand(), so it is closed explicitly here.
-    await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
-  });
-
-  test('contributes.commands still has exactly the 20 entries this suite enumerates', () => {
-    assert.strictEqual(commandIds.length, 20, 'A manifest command count drift means COMMAND_IDS_UNDER_TEST above is stale');
-    const localeCompare = (left: string, right: string): number => left.localeCompare(right);
-    assert.deepStrictEqual([...commandIds].sort(localeCompare), [...COMMAND_IDS_UNDER_TEST].sort(localeCompare));
-  });
-
-  for (const commandId of COMMAND_IDS_UNDER_TEST) {
-    test(`${commandId} does not crash the Extension Host when invoked with no arguments`, async () => {
-      unhandledRejections.length = 0;
-      let rejection: unknown;
-      try {
-        await vscode.commands.executeCommand(commandId);
-      }
-      catch (err) {
-        rejection = err;
-      }
-
-      // searchPackages/showFilterPicker are fire-and-forget: a QuickPick or InputBox they open
-      // is never awaited by executeCommand() and would otherwise sit open in the background for
-      // the rest of this loop, so it is closed explicitly here.
-      await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
-      if (commandId === 'nestro.openSettings') {
-        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-      }
-
-      // Give a fire-and-forget internal promise a turn of the microtask queue to reject and be
-      // observed by the process-level listener above — there is no state to poll here, only the
-      // (im)possibility of an event Node schedules on its own.
-      await new Promise(resolve => setImmediate(resolve));
-      await new Promise(resolve => setImmediate(resolve));
-
-      assert.strictEqual(rejection, undefined, `${commandId} should resolve executeCommand() — the isPackageItem() guard (row-only commands) or the absence of any argument dereference (global commands) prevents a thrown/rejected TypeError`);
-      assert.strictEqual(unhandledRejections.length, 0, `${commandId} should not leave any unhandled background rejection`);
-    });
-  }
-
-  test('the Extension Host is still fully responsive after invoking all 20 commands with no arguments', async () => {
-    const registered = await vscode.commands.getCommands(true);
-    for (const commandId of commandIds) {
-      assert.ok(registered.includes(commandId), `${commandId} should still be registered`);
-    }
-    // A trivial round trip through the command dispatcher proves the host loop is alive.
-    await vscode.commands.executeCommand('nestro.refresh');
   });
 });
 

@@ -1,5 +1,6 @@
 import { parseDocument, visit } from 'yaml';
 import type { Document } from 'yaml';
+import { describeError, isRecord } from '../shared';
 
 export interface WorkflowViolation {
   readonly rule: string;
@@ -18,14 +19,6 @@ export interface StrictYamlOptions {
 export type StrictYamlResult
   = | { readonly loaded: true; readonly document: Document; readonly value: unknown }
     | { readonly loaded: false; readonly violations: WorkflowViolation[] };
-
-export function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
 
 function usesAnchorOrAlias(document: Document): boolean {
   let found = false;
@@ -58,7 +51,7 @@ export function loadStrictYaml(source: string, options: StrictYamlOptions): Stri
   catch (error) {
     return {
       loaded: false,
-      violations: [{ rule, message: `${subject} could not be resolved: ${error instanceof Error ? error.message : String(error)}` }],
+      violations: [{ rule, message: `${subject} could not be resolved: ${describeError(error)}` }],
     };
   }
 }

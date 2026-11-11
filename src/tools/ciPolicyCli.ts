@@ -10,6 +10,13 @@ import {
   WORKFLOWS_DIRECTORY_PATH,
 } from './ciPolicy';
 import {
+  evaluatePublishToolPolicy,
+  PUBLISH_TOOL_LOCKFILE_PATH,
+  PUBLISH_TOOL_MANIFEST_PATH,
+  ROOT_MANIFEST_PATH,
+} from './releasePublishToolPolicy';
+import type { PublishToolFiles } from './releasePublishToolPolicy';
+import {
   evaluateReleaseCandidateWorkflowPolicy,
   evaluateReleaseConfigPolicy,
   evaluateReleaseDispatchWorkflowPolicy,
@@ -25,6 +32,8 @@ import { REVIEWED_ACTIONS_PATH } from './reviewedActions';
 import type { ReviewedActionsRegistry } from './reviewedActions';
 import { evaluateWorkflowActionPolicy, findUnusedReviewedActions, loadReviewedRegistryForPolicy } from './workflowActionPolicy';
 import type { WorkflowViolation } from './workflowYaml';
+import { runCliAsEntry } from './cliBootstrap';
+import { compareCodeUnits, describeError } from '../shared';
 
 export interface WorkflowPolicySource {
   readonly path: string;
@@ -37,6 +46,7 @@ export interface CiPolicyCliDependencies {
   readonly readWorkflows: () => Promise<readonly WorkflowPolicySource[]>;
   readonly readReviewedActions: () => Promise<string>;
   readonly readReleaseConfig?: () => Promise<string>;
+  readonly readPublishToolFiles?: () => Promise<PublishToolFiles>;
   readonly writeOut: (message: string) => void;
   readonly writeError: (message: string) => void;
 }
@@ -44,6 +54,7 @@ export interface CiPolicyCliDependencies {
 interface PolicyInputs {
   readonly codeowners: string;
   readonly dependabotConfigs: readonly WorkflowPolicySource[];
+  readonly publishToolFiles: PublishToolFiles | undefined;
   readonly releaseConfig: string | undefined;
   readonly reviewedActions: string;
   readonly workflows: readonly WorkflowPolicySource[];
@@ -90,6 +101,13 @@ function releaseConfigViolations(releaseConfig: string | undefined): LocatedViol
   return locate(RELEASE_CONFIG_PATH, evaluateReleaseConfigPolicy(releaseConfig));
 }
 
+function publishToolViolations(files: PublishToolFiles | undefined): LocatedViolation[] {
+  if (files === undefined) {
+    return [{ path: PUBLISH_TOOL_MANIFEST_PATH, rule: 'publish-tool', message: 'required publishing tool files are missing' }];
+  }
+  return locate(PUBLISH_TOOL_MANIFEST_PATH, evaluatePublishToolPolicy(files));
+}
+
 function workflowViolations(
   workflows: readonly WorkflowPolicySource[],
   registry: ReviewedActionsRegistry | undefined,
@@ -121,19 +139,21 @@ function evaluateRepositoryPolicy(inputs: PolicyInputs): LocatedViolation[] {
     ...reviewed.violations,
     ...workflowSetViolations(inputs.workflows),
     ...releaseConfigViolations(inputs.releaseConfig),
+    ...publishToolViolations(inputs.publishToolFiles),
     ...workflowViolations(inputs.workflows, reviewed.registry),
   ];
 }
 
 async function readPolicyInputs(dependencies: CiPolicyCliDependencies): Promise<PolicyInputs> {
-  const [workflows, codeowners, dependabotConfigs, reviewedActions, releaseConfig] = await Promise.all([
+  const [workflows, codeowners, dependabotConfigs, reviewedActions, releaseConfig, publishToolFiles] = await Promise.all([
     dependencies.readWorkflows(),
     dependencies.readCodeowners(),
     dependencies.readDependabotConfigs(),
     dependencies.readReviewedActions(),
     dependencies.readReleaseConfig?.() ?? Promise.resolve(undefined),
+    dependencies.readPublishToolFiles?.() ?? Promise.resolve(undefined),
   ]);
-  return { codeowners, dependabotConfigs, releaseConfig, reviewedActions, workflows };
+  return { codeowners, dependabotConfigs, publishToolFiles, releaseConfig, reviewedActions, workflows };
 }
 
 export async function runCiPolicyCli(dependencies: CiPolicyCliDependencies): Promise<number> {
@@ -142,7 +162,7 @@ export async function runCiPolicyCli(dependencies: CiPolicyCliDependencies): Pro
     inputs = await readPolicyInputs(dependencies);
   }
   catch (error) {
-    dependencies.writeError(`CI workflow policy failed: ${error instanceof Error ? error.message : String(error)}`);
+    dependencies.writeError(`CI workflow policy failed: ${describeError(error)}`);
     return 1;
   }
   const violations = evaluateRepositoryPolicy(inputs);
@@ -165,7 +185,7 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
       const names = entries
         .filter(entry => entry.isFile() && /^dependabot\.ya?ml$/u.test(entry.name))
         .map(entry => entry.name)
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareCodeUnits);
       return Promise.all(names.map(async name => ({
         path: `.github/${name}`,
         source: await readFile(resolve(directory, name), 'utf8'),
@@ -177,7 +197,7 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
       const names = entries
         .filter(entry => entry.isFile() && /\.ya?ml$/u.test(entry.name))
         .map(entry => entry.name)
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareCodeUnits);
       return Promise.all(names.map(async name => ({
         path: `${WORKFLOWS_DIRECTORY_PATH}/${name}`,
         source: await readFile(resolve(directory, name), 'utf8'),
@@ -185,15 +205,17 @@ export function createNodeCiPolicyCliDependencies(cwd: string): CiPolicyCliDepen
     },
     readReviewedActions: () => readFile(resolve(cwd, REVIEWED_ACTIONS_PATH), 'utf8'),
     readReleaseConfig: () => readFile(resolve(cwd, RELEASE_CONFIG_PATH), 'utf8'),
+    readPublishToolFiles: async () => {
+      const [rootManifest, toolManifest, toolLockfile] = await Promise.all(
+        [ROOT_MANIFEST_PATH, PUBLISH_TOOL_MANIFEST_PATH, PUBLISH_TOOL_LOCKFILE_PATH].map(path => readFile(resolve(cwd, path), 'utf8')),
+      );
+      return { rootManifest, toolLockfile, toolManifest };
+    },
     writeOut: message => process.stdout.write(`${message}\n`),
     writeError: message => process.stderr.write(`${message}\n`),
   };
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void runCiPolicyCli(createNodeCiPolicyCliDependencies(process.cwd())).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => runCiPolicyCli(createNodeCiPolicyCliDependencies(process.cwd())));
 /* v8 ignore stop */

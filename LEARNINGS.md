@@ -2,8 +2,7 @@
 
 Accumulated patterns and anti-patterns from development sessions.
 
-- **[fix:project]** `tsdown.config.ts` (`.ts` extension) silently fails to load when the file uses ESM `import` syntax — rename to `tsdown.config.mts` so tsdown picks it up. First symptom is `pnpm exec tsdown` hanging or returning empty output.
-- **[gotcha:project]** tsdown with `format: 'cjs'` emits `out/extension.cjs`, but VS Code loads the file named in `package.json` `"main"`. If `main` still says `./out/extension.js`, activation fails with "Cannot find module". Always keep `main` in sync with tsdown's actual output extension.
+- **[gotcha:project]** Keep the ESM tsdown configuration in `tsdown.config.mts`; `pnpm run build` emits `out/extension.cjs`, which must match `package.json` `"main"`.
 - **[pattern:project]** `vscode:prepublish` must run `pnpm run build` (tsdown), not `pnpm run compile` (tsc). The `compile`/`watch` tsc scripts are only for compiling integration tests to `out/test/`; they do NOT produce the bundled extension entry point.
 - **[pattern:project]** For tsdown watch mode in `.vscode/tasks.json`, use a custom background `problemMatcher` with `beginsPattern: "Build start"` and `endsPattern: "Build complete|Rebuilt in"` — this is how VS Code detects when a tsdown rebuild finishes and can reload the extension host for F5 hot-reload.
 - **[gotcha:project]** `tsconfig.json` uses `"module": "esnext"` + `"moduleResolution": "bundler"` for tsdown — do not change it. Integration tests require a separate `tsconfig.test.json` with `"module": "Node16"` + `"moduleResolution": "Node16"`. Using `"module": "commonjs"` in tsconfig.test.json fails with tsc; `Node16` is the correct value.

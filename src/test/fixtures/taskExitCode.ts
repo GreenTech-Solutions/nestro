@@ -5,11 +5,21 @@ import * as assert from 'assert';
  * which collapses every non-zero native exit code into 1, so a non-zero expectation only
  * checks for non-zero there.
  */
-export function assertTaskExitCode(actual: number | undefined, expected: number, message?: string): void {
-  if (process.platform === 'win32' && expected !== 0) {
-    assert.strictEqual(typeof actual, 'number', message);
-    assert.notStrictEqual(actual, 0, message);
+export function assertTaskExitCode(
+  actual: import('../../utils/shellTask').ShellTaskOutcome,
+  expected: number,
+  message?: string,
+): void {
+  assert.ok(
+    actual.kind === 'ended' && actual.exitCode !== undefined,
+    message ?? 'Task should report a numeric process exit code',
+  );
+  if (actual.kind !== 'ended' || actual.exitCode === undefined) {
     return;
   }
-  assert.strictEqual(actual, expected, message);
+  if (process.platform === 'win32' && expected !== 0) {
+    assert.notStrictEqual(actual.exitCode, 0, message);
+    return;
+  }
+  assert.strictEqual(actual.exitCode, expected, message);
 }

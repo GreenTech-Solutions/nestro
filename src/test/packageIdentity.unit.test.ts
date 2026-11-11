@@ -3,18 +3,22 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import { setWorkspaceFolders } from './fixtures';
 import {
   resolveCommandPackageItem,
-  resolvePinManifestEntry,
-  resolveUnambiguousManifestEntry,
+  resolveManifestEntry,
   revalidateCommandPackageItem,
 } from '../commands/packageIdentity';
 import {
   readCanonicalDependencySpec,
   readCanonicalDependencySpecs,
-  resolveCanonicalPackageLocation,
 } from '../providers/packageIdentity';
-import type { CanonicalPackageLocation, PackagesProvider, ResolvedPackageItem } from '../providers';
+import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
+import * as utils from '../utils';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
+import type { CanonicalPackageLocation } from '../providers/packageIdentity';
+import type { ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
   const packageName = 'react';
@@ -42,20 +46,6 @@ function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependenc
   };
 }
 
-function makeProvider(): {
-  provider: PackagesProvider;
-  resolve: ReturnType<typeof vi.fn>;
-  revalidate: ReturnType<typeof vi.fn>;
-} {
-  const resolve = vi.fn();
-  const revalidate = vi.fn();
-  return {
-    provider: { resolvePackageItem: resolve, revalidatePackageItem: revalidate } as unknown as PackagesProvider,
-    resolve,
-    revalidate,
-  };
-}
-
 describe('package identity command helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -64,7 +54,8 @@ describe('package identity command helpers', () => {
 
   it('returns a provider-issued capability and reports non-invalid resolution failures safely', async () => {
     const capability = makeCapability();
-    const { provider, resolve } = makeProvider();
+    const provider = makeProvider();
+    const resolve = provider.resolvePackageItem;
     resolve.mockResolvedValueOnce({ ok: true, value: capability });
 
     await expect(resolveCommandPackageItem({ forged: true }, provider)).resolves.toBe(capability);
@@ -77,13 +68,14 @@ describe('package identity command helpers', () => {
     resolve.mockResolvedValueOnce({ ok: false, reason: 'path-replaced' });
     await expect(resolveCommandPackageItem({}, provider)).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
   it('returns and reports revalidation results through the same sanitized boundary', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValueOnce({ ok: true, value: capability });
 
     await expect(revalidateCommandPackageItem(capability, provider)).resolves.toBe(capability);
@@ -91,59 +83,65 @@ describe('package identity command helpers', () => {
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
     await expect(revalidateCommandPackageItem(capability, provider)).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
   it('accepts one exact dependency entry and revalidates after reading it', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
+    const readPackageFile = vi.spyOn(utils, 'readPackageFile');
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^1.0.0' },
       devDependencies: {},
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBe(capability);
+    expect(readPackageFile).toHaveBeenCalledWith(capability.packageFilePath);
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it('stops before reading when the initial manifest revalidation rejects', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'path-replaced' });
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
   it('accepts the dev section while checking the opposite section for ambiguity', async () => {
     const capability = makeCapability('devDependencies');
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: {},
       devDependencies: { react: '~1.1.0' },
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBe(capability);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it('allows a pin action to keep the selected dev row when the name is duplicated', async () => {
     const capability = makeCapability('devDependencies');
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^9.0.0' },
       devDependencies: { react: '~1.1.0' },
     })));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBe(capability);
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
@@ -153,36 +151,39 @@ describe('package identity command helpers', () => {
     ['selected section missing', { dependencies: { react: '^9.0.0' }, devDependencies: {} }],
   ] as const)('rejects a pin row when the selected manifest entry is %s', async (_label, manifest) => {
     const capability = makeCapability('devDependencies');
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
   it('stops a pin before reading when the capability is no longer current', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
   });
 
   it('sanitizes a pin manifest read failure', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(new Error('read failed'));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -196,13 +197,14 @@ describe('package identity command helpers', () => {
     ['a non-object section', { dependencies: 'not-an-object' }],
   ] as const)('rejects %s before the legacy writer', async (_label, manifest) => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
     expect(revalidate).toHaveBeenCalledTimes(1);
   });
@@ -212,7 +214,8 @@ describe('package identity command helpers', () => {
     ['malformed JSON', undefined],
   ] as const)('sanitizes %s', async (_label, failure) => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate.mockResolvedValue({ ok: true, value: capability });
     if (failure === undefined) {
       vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from('{'));
@@ -221,15 +224,16 @@ describe('package identity command helpers', () => {
       vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(failure);
     }
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
   it('does not add a second error when the final revalidation rejects a previously checked row', async () => {
     const capability = makeCapability();
-    const { provider, revalidate } = makeProvider();
+    const provider = makeProvider();
+    const revalidate = provider.revalidatePackageItem;
     revalidate
       .mockResolvedValueOnce({ ok: true, value: capability })
       .mockResolvedValueOnce({ ok: false, reason: 'not-current' });
@@ -237,9 +241,9 @@ describe('package identity command helpers', () => {
       dependencies: { react: '^1.0.0' },
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: Package action is no longer available. Refresh the package list and try again.',
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
     );
   });
 
@@ -307,10 +311,7 @@ describe('package identity command helpers', () => {
         reason: 'invalid-item',
       });
 
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: root } }, { uri: { fsPath: child } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: root } }, { uri: { fsPath: child } }]);
       const nested = await resolveCanonicalPackageLocation(manifest);
       expect(nested).toEqual(expect.objectContaining({ ok: true }));
       if (nested.ok) {
@@ -319,10 +320,7 @@ describe('package identity command helpers', () => {
 
       const workspaceAlias = join(root, 'alias');
       await symlink(root, workspaceAlias);
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: root } }, { uri: { fsPath: workspaceAlias } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: root } }, { uri: { fsPath: workspaceAlias } }]);
       await expect(resolveCanonicalPackageLocation(manifest)).resolves.toEqual({
         ok: false,
         reason: 'cross-workspace',
@@ -331,20 +329,14 @@ describe('package identity command helpers', () => {
       const nonManifestAlias = join(root, 'non-manifest', 'package.json');
       await mkdir(join(root, 'non-manifest'));
       await symlink(target, nonManifestAlias);
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: root } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       await expect(resolveCanonicalPackageLocation(nonManifestAlias)).resolves.toEqual({
         ok: false,
         reason: 'path-replaced',
       });
     }
     finally {
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: previousFolders,
-      });
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });

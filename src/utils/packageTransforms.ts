@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { formatDependencySpec, parseDependencySpec } from './dependencySpec';
+import { extractRangePrefix, isRecord, sanitizeInlineText } from '../shared';
 
 export type DependencySection = 'dependencies' | 'devDependencies';
 
@@ -73,12 +74,7 @@ export function parsePackageJson(raw: string): PackageJsonDocument {
 }
 
 export function extractVersionPrefix(versionString: string): string {
-  if (versionString.startsWith('workspace:')) {
-    return '';
-  }
-
-  const match = /^([~^]|>=|>|<=|<)/.exec(versionString);
-  return match?.[1] ?? '';
+  return extractRangePrefix(versionString);
 }
 
 export function serializePackageJson(raw: string, json: PackageJsonDocument): string {
@@ -191,12 +187,12 @@ export function transformPinAllVersions(json: PackageJsonDocument): { json: Pack
   let count = 0;
   for (const section of ['dependencies', 'devDependencies'] as const) {
     const dependencies = transformed[section];
-    // A section can be JSON `null` in a hand-edited file; treat it the same as absent.
-    if (dependencies === undefined || dependencies === null) { continue; }
-    for (const [name, version] of Object.entries(dependencies as Record<string, unknown>)) {
+    // Hand-edited files can hold null, arrays or scalars here; only an object section is pinned.
+    if (!isRecord(dependencies)) { continue; }
+    for (const [name, version] of Object.entries(dependencies)) {
       const parsed = parseDependencySpec(version as string);
       if (parsed.supported && parsed.range !== 'exact') {
-        (dependencies as Record<string, unknown>)[name] = formatDependencySpec(parsed, true);
+        dependencies[name] = formatDependencySpec(parsed, true);
         count++;
       }
     }
@@ -248,9 +244,6 @@ function cloneDependencySections(json: PackageJsonDocument): PackageJsonDocument
     if (isRecord(dependencies)) {
       transformed[section] = { ...dependencies };
     }
-    else if (Array.isArray(dependencies)) {
-      transformed[section] = [...dependencies];
-    }
   }
   return transformed;
 }
@@ -277,7 +270,7 @@ function setDependencyValue(
     return;
   }
   if (Array.isArray(dependencies)) {
-    (dependencies as unknown as Record<string, unknown>)[packageName] = value;
+    throw new Error('Dependency sections must be objects.');
   }
 }
 
@@ -312,10 +305,6 @@ function readOwnDependencySpec(section: unknown, packageName: string): OwnDepend
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function detectJsonIndent(raw: string): string {
   const match = raw.match(/^[ \t]+"[^"]+":/m);
   if (match === null) {
@@ -328,15 +317,6 @@ function detectNewlineStyle(raw: string): string {
   return raw.match(/\r\n|\r|\n/)?.[0] ?? '\n';
 }
 
-const CONFLICT_ANSI_ESCAPE = new RegExp(
-  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const CONFLICT_CONTROL = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
-  'g',
-);
-
 function sanitizeConflictText(value: unknown): string {
   if (typeof value !== 'string') {
     if (value === undefined) {
@@ -348,9 +328,5 @@ function sanitizeConflictText(value: unknown): string {
     return Array.isArray(value) ? '<array>' : `<${typeof value}>`;
   }
 
-  return value
-    .replace(CONFLICT_ANSI_ESCAPE, '')
-    .replace(CONFLICT_CONTROL, ' ')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .slice(0, 240);
+  return sanitizeInlineText(value);
 }

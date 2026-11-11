@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { describeError, hasExactKeys, isRecord } from '../shared';
 
 export const RELEASE_CONTRACT_PATH = '.github/release-contract.json';
 
@@ -35,7 +36,7 @@ export interface ReleaseContract {
   readonly candidateKeys: readonly string[];
   readonly registries: Readonly<Record<RegistryName, { readonly downloadPath: string; readonly url: string }>>;
   readonly schemaVersions: { readonly candidate: number; readonly evidence: number; readonly provenance: number };
-  readonly secrets: { readonly marketplace: string; readonly openVsx: string; readonly rejectedAliases: readonly string[] };
+  readonly secrets: { readonly openVsx: string; readonly rejectedAliases: readonly string[] };
   readonly vsixBudget: {
     readonly baselineCompressedBytes: number;
     readonly baselinePackagedFileCount: number;
@@ -49,17 +50,12 @@ export interface ReleaseContract {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function contractError(detail: string): Error {
   return new Error(`${RELEASE_CONTRACT_PATH}: ${detail}`);
 }
 
 function exactRecord(value: unknown, expected: readonly string[], label: string): UnknownRecord {
-  const actual = isRecord(value) ? Object.keys(value).sort((left, right) => left.localeCompare(right)) : [];
-  if (!isRecord(value) || actual.join() !== [...expected].sort((left, right) => left.localeCompare(right)).join()) {
+  if (!isRecord(value) || !hasExactKeys(value, expected)) {
     throw contractError(`${label} must contain exactly ${expected.join(', ')}`);
   }
   return value;
@@ -148,12 +144,12 @@ export function parseReleaseContract(source: string): ReleaseContract {
     value = JSON.parse(source);
   }
   catch (error) {
-    throw contractError(`invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw contractError(`invalid JSON: ${describeError(error)}`);
   }
   const root = exactRecord(value, ['artifactPrefixes', 'bundle', 'candidateKeys', 'registries', 'schemaVersions', 'secrets', 'vsixBudget', 'workflows'], 'contract');
   const prefixes = section(root, 'artifactPrefixes', ['releaseCandidate', 'verifyEvidence']);
   const versions = section(root, 'schemaVersions', ['candidate', 'evidence', 'provenance']);
-  const secrets = section(root, 'secrets', ['marketplace', 'openVsx', 'rejectedAliases']);
+  const secrets = section(root, 'secrets', ['openVsx', 'rejectedAliases']);
   const workflows = section(root, 'workflows', ['releaseCandidateName', 'signerPath', 'verifyName']);
   return {
     artifactPrefixes: {
@@ -169,7 +165,6 @@ export function parseReleaseContract(source: string): ReleaseContract {
       provenance: integer(versions, 'provenance', 1, 'schemaVersions'),
     },
     secrets: {
-      marketplace: text(secrets, 'marketplace', SECRET_NAME_PATTERN, 'secrets'),
       openVsx: text(secrets, 'openVsx', SECRET_NAME_PATTERN, 'secrets'),
       rejectedAliases: list(secrets, 'rejectedAliases', entry => SECRET_NAME_PATTERN.test(entry), 'secrets'),
     },
@@ -222,16 +217,4 @@ export function bundleMemberNames(kind: BundleKind, vsixFile: string): string[] 
 /** Newline-terminated glob list for an upload step, one pattern per bundle member. */
 export function bundleUploadPaths(kind: BundleKind, directory: string): string {
   return bundleMemberNames(kind, `*${RELEASE_CONTRACT.bundle.vsixExtension}`).map(name => `${directory}/${name}\n`).join('');
-}
-
-export function candidateKey(name: string): string {
-  if (!RELEASE_CONTRACT.candidateKeys.includes(name)) {
-    throw contractError(`${name} is not a candidate key`);
-  }
-  return name;
-}
-
-export function registryDownloadUrl(name: RegistryName, values: { readonly name: string; readonly publisher: string; readonly version: string }): string {
-  const { downloadPath, url } = RELEASE_CONTRACT.registries[name];
-  return `${url}${downloadPath.replaceAll('{publisher}', values.publisher).replaceAll('{name}', values.name).replaceAll('{version}', values.version)}`;
 }
