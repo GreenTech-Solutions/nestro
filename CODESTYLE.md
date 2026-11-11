@@ -29,14 +29,6 @@ export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 Use `const enum` for internal enums that don't need runtime iteration (compile-time inlining, zero bundle cost):
 
-```typescript
-const enum CacheState {
-  Empty = 'empty',
-  Fresh = 'fresh',
-  Stale = 'stale',
-}
-```
-
 Use regular `enum` only when you need `Object.values()` or runtime iteration.
 
 ### Return types
@@ -55,8 +47,13 @@ Private / module-internal functions may omit return types when they are obvious 
 Use type predicates for discriminated unions instead of casting:
 
 ```typescript
-function isGroupItem(item: vscode.TreeItem): item is GroupItem {
-  return item instanceof GroupItem;
+export function isPackageItem(value: unknown): value is PackageItem {
+  try {
+    return value instanceof PackageItem;
+  }
+  catch {
+    return false;
+  }
 }
 ```
 
@@ -148,8 +145,11 @@ src/utils/
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper
 ├── ncuClient.ts        → npm-check-updates wrapper
-├── registryClient.ts   → config-aware HTTPS registry metadata adapter
-├── auditClient.ts      → vulnerability audit runner and parser
+├── registryClient.ts   → HTTPS facade over configuration, transport, and parsing
+├── registry/           → registry configuration readers, parsers, and HTTP transport
+├── auditClient.ts      → npm audit schema adapter over the shared audit outcome pipeline
+├── audit/              → shared audit outcomes, severity model, and field readers
+├── metadata/           → shared packument parser and CLI adapter
 ├── shellTask.ts        → VS Code shell task execution and exit codes
 └── index.ts            → barrel re-exports
 ```
@@ -171,8 +171,9 @@ Nestro has no "Swiss-army" files. A module that grows a second job is split befo
 ### Size limits
 - Product code: at most 300 lines per file and 60 lines per function. Tests: at most 800 lines per file.
   Blank lines and comments are not counted.
-- ESLint enforces this with `max-lines` and `max-lines-per-function` for every file, with no per-file
-  exceptions; a new exception needs the owner's approval; `eslint-disable` for these rules is not allowed.
+- `eslint.config.mjs` applies the product limits to every `src/**/*.{ts,mts}` file outside tests and
+  the test file limit to every `src/test/**/*.{ts,mts}` file; no per-file overrides exist. Do not
+  suppress these rules with `eslint-disable`.
 - Adding code to a file near its limit, or to a file that does something else: put the code in a new
   focused module instead.
 

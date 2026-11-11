@@ -33,7 +33,8 @@ below), creates the `nestro.packagesView` `TreeView` and calls `provider.attachT
 registers every command from `src/commands`, registers three watchers
 (`registerPackageJsonWatcher()`, `registerConfigurationWatcher()`,
 `registerWorkspaceFoldersWatcher()`), then calls `provider.loadPackages()`, optionally followed
-by `checkUpdates()`/`runAudit()` when the matching `*OnStartup` setting is enabled.
+by `checkUpdates()`/`runAudit()` when `nestro.checkUpdatesOnStartup` or
+`nestro.runAuditOnStartup` is enabled.
 
 `registerPackageJsonWatcher()` debounces filesystem events per
 `PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and asks the provider whether each changed manifest
@@ -315,8 +316,8 @@ confirmation dialog) can let the file change underneath it. `resolvePackageItem(
 boundary every command calls first: `PackageCapabilityOperations` confirms the raw argument is a
 real `PackageItem` this provider issued (`packageItemRecords: WeakMap<PackageItem, PackageItemRecord>`), confirms
 exactly one current row still matches that identity tuple (`findCurrentEntry()`), resolves the
-canonical filesystem location, and issues a `ResolvedPackageItem` "capability" recorded in a
-second `WeakMap` (`packageCapabilityRecords`). Every field a command reads afterward — name,
+canonical filesystem location, and issues a `ResolvedPackageItem` capability recorded by
+`PackageCapabilityService` in a private `WeakMap`. Every field a command reads afterward — name,
 spec, section, canonical paths, file stamp — comes from this capability, never the original
 tree-rendered item.
 
@@ -339,8 +340,9 @@ write itself as a staleness failure.
 `computeUpdateFingerprint()` (`src/providers/updateFingerprint.ts`) decides whether a cached update result may be reused.
 For every identity being checked, it groups by manifest, resolves the canonical location, and re-reads
 the exact dependency spec currently on disk (`readCanonicalDependencySpecs()`). Each entry
-becomes a sorted JSON tuple of `[canonicalManifestPath, section, packageName, spec-or-null,
-'ok'-or-rejection-reason]`, combined with the effective policy (`target`, `includePreReleases`,
+becomes a sorted JSON tuple containing the canonical manifest path when resolution succeeds
+(otherwise the requested path), section, package name, spec or `null`, and `ok` or the rejection
+reason. Entries are combined with the effective policy (`target`, `includePreReleases`,
 `minimumReleaseAgeDays`) into one string. `UpdateOrchestrationService.check()` computes this
 twice: once before the NCU fetch, to decide whether the cache can be reused, and once more —
 against the live, re-read policy — immediately before writing the freshly fetched result into
@@ -432,7 +434,7 @@ diagnostics output channels created in `activate()`.
 ### Outcome taxonomy
 
 Every audit-capable process runner returns one of four `AuditOutcome` kinds
-(`src/utils/auditClient.ts`): `clean` (recognized schema, zero vulnerabilities, compatible exit
+(`src/utils/audit/outcome.ts`): `clean` (recognized schema, zero vulnerabilities, compatible exit
 code), `advisories` (recognized schema, at least one vulnerability), `incomplete` (output
 received but not trustworthy — see reasons below), or `error` (the process never produced
 inspectable output). `incomplete`/`error` both throw `UnrecognizedAuditResultError` when
@@ -445,29 +447,30 @@ three a terminated process can never escape — `timeout`, `aborted`, `output-ov
 
 | Manager | Command | Schema id(s) | Notes |
 |---|---|---|---|
-| npm / pnpm | `<cmd> audit --json` | `npm-v2-vulnerabilities`, `npm-v1-advisories` | Shared parser in `auditClient.ts`; exit `0`/`1` accepted only with a recognized schema; zero readable advisories with a positive summary total is `summary-mismatch` at any exit code, not clean. |
+| npm / pnpm | `<cmd> audit --json` | `npm-v2-vulnerabilities`, `npm-v1-advisories` | `auditClient.ts` parses npm schemas through the shared outcome pipeline in `src/utils/audit/outcome.ts`; exit `0`/`1` is accepted only with a recognized schema; zero readable advisories with a positive summary total is `summary-mismatch` at any exit code, not clean. |
 | Yarn Classic | `yarn audit --json` | `yarn-classic-audit` | `yarnAuditClient.ts`; NDJSON lines individually validated; the final `auditSummary`'s per-severity counts must match parsed advisories, and its bitmask must match the exit code, or the run is `incomplete`. |
 | Yarn Modern | `yarn npm audit --all --recursive --json` | `yarn-modern-npm-audit` | Same file; requires empty `stderr`; empty stdout is clean only at exit `0`; advisory output requires exit `1`. |
 | Bun | `bun audit --json` | `bun-bulk-advisory` | `bunAuditClient.ts`; parses the raw npm Bulk Advisory shape (`Record<packageName, Advisory[]>`); `{}` is clean only at exit `0`; any partially-shaped entry invalidates the whole payload. |
 
-Which Yarn command family applies is resolved once per project root by `resolveYarnFamily()`
-(`src/utils/yarnFamily.ts`), in order: the manifest's `packageManager` field (`yarn@<major>`),
-then same-root markers considered as a set (`.yarnrc.yml`/a `__metadata:`-versioned
-`yarn.lock` mean modern; `.yarnrc`/a `# yarn lockfile v1` header mean classic — both present is
-`unknown`, never guessed), and only as a last resort a bounded `yarn --version` probe. Nothing
-defaults to Classic; an unresolved family disables the Audit action entirely
-(`PackagesProvider.isAuditableProject()`) rather than assuming a command shape.
+`resolveYarnFamily()` (`src/utils/yarnFamily.ts`) selects a family from the manifest's
+`packageManager` field (`yarn@<major>`), same-root markers considered as a set (`.yarnrc.yml`/a
+`__metadata:`-versioned `yarn.lock` mean modern; `.yarnrc`/a `# yarn lockfile v1` header mean
+classic — both present is `unknown`, never guessed), and a bounded `yarn --version` probe as the
+last resort. Memoization exists only inside `runWithYarnFamilyMemo()`: each project root resolves
+once per scope, while calls outside a scope resolve afresh. Nothing defaults to Classic; an
+unresolved family disables the Audit action entirely (`WorkspaceCapabilityResolver.isAuditableProject()`)
+rather than assuming a command shape.
 
 ### Bounded processes
 
 Every audit command (npm/pnpm/Yarn/Bun) runs through `runBoundedProcess()`
 (`src/utils/processRunner.ts`), which spawns the child in its own process group
 (`detached: true` on posix) and enforces a hard timeout and a per-stream byte cap independently
-of the child's behavior. On timeout, external abort, or overflow it signals the whole process
-group, waits `killGracePeriodMs` (2 s default), and escalates to a forceful kill if still alive —
-reaching grandchildren the npm/pnpm/yarn/bun wrappers commonly fork, which a plain `child.kill()`
-would not. `AUDIT_PROCESS_TIMEOUT_MS` (120 s) and `AUDIT_PROCESS_MAX_BUFFER_BYTES` (20 MiB per
-stream) remain the audit-command bounds. The fallback `yarn --version` family probe is separate:
+of the child's behavior. `BoundedOutput` (`src/utils/boundedOutput.ts`) counts and captures stdout
+and stderr bytes independently. `ProcessTerminator` (`src/utils/processTermination.ts`) signals
+the process tree, waits `killGracePeriodMs` (2 s default), and sends a forceful kill after the
+grace period. `AUDIT_PROCESS_TIMEOUT_MS` (120 s) and `AUDIT_PROCESS_MAX_BUFFER_BYTES` (20 MiB
+per stream) remain the audit-command bounds. The fallback `yarn --version` family probe is separate:
 `yarnFamily.ts` uses promisified `execFile` with a 5 s timeout and an 8 KiB `maxBuffer`; it does
 not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 
@@ -476,12 +479,16 @@ not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 `AuditOrchestrationService.run()` resolves the project graph, runs one bounded audit per
 project through `runRootOperations()`, and folds each outcome into an `AuditProjectSummary`
 (kept even when row attribution is suppressed, so the report never loses a project's result)
-and, where advisories exist, into `auditResults: Map<identityKey, AuditSeverity>` for row
-badges. npm audit report v2 advisories carry no version field of their own, so
-`enrichNpmV2AdvisoryVersions()` resolves one first by reading
-`<projectRoot>/node_modules/<name>/package.json` through a bounded reader — a regular file
-under a size cap, a value matching a plain semver pattern, and a realpath check placing the
-read inside the project root — leaving the version unresolved on any failure. Row attribution
+and, where advisories exist, into `auditResults: Map<string, AuditSeverity>` for row badges; this
+map is the tree-badge projection. The audit project runner calls the client's `runAuditReport()`
+and accepts only an `AuditResult`; orchestration folds that structured result into project
+summaries and failures. The legacy Map-only report path is gone. The `AuditResult` and
+`AuditOutcome` contract lives in `src/utils/audit/outcome.ts`; each client parses its own schema.
+npm audit report v2 advisories carry no version field of their own, so
+`enrichNpmV2AdvisoryVersions()` reads the one direct `nodes[]` entry for the package, accepts
+only an immediate `node_modules/<name>` path, and resolves that package's installed
+`package.json` version through a bounded reader. It verifies the real path stays inside the
+project root and leaves the version unresolved on any failure. Row attribution
 (`applyStructuredProjectAuditResults()`) only badges a row when an
 advisory's `attribution` is `'direct'`, resolves to exactly one row by manifest and canonical
 resolved path (`resolvedPathBelongsToManifest()`, itself gated on the project having exactly
@@ -489,14 +496,13 @@ one origin manifest), and the row's spec is compatible with the resolved version
 advisory's affected range. Any ambiguity — several manifests sharing a project, several rows
 matching a resolved path, an unrecognized spec — leaves the advisory project-level only.
 
-Three separate sanitizers exist for three audiences, each with its own policy rather than a
-shared one: `sanitizeLogText()` (`src/utils/logger.ts`) for the output channel,
-`sanitizePackageText()` (`src/providers/PackageItem.ts`) for tree labels (collapses newlines,
-truncates to 240 characters), `sanitizeAuditText()` (`src/utils/auditReport.ts`) for the audit
-report. `statusReport.ts` layers a fourth pass (`sanitizeReportText()`) on top of
-`sanitizeLogText()` that substitutes known package-file paths with owner-qualified labels and
-redacts any *unknown* absolute path outright, so a diagnostics report never leaks a filesystem
-layout it cannot already explain.
+The shared text operations live in `src/shared/text.ts`: `sanitizeMultilineText()`,
+`sanitizeInlineText()`, and `redactCredentials()`. `sanitizeLogText()` (`src/utils/logger.ts`)
+uses multiline cleanup and credential redaction before adding continuation prefixes;
+`sanitizePackageText()` (`src/providers/packageItemPresentation.ts`) and
+`sanitizeAuditText()` (`src/utils/auditReport.ts`) wrap inline cleanup. `sanitizeReportText()`
+(`src/utils/statusReport.ts`) also substitutes owner-qualified labels for known package paths,
+hides unknown absolute paths, and applies the report length limit.
 
 ## 8. Update-check model
 
@@ -526,26 +532,24 @@ stops the chain rather than falling through to a different registry.
    the resolved family returns `unrecognized` without spawning a process.
 2. **`config-aware-https`** — `fetchPackageMetadataFromRegistry()`
    (`src/utils/registryClient.ts`) resolves registry URL, auth, TLS and proxy settings from
-   nested configuration sources (below) and issues one bounded HTTPS request. This tier also
-   serves as the effective public-npm fallback: its default registry is
-   `https://registry.npmjs.org/`, used whenever nothing overrides it.
-3. **`public-npm`** — declared in the `MetadataAdapterTier` type with a tier-order slot, but no
-   adapter is currently registered at it; `config-aware-https` already covers the public
-   registry case, so only two tiers are populated in practice today. This is not a fallback
-   slot: an unsupported or unstable response from a configured registry never falls through to
-   the public registry (section 10).
+   nested configuration sources (below) and issues one bounded HTTPS request. When no
+   configuration overrides the URL, it uses `https://registry.npmjs.org/`. This is the terminal
+   tier; an unsupported or unstable response from a configured registry never falls through to
+   another registry (section 10).
 
 ### Registry configuration sources
 
-`registryClient.ts` resolves, per manager, the nested configuration chain a real CLI would
-honor: npm/pnpm read project-to-user `.npmrc` plus `npm_config_*` overrides; Yarn Classic reads
-`.yarnrc`; Yarn Modern reads `.yarnrc.yml` including per-scope `npmScopes`; Bun reads
-`bunfig.toml` (`src/utils/bunConfig.ts`) including environment-reference expansion and
-credentials embedded in a registry URL. Every HTTPS request goes through
-`runBoundedMetadataRequest()` (`src/utils/metadataRunner.ts`): a 15 s timeout, a 5 MiB response
-cap, and redirects capped at `MAX_REGISTRY_REDIRECTS` (3), each confirmed same-origin before an
-`Authorization` header survives it, and confirmed `https:` with no embedded credentials before
-being followed at all.
+`registryClient.ts` is the config-aware HTTPS facade. It gets the merged configuration from
+`resolveRegistryConfiguration()` (`src/utils/registry/configResolution.ts`), which composes the
+`registry/` readers and parsers; environment expansion lives in `envExpansion.ts`. npm/pnpm read
+project-to-user `.npmrc` plus `npm_config_*` overrides; Yarn Classic reads `.yarnrc`; Yarn Modern
+reads `.yarnrc.yml` including per-scope `npmScopes`; Bun reads `bunfig.toml` through
+`registry/bunConfiguration.ts` and `bunConfig.ts`. `requestRegistryPayload()` (`src/utils/registry/httpClient.ts`)
+follows at most `MAX_REGISTRY_REDIRECTS` redirects, requires HTTPS without embedded credentials,
+and drops `Authorization` when a redirect changes origin. Each request uses
+`runBoundedMetadataRequest()` (`metadataRunner.ts`) with a 15 s timeout and 5 MiB response cap;
+`metadataResponse.ts` classifies completed responses by HTTP status and content length, parses
+JSON, and maps schema results.
 
 ### Release-age cooldown and prerelease policy
 
@@ -657,10 +661,9 @@ not silently re-introduce it.
   `nestro.searchPackages` — by setting or omitting the command property. None of the three carries
   `enablement`: a row-bound command must never be able to render clickable while its precondition
   is false.
-- **The three text sanitizers stay separate rather than being consolidated into one.** Each
-  serves a different audience with a different policy (log continuation lines, truncated tree
-  labels, audit report text); merging them would touch each call site's already-reviewed
-  behavior for a stylistic gain only, so the duplication is accepted deliberately.
+- **Text handling shares one implementation.** `src/shared/text.ts` owns multiline and inline
+  cleanup plus credential redaction; logger, package, audit, and status-report modules compose
+  those helpers for their output surfaces.
 
 ## 11. Extension points
 
@@ -668,8 +671,8 @@ not silently re-introduce it.
 bin, lock files, verbs, dev flag, audit/metadata argv, config file), implement a `Client` subclass in `src/clients/`
 (section flag before the `--` operand separator, names/versions validated through
 `operandValidation.ts` before shell-quoting), wire it into `ClientManager.createClient()`, add
-an audit adapter following the `AuditResult`/`AuditOutcome` contract in `auditClient.ts` (own
-schema id, bounded-process call, incomplete/error mapping), and add a metadata adapter at the
+an audit adapter following the `AuditResult`/`AuditOutcome` contract in
+`src/utils/audit/outcome.ts` (own schema id, bounded-process call, incomplete/error mapping), and add a metadata adapter at the
 appropriate tier in `metadataRegistry.ts` if the manager exposes a native metadata command or a
 distinct registry configuration format.
 
