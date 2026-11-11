@@ -1,3 +1,21 @@
+## [1.0.3](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.2...v1.0.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **audit:** order audit advisories by severity rank ([27a5186](https://github.com/GreenTech-Solutions/nestro/commit/27a5186883f673dd136be445afe0afdb09189b0e))
+* **audit:** start package-manager shims through cmd.exe on Windows ([ea6c08f](https://github.com/GreenTech-Solutions/nestro/commit/ea6c08fb94b03b753b90ae52c388b8ef2c5d1feb))
+* **logger:** mask password and passwd values in log output ([ecbaf8b](https://github.com/GreenTech-Solutions/nestro/commit/ecbaf8b76a50e102127e8adead1d085f03c1cd91))
+* **metadata:** validate package names and pass them after -- to metadata CLIs ([63c55a0](https://github.com/GreenTech-Solutions/nestro/commit/63c55a01c08f4b725815e8766b80390a4ab3c6bd))
+* **npm-link:** validate and encode the package name in the npm URL ([76adc5e](https://github.com/GreenTech-Solutions/nestro/commit/76adc5ea1cde6d5bd86ae8d903531afb89495b61))
+* **status:** strip ANSI escapes in the status report regex ([db97820](https://github.com/GreenTech-Solutions/nestro/commit/db97820755411ea815d7e6793e2e49f9accd6f79))
+* **update:** report partial Update All failures and reload the tree ([f8e7327](https://github.com/GreenTech-Solutions/nestro/commit/f8e7327044e1c5db4aaa3d031d528b335379ec86))
+
+### Maintenance
+
+* **deps:** bump transitive handlebars to 4.7.10 for critical advisories ([4664ca2](https://github.com/GreenTech-Solutions/nestro/commit/4664ca23470be0b69511592235c9a3633523e516))
+* **lint:** cap file and function length with a shrink-only exception list ([de35653](https://github.com/GreenTech-Solutions/nestro/commit/de35653e7c5af16d1b952c3023a7dea5273c40fd))
+
 ## [1.0.2](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.1...v1.0.2) (2026-10-05)
 
 
