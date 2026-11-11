@@ -2,7 +2,8 @@ import * as assert from 'assert';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runAuditOutcome, runBoundedProcess } from '../utils';
+import { runAuditOutcome } from '../utils/auditClient';
+import { runBoundedProcess } from '../utils/processRunner';
 import { removeFixturePath } from './fixtures';
 
 /** Bounds a real npm start, including a cold Windows shell and one registry round trip. */

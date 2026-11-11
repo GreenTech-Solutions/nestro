@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { resolveYarnFamily } from '../utils/yarnFamily';
+import { resolveYarnFamily } from '../utils';
 import { isRecord } from '../shared';
 import type { PackageManager } from '../shared';
 

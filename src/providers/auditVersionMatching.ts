@@ -1,26 +1,29 @@
-interface ParsedVersion {
-  major: number;
-  minor: number;
-  patch: number;
-}
+import {
+  compareNumericSemvers,
+  parseNumericSemverComparator,
+  parsePlainNumericSemver,
+  unwrapNpmAlias,
+} from '../shared';
 
-/** True when `resolvedVersion` satisfies the manifest spec: an exact version or a `^`/`~` range. */
+type ParsedVersion = NonNullable<ReturnType<typeof parsePlainNumericSemver>>;
+
+/** True when `resolvedVersion` satisfies an exact, caret, or tilde spec, including an npm alias target. */
 export function matchesManifestVersion(spec: string, resolvedVersion: string): boolean {
-  const resolved = parseVersion(resolvedVersion);
+  const resolved = parsePlainNumericSemver(resolvedVersion.trim());
   if (resolved === undefined) {
     return false;
   }
-  const normalizedSpec = spec.trim();
-  const exact = parseVersion(normalizedSpec.replace(/^=/, ''));
+  const normalizedSpec = unwrapNpmAlias(spec.trim());
+  const exact = parsePlainNumericSemver(normalizedSpec.replace(/^=/, '').trim());
   if (exact !== undefined) {
-    return compareVersions(resolved, exact) === 0;
+    return compareNumericSemvers(resolved, exact) === 0;
   }
   const operator = normalizedSpec[0];
   if (operator !== '^' && operator !== '~') {
     return false;
   }
-  const base = parseVersion(normalizedSpec.slice(1));
-  if (base === undefined || compareVersions(resolved, base) < 0) {
+  const base = parsePlainNumericSemver(normalizedSpec.slice(1).trim());
+  if (base === undefined || compareNumericSemvers(resolved, base) < 0) {
     return false;
   }
   if (operator === '~') {
@@ -37,7 +40,7 @@ export function matchesManifestVersion(spec: string, resolvedVersion: string): b
 
 /** True when `version` lies in at least one advisory range; unions (`||`) never match. */
 export function isVersionInAffectedRange(version: string, ranges: readonly string[]): boolean {
-  const parsedVersion = parseVersion(version);
+  const parsedVersion = parsePlainNumericSemver(version.trim());
   if (parsedVersion === undefined) {
     return false;
   }
@@ -55,16 +58,12 @@ export function isVersionInAffectedRange(version: string, ranges: readonly strin
 }
 
 function matchesComparator(version: ParsedVersion, token: string): boolean {
-  const match = /^(<=|>=|<|>|=)?(\d+\.\d+\.\d+)$/.exec(token);
-  if (match === null) {
+  const comparator = parseNumericSemverComparator(token);
+  if (comparator === undefined) {
     return false;
   }
-  const expected = parseVersion(match[2]);
-  if (expected === undefined) {
-    return false;
-  }
-  const comparison = compareVersions(version, expected);
-  switch (match[1] ?? '=') {
+  const comparison = compareNumericSemvers(version, comparator.version);
+  switch (comparator.operator ?? '=') {
     case '<':
       return comparison < 0;
     case '<=':
@@ -76,20 +75,4 @@ function matchesComparator(version: ParsedVersion, token: string): boolean {
     default:
       return comparison === 0;
   }
-}
-
-function parseVersion(value: string): ParsedVersion | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
-  if (match === null) {
-    return undefined;
-  }
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-  };
-}
-
-function compareVersions(left: ParsedVersion, right: ParsedVersion): number {
-  return left.major - right.major || left.minor - right.minor || left.patch - right.patch;
 }

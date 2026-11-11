@@ -244,9 +244,6 @@ function cloneDependencySections(json: PackageJsonDocument): PackageJsonDocument
     if (isRecord(dependencies)) {
       transformed[section] = { ...dependencies };
     }
-    else if (Array.isArray(dependencies)) {
-      transformed[section] = [...dependencies];
-    }
   }
   return transformed;
 }
@@ -273,7 +270,7 @@ function setDependencyValue(
     return;
   }
   if (Array.isArray(dependencies)) {
-    (dependencies as unknown as Record<string, unknown>)[packageName] = value;
+    throw new Error('Dependency sections must be objects.');
   }
 }
 

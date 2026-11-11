@@ -23,7 +23,7 @@ export type { CiPolicyCliDependencies, WorkflowPolicySource } from './ciPolicyCl
 export { CI_WORKFLOW_CONTRACT } from './ciWorkflowContract';
 export { analyzeReleaseBump, computeNextVersion, generateReleaseNotes, parsePrepareReleaseConfig, releaseNotesBody, renderChangelogEntry, validatePrepareReleaseConfig } from './releaseAnalyzer';
 export type { PrepareReleaseConfig, RawCommit } from './releaseAnalyzer';
-export { buildReleaseCandidate, findManifestViolation, isWellFormedManifest } from './releaseCandidate';
+export { buildReleaseCandidate, findManifestViolation } from './releaseCandidate';
 export type { ReleaseCandidateEvidence, ReleaseCandidateManifest } from './releaseCandidate';
 export { mainReleaseCandidate, parseReleaseCandidateArgs } from './releaseCandidateCli';
 export { parseTagVersion, runReleasePrepare } from './releasePrepare';
@@ -32,9 +32,9 @@ export { createNodeReleasePrepareDependencies, mainReleasePrepare, parseCommitLo
 export { evaluatePublishToolPolicy, idTokenViolations, marketplaceStepViolations, PUBLISH_TOOL_LOCKFILE_PATH, PUBLISH_TOOL_MANIFEST_PATH, ROOT_MANIFEST_PATH } from './releasePublishToolPolicy';
 export type { PublishToolFiles } from './releasePublishToolPolicy';
 export { evaluateReleaseCandidateWorkflowPolicy, evaluateReleaseConfigPolicy, evaluateReleaseDispatchWorkflowPolicy, evaluateReleasePrepareWorkflowPolicy, evaluateReleaseWorkflowPolicy, RELEASE_CANDIDATE_WORKFLOW_PATH, RELEASE_CONFIG_PATH, RELEASE_DISPATCH_WORKFLOW_PATH, RELEASE_PREPARE_WORKFLOW_PATH, RELEASE_WORKFLOW_PATH } from './releaseWorkflowPolicy';
-export { bundleFileName, bundleMemberNames, bundleUploadPaths, candidateKey, CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, COMPRESSED_SIZE_BUDGET_BYTES, loadReleaseContract, PACKAGED_FILE_COUNT_BUDGET, parseReleaseContract, RELEASE_CONTRACT, RELEASE_CONTRACT_PATH, registryDownloadUrl, VSIX_FILE_PATTERN } from './releaseContract';
+export { bundleFileName, bundleMemberNames, bundleUploadPaths, CLEAN_BASELINE_COMPRESSED_BYTES, CLEAN_BASELINE_PACKAGED_FILE_COUNT, COMPRESSED_SIZE_BUDGET_BYTES, loadReleaseContract, PACKAGED_FILE_COUNT_BUDGET, parseReleaseContract, RELEASE_CONTRACT, RELEASE_CONTRACT_PATH, VSIX_FILE_PATTERN } from './releaseContract';
 export type { BundleKind, BundleRole, ReleaseContract } from './releaseContract';
-export { loadReviewedActionsRegistry, parseReviewedActionsRegistry, REVIEWED_ACTIONS_PATH, reviewedActionReference } from './reviewedActions';
+export { parseReviewedActionsRegistry, REVIEWED_ACTIONS_PATH } from './reviewedActions';
 export type { ReviewedAction, ReviewedActionsRegistry } from './reviewedActions';
 export { verifyVsixPackage } from './verifyVsix';
 export type { VsixVerifierIo } from './verifyVsix';

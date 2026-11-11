@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolvePackageFileLabels } from '../providers';
-import type { WorkspaceFolderDescriptor } from '../providers';
+import type { WorkspaceFolderDescriptor } from '../providers/packageLabels';
 
 describe('resolvePackageFileLabels()', () => {
   it('builds one owner label and package-file-relative path from the same resolution', () => {

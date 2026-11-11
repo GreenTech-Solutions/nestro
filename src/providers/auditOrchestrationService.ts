@@ -13,7 +13,7 @@ import type {
 } from '../utils';
 import { enrichNpmV2AdvisoryVersions, readNodePackageJsonVersion } from './auditInstalledVersion';
 import type { AuditFileProbe } from './auditInstalledVersion';
-import { applyLegacyProjectAuditResults, applyStructuredProjectAuditResults } from './auditRowAttribution';
+import { applyStructuredProjectAuditResults } from './auditRowAttribution';
 import { runProjectAudit } from './auditProjectRunner';
 import type { AuditableClient, ProjectAuditOutcome } from './auditProjectRunner';
 import type { AuditableRow } from './auditRowAttribution';
@@ -209,17 +209,6 @@ async function foldProjectOutcome(
     return true;
   }
   fold.successfulAuditRootCount += 1;
-  if (value.kind === 'legacy') {
-    fold.auditProjects.push({
-      project,
-      status: 'success',
-      manager: project.packageManager,
-      vulnerabilities: value.vulnerabilities,
-      advisories: [],
-    });
-    applyLegacyProjectAuditResults(request.rows, project, value.vulnerabilities, fold.auditResults);
-    return true;
-  }
   const enrichedAdvisories = await enrichNpmV2AdvisoryVersions(project, value.advisories, dependencies);
   if (isStale(request)) {
     return false;

@@ -267,7 +267,7 @@ describe('package manager clients', () => {
   });
 });
 
-describe('runAudit()', () => {
+describe('runAuditReport()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
@@ -281,18 +281,18 @@ describe('runAudit()', () => {
   it('runs npm audit through the package manager client', async () => {
     mockExecSuccess(npmAuditReport('react', 'high'));
 
-    const vulnerabilities = await new PackageManagerClient('npm', '/workspace').runAudit();
+    const result = await new PackageManagerClient('npm', '/workspace').runAuditReport();
 
-    expect(vulnerabilities.get('react')).toBe('high');
+    expect(result.vulnerabilities.get('react')).toBe('high');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('npm');
   });
 
   it('delegates pnpm audit to the package audit runner', async () => {
     mockExecSuccess(npmAuditReport('lodash', 'critical'));
 
-    const vulnerabilities = await new PackageManagerClient('pnpm', '/workspace').runAudit();
+    const result = await new PackageManagerClient('pnpm', '/workspace').runAuditReport();
 
-    expect(vulnerabilities.get('lodash')).toBe('critical');
+    expect(result.vulnerabilities.get('lodash')).toBe('critical');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('pnpm');
   });
 
@@ -310,9 +310,9 @@ describe('runAudit()', () => {
       }),
     }));
 
-    const vulnerabilities = await new PackageManagerClient('bun', '/workspace').runAudit();
+    const result = await new PackageManagerClient('bun', '/workspace').runAuditReport();
 
-    expect(vulnerabilities.get('lodash')).toBe('critical');
+    expect(result.vulnerabilities.get('lodash')).toBe('critical');
     expect(runBoundedProcessMock.mock.calls[0][0]).toBe('bun');
   });
 
@@ -326,10 +326,10 @@ describe('runAudit()', () => {
       ].join('\n'),
     }));
 
-    const vulnerabilities = await new PackageManagerClient('yarn', '/workspace').runAudit();
+    const result = await new PackageManagerClient('yarn', '/workspace').runAuditReport();
 
-    expect(vulnerabilities.get('lodash')).toBe('critical');
-    expect(vulnerabilities.size).toBe(1);
+    expect(result.vulnerabilities.get('lodash')).toBe('critical');
+    expect(result.vulnerabilities.size).toBe(1);
   });
 
   it('fails closed on malformed or irrelevant Yarn Classic NDJSON lines', async () => {
@@ -338,7 +338,7 @@ describe('runAudit()', () => {
       yarnClassicSummary(),
     ].join('\n'));
 
-    await expect(new PackageManagerClient('yarn', '/workspace').runAudit()).rejects.toMatchObject({
+    await expect(new PackageManagerClient('yarn', '/workspace').runAuditReport()).rejects.toMatchObject({
       outcome: { kind: 'incomplete', reason: 'malformed-json' },
     });
   });
@@ -350,15 +350,15 @@ describe('runAudit()', () => {
     });
     mockExecFailure(error);
 
-    const vulnerabilities = await new PackageManagerClient('yarn', '/workspace').runAudit();
+    const result = await new PackageManagerClient('yarn', '/workspace').runAuditReport();
 
-    expect(vulnerabilities.get('vite')).toBe('critical');
+    expect(result.vulnerabilities.get('vite')).toBe('critical');
   });
 
   it('throws a typed error when Yarn Classic fails before producing inspectable output', async () => {
     mockExecFailure(new Error('yarn not found'));
 
-    await expect(new PackageManagerClient('yarn', '/workspace').runAudit()).rejects.toThrow('yarn not found');
+    await expect(new PackageManagerClient('yarn', '/workspace').runAuditReport()).rejects.toThrow('yarn not found');
   });
 });
 
@@ -534,7 +534,7 @@ describe('ClientManager', () => {
     mockExecSuccess('');
 
     const client = await new ClientManager().getClient('/workspace/packages/app');
-    await client.runAudit();
+    await client.runAuditReport();
 
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',
@@ -560,7 +560,7 @@ describe('ClientManager', () => {
     }));
 
     const client = await new ClientManager().getClient('/workspace/packages/app');
-    await client.runAudit();
+    await client.runAuditReport();
 
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'npm',

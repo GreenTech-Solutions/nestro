@@ -67,7 +67,7 @@ function isGroupItem(item: vscode.TreeItem): item is GroupItem {
 | Content | Convention | Example |
 |---------|-----------|---------|
 | Class / Provider | PascalCase | `PackagesProvider.ts`, `PackageItem.ts` |
-| Utility module | camelCase | `versionUtils.ts`, `packageManager.ts` |
+| Utility module | camelCase | `versionUtils.ts`, `packageReader.ts` |
 | Client | PascalCase | `PackageManagerClient.ts`, `ClientManager.ts` |
 | Barrel | always `index.ts` | `src/providers/index.ts` |
 | Unit test | `*.unit.test.ts` | `versionUtils.unit.test.ts` |
@@ -125,20 +125,10 @@ directory path; it imports siblings directly (`import { X } from './Y'`).
 
 ### Exceptions
 
-Two kinds of exception exist, both enforced by `src/test/importContract.unit.test.ts`:
-
-1. **`clients` never imports the `utils` barrel.** `clients/*.ts` import `utils` implementation
-   files directly (e.g. `../utils/logger`, `../utils/auditClient`) instead of `'../utils'`.
-   Routing through the barrel would recreate a cycle: the barrel re-exports
-   `packageManager.ts`, which imports `ClientManager` from `clients`. This is a standing,
-   file-level exception, not a one-off.
-2. **Two named back-edges**, each with a one-line reason recorded in the policy test's
-   allowlist: `utils/packageManager.ts` imports the `ClientManager` value from `clients` (a
-   single delegation-only module, documented and tested as part of `utils`; relocating it would
-   ripple through every caller for no behavior change), and `utils/auditReportFormatter.ts`
-   imports the `AuditProjectFailure`/`AuditProjectSummary` types from `providers` (type-only,
-   erased at compile time; the types compose `clients`' `AuditProject` with `utils` audit
-   primitives, so they can only be defined at the `providers` layer above both).
+One named back-edge is enforced by `src/test/importContract.unit.test.ts`: `utils/auditReportFormatter.ts`
+imports the `AuditProjectFailure`/`AuditProjectSummary` types from `providers` (type-only, erased at
+compile time; the types compose `clients`' `AuditProject` with `utils` audit primitives, so they can
+only be defined at the `providers` layer above both).
 
 Any new cross-subsystem import that isn't an exact barrel import to a lower layer needs a new,
 justified entry in that allowlist — the policy test fails closed on anything else, including a
@@ -153,8 +143,8 @@ Each util file exports one primary concern:
 ```
 src/utils/
 ├── versionUtils.ts     → version comparison and classification
-├── packageManager.ts   → PM detection for the metadata adapters
 ├── packageReader.ts    → reading workspace package.json files
+├── metadataRegistry.ts → metadata tiers with an injected package-manager detector
 ├── logger.ts           → Logger singleton
 ├── notify.ts           → showError() helper
 ├── ncuClient.ts        → npm-check-updates wrapper

@@ -6,19 +6,15 @@ import {
   vi,
 } from 'vitest';
 import { mockNestroConfiguration } from './fixtures/config';
+import { FilterManager, PackagesProvider } from '../providers';
+import { METADATA_CONCURRENCY_CAP } from '../providers/PackagesProvider';
+import { StatusItem } from '../providers/StatusItem';
+import { CHECK_CONCURRENCY_CAP, MUTATION_CONCURRENCY_CAP } from '../utils/operationCoordinator';
 import {
-  FilterManager,
-  METADATA_CONCURRENCY_CAP,
-  PackagesProvider,
-  StatusItem,
-} from '../providers';
-import {
-  CHECK_CONCURRENCY_CAP,
   fetchAllLatestVersions,
   fetchPackageMetadata,
   formatHeldBackDate,
   getWorkspacePackageFilePaths,
-  MUTATION_CONCURRENCY_CAP,
   readAllWorkspaceDependencies,
   resolveMetadataRegistryKey,
   showError,

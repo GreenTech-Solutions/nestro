@@ -21,27 +21,6 @@ export function getUpdateType(current: string, latest: string): UpdateType {
   return 'patch';
 }
 
-export function isVersionOutdated(current: string, latest: string): boolean {
-  return getUpdateType(current, latest) !== 'none';
-}
-
-export function getGreatestVersion(versions: string[], includePreReleases: boolean): string | undefined {
-  let greatest: { raw: string; parsed: ParsedSemver } | undefined;
-
-  for (const raw of versions) {
-    const parsed = parseVersionString(raw);
-    if (parsed === undefined || (!includePreReleases && parsed.preRelease.length > 0)) {
-      continue;
-    }
-
-    if (greatest === undefined || compareVersions(parsed, greatest.parsed) > 0) {
-      greatest = { raw, parsed };
-    }
-  }
-
-  return greatest?.raw;
-}
-
 export function compareRawVersions(left: string, right: string): number {
   const leftVersion = parseVersionString(left);
   const rightVersion = parseVersionString(right);

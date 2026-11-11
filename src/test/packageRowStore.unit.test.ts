@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildPackageItem } from './fixtures';
 import { PackageRowStore } from '../providers/packageRowStore';
-import type { PackageIdentityTuple, PackageTreeEntry } from '../providers';
+import type { PackageIdentityTuple } from '../providers/packageIdentity';
+import type { PackageTreeEntry } from '../providers/treeBuilder';
 
 function createEntry(
   packageName: string,

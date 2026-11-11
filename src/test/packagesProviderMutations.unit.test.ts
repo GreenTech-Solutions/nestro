@@ -6,11 +6,8 @@ import {
   vi,
 } from 'vitest';
 import { buildPackageItem } from './fixtures/packageItem';
-import {
-  FilterManager,
-  PackageItem,
-  PackagesProvider,
-} from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 import {
   readAllWorkspaceDependencies,
 } from '../utils';

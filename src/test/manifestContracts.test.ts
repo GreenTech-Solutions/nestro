@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
-import { FILTER_TYPES } from '../providers';
+import { FILTER_TYPES } from '../providers/FilterManager';
 import { COMMAND_IDS, CONTEXT_KEYS, VIEW_IDS } from '../shared';
 import {
   buildPackageItem,

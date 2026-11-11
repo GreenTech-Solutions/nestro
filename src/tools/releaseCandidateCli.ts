@@ -9,10 +9,9 @@ import { COMMIT_SHA_PATTERN, POSITIVE_INTEGER_PATTERN, readEvidenceFile } from '
 import { buildReleaseCandidate } from './releaseCandidate';
 import { CANDIDATE_FILE, EVIDENCE_FILE, RELEASE_CONTRACT } from './releaseContract';
 import { runCliAsEntry } from './cliBootstrap';
-import { describeError, isRecord } from '../shared';
+import { describeError, isPlainNumericSemver, isRecord } from '../shared';
 
 const execFileAsync = promisify(execFile);
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 export interface ReleaseCandidateArgs {
   readonly artifactDir: string;
@@ -64,7 +63,7 @@ async function readPackageVersion(cwd: string): Promise<string> {
   catch (error) {
     throw new Error(`package.json is not valid JSON: ${describeError(error)}`, { cause: error });
   }
-  if (!isRecord(value) || typeof value.version !== 'string' || !VERSION_PATTERN.test(value.version)) {
+  if (!isRecord(value) || typeof value.version !== 'string' || !isPlainNumericSemver(value.version)) {
     throw new Error('package.json must declare a plain major.minor.patch version');
   }
   return value.version;

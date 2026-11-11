@@ -6,6 +6,7 @@ import {
   renderChangelogEntry,
 } from './releaseAnalyzer';
 import type { PrepareReleaseConfig, RawCommit } from './releaseAnalyzer';
+import { isPlainNumericSemver } from '../shared';
 
 export interface ReleasePrepareIo {
   readonly cwd?: string;
@@ -24,14 +25,12 @@ export interface ReleasePrepareOutcome {
   readonly previousVersion: string | undefined;
 }
 
-const TAG_VERSION_PATTERN = /^v(\d+\.\d+\.\d+)$/u;
-
 export function parseTagVersion(tag: string): string {
-  const match = TAG_VERSION_PATTERN.exec(tag);
-  if (match === null) {
+  const version = tag.startsWith('v') ? tag.slice(1) : '';
+  if (!isPlainNumericSemver(version)) {
     throw new Error(`release tag must match v<major>.<minor>.<patch>, got "${tag}"`);
   }
-  return match[1];
+  return version;
 }
 
 export async function runReleasePrepare(

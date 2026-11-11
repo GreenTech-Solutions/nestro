@@ -28,7 +28,6 @@ export interface UpdateOrchestrationRequest {
   /** Re-reads the live policy right before committing a fetch, catching a setting changed mid-flight. */
   readonly resolveCurrentPolicy: () => UpdateFingerprintPolicy;
   readonly onCheckStarted?: () => void;
-  readonly onCheckCompleted?: () => void;
   readonly onRootFailure?: () => void;
   readonly onDiscarded?: () => void;
 }

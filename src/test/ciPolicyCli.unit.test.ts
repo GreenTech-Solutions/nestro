@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -7,7 +8,7 @@ import {
   CODEOWNERS_PATH,
   createNodeCiPolicyCliDependencies,
   DEPENDABOT_CONFIG_PATH,
-  loadReviewedActionsRegistry,
+  parseReviewedActionsRegistry,
   PUBLISH_TOOL_LOCKFILE_PATH,
   PUBLISH_TOOL_MANIFEST_PATH,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
@@ -16,7 +17,6 @@ import {
   RELEASE_PREPARE_WORKFLOW_PATH,
   RELEASE_WORKFLOW_PATH,
   REVIEWED_ACTIONS_PATH,
-  reviewedActionReference,
   ROOT_MANIFEST_PATH,
   runCiPolicyCli,
 } from '../tools';
@@ -25,7 +25,7 @@ import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const releaseWorkflowPath = RELEASE_WORKFLOW_PATH;
 const canonicalReleaseSource = readFile(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
-const downloadArtifactSha = loadReviewedActionsRegistry(repositoryRoot).actions['actions/download-artifact'].sha;
+const downloadArtifactSha = parseReviewedActionsRegistry(readFileSync(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8')).actions['actions/download-artifact'].sha;
 
 const canonicalPolicyReaders: Pick<
   CiPolicyCliDependencies,
@@ -261,7 +261,7 @@ describe('CI policy CLI', () => {
         ? {
             ...workflow,
             source: workflow.source.replace(
-              reviewedActionReference('actions/download-artifact'),
+              `actions/download-artifact@${downloadArtifactSha}`,
               replacement,
             ),
           }

@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  PackageLoadingServiceContract,
-  PackageLoadingSnapshot,
-} from '../providers';
+import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers/packageLoadingService';
 import type { PackageFileEntry } from '../utils';
 import type {
   CachedUpdateData,

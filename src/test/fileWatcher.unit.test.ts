@@ -5,7 +5,7 @@ import { makeProvider } from './fixtures/providerStub';
 import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from '../config';
 import { registerPackageJsonWatcher } from '../extension';
 import { FilterManager, PackagesProvider } from '../providers';
-import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers';
+import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers/packageLoadingService';
 
 const contexts: vscode.ExtensionContext[] = [];
 const providers: PackagesProvider[] = [];

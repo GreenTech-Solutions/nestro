@@ -11,12 +11,9 @@ import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { mockNestroConfiguration } from './fixtures/config';
 import { setWorkspaceFolders } from './fixtures/workspaceFolders';
-import {
-  FilterManager,
-  PackageItem,
-  PackagesProvider,
-  WorkspaceFolderItem,
-} from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
+import { WorkspaceFolderItem } from '../providers/WorkspaceFolderItem';
 import {
   fetchAllLatestVersions,
   readAllWorkspaceDependencies,

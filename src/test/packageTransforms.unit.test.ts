@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { DependencyTypeConflictError, parsePackageJson, VersionPinConflictError } from '../utils';
 import {
-  DependencyTypeConflictError,
-  parsePackageJson,
   prepareDependencyType,
   prepareDependencyVersions,
   preparePinAllVersions,
@@ -11,9 +10,8 @@ import {
   transformDependencyVersions,
   transformPinAllVersions,
   transformVersionPin,
-  VersionPinConflictError,
-} from '../utils';
-import type { PackageJsonDocument } from '../utils';
+} from '../utils/packageTransforms';
+import type { PackageJsonDocument } from '../utils/packageTransforms';
 
 describe('parsePackageJson()', () => {
   it('parses a package.json document into a plain object', () => {
@@ -98,6 +96,12 @@ describe('transformDependencyVersions()', () => {
       { name: 'vue', version: '3.0.0', section: 'dependencies' },
       { name: 'vite', version: '5.0.0', section: 'devDependencies' },
     ])).toThrow('Packages not found in package.json: vue (dependencies), vite (devDependencies)');
+  });
+
+  it('rejects array dependency sections before updating indexed entries', () => {
+    expect(() => prepareDependencyVersions('{"dependencies":["^1.0.0"]}', [
+      { name: '0', version: '2.0.0', section: 'dependencies' },
+    ])).toThrow('Dependency sections must be objects.');
   });
 
   it('does not mutate the input document', () => {

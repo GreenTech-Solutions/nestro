@@ -58,7 +58,6 @@ export async function applyUpdateResult(
       fingerprint: options.fingerprint,
     });
   }
-  request.onCheckCompleted?.();
   return {
     kind: 'completed',
     data: options.data,

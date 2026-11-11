@@ -17,7 +17,8 @@ import {
 import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 import * as utils from '../utils';
 import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
-import type { CanonicalPackageLocation, ResolvedPackageItem } from '../providers';
+import type { CanonicalPackageLocation } from '../providers/packageIdentity';
+import type { ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
   const packageName = 'react';

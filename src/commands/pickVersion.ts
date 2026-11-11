@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ClientManager } from '../clients';
 import { getIncludePreReleases, getMinimumReleaseAgeDays } from '../config';
 import { isPackageItem, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider, sanitizePackageText } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
@@ -15,6 +16,12 @@ import type { PackageMetadataOutcome, ReleaseAgeState } from '../utils';
 import { stripVersionDecorations } from '../shared';
 import { runResolvedPackageVersion } from './installUpdate';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
+
+const clientManager = new ClientManager();
+
+function detectPackageManager(cwd: string | undefined) {
+  return clientManager.detectPackageManager(cwd);
+}
 
 interface VersionQuickPickItem extends vscode.QuickPickItem {
   readonly version: string;
@@ -92,6 +99,7 @@ async function loadVersionPicker(
 ): Promise<void> {
   try {
     const metadataOutcome = await fetchPackageMetadata(
+      detectPackageManager,
       capability.item.packageName,
       capability.packageFilePath,
       session.signal,

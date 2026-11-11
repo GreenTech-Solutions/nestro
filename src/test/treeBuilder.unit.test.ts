@@ -2,24 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { buildPackageItem } from './fixtures';
 import {
   buildTree,
-  findOwningWorkspaceFolder,
   formatViewDescription,
   getFilterCounts,
-  getFilteredEntries,
-  GroupItem,
-  MessageItem,
   PackageTreeEntry,
   projectPackageTree,
-  resolvePackageFileLabels,
+} from '../providers/treeBuilder';
+import {
+  findOwningWorkspaceFolder,
   resolvePackageOwnerLabel,
   resolveWorkspaceFolderDisplayNames,
   toRelativeLabel,
-  toWorkspaceFolderDescriptors,
   WorkspaceFolderDescriptor,
-  WorkspaceFolderItem,
-} from '../providers';
+} from '../providers/packageLabels';
+import { GroupItem } from '../providers/GroupItem';
+import { MessageItem } from '../providers/MessageItem';
+import { resolvePackageFileLabels, toWorkspaceFolderDescriptors } from '../providers';
+import { WorkspaceFolderItem } from '../providers/WorkspaceFolderItem';
 import * as vscode from 'vscode';
-import type { PackageOperation } from '../providers';
+import type { PackageOperation } from '../providers/PackageItem';
 import type { AuditSeverity } from '../utils';
 
 describe('buildTree', () => {
@@ -865,16 +865,6 @@ describe('projectPackageTree', () => {
     expect(allBusy.groups[0]).toMatchObject({ totalCount: 1, outdatedCount: 0 });
     expect(allBusy.visibleOutdatedEntries).toEqual([]);
     expect(allBusy.canUpdateVisiblePackages).toBe(false);
-  });
-
-  it('keeps the filtered-entry helper on the same projection contract', () => {
-    const entries = [
-      makeEntry('busy', '1.0.0', '2.0.0', 'breaking', false, '/workspace/package.json', { kind: 'install' }),
-      makeEntry('ready', '1.0.0', '1.1.0', 'minor', false),
-    ];
-
-    expect(getFilteredEntries(entries, 'all', 'ready').map(entry => entry.item.packageName)).toEqual(['ready']);
-    expect(getFilteredEntries(entries, 'hasUpdates').map(entry => entry.item.packageName)).toEqual(['ready']);
   });
 });
 

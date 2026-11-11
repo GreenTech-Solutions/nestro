@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPackageMetadataFromNativeCli } from '../utils';
+import { fetchPackageMetadataFromNativeCli } from '../utils/nativeMetadataClient';
 import { parsePackument } from '../utils/metadata/packument';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());

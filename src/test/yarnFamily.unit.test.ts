@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
 import { resolveSpawnTarget } from '../shared';
-import { MetadataAdapterRegistry, resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
-import type { MetadataAdapter } from '../utils';
+import { MetadataAdapterRegistry } from '../utils/metadataRegistry';
+import { resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
+import type { MetadataAdapter } from '../utils/metadataRegistry';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -248,7 +249,7 @@ describe('Yarn family probe count', () => {
   });
 
   it('probes once per root while one metadata fetch cascades through several adapters', async () => {
-    const registry = new MetadataAdapterRegistry([
+    const registry = new MetadataAdapterRegistry(() => Promise.resolve('yarn'), [
       adapterResolvingFamily('unrecognized'),
       adapterResolvingFamily('unrecognized'),
       adapterResolvingFamily('success'),

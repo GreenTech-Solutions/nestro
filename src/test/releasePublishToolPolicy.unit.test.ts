@@ -8,9 +8,10 @@ import {
   evaluateReleaseDispatchWorkflowPolicy,
   evaluateReleasePrepareWorkflowPolicy,
   evaluateReleaseWorkflowPolicy,
-  loadReviewedActionsRegistry,
+  parseReviewedActionsRegistry,
   PUBLISH_TOOL_LOCKFILE_PATH,
   PUBLISH_TOOL_MANIFEST_PATH,
+  REVIEWED_ACTIONS_PATH,
   ROOT_MANIFEST_PATH,
 } from '../tools';
 import type { PublishToolFiles, WorkflowViolation } from '../tools';
@@ -18,7 +19,7 @@ import type { PublishToolFiles, WorkflowViolation } from '../tools';
 type Mapping = Record<string, unknown>;
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
-const registry = loadReviewedActionsRegistry(repositoryRoot);
+const registry = parseReviewedActionsRegistry(readFileSync(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8'));
 const read = (path: string): string => readFileSync(resolve(repositoryRoot, path), 'utf8');
 const releaseSource = read('.github/workflows/release.yml');
 const MARKETPLACE = 'Publish to the Visual Studio Marketplace';

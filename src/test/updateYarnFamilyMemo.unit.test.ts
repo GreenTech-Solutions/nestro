@@ -3,19 +3,22 @@ import type { ChildProcess, ExecFileOptions } from 'node:child_process';
 import { dirname } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockWorkspaceFiles } from './fixtures/workspaceFs';
-import { AuditOrchestrationService, UpdateOrchestrationService } from '../providers';
+import { AuditOrchestrationService } from '../providers/auditOrchestrationService';
+import { UpdateOrchestrationService } from '../providers/updateOrchestrationService';
 import type {
   AuditOrchestrationDependencies,
   AuditOrchestrationRequest,
-  CanonicalPackageLocation,
-  PackageIdentityTuple,
+} from '../providers/auditOrchestrationService';
+import type { CanonicalPackageLocation, PackageIdentityTuple } from '../providers/packageIdentity';
+import type {
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
-} from '../providers';
+} from '../providers/updateOrchestrationService';
 import type { AuditProject, PackageManager } from '../clients';
 import { resolveSpawnTarget } from '../shared';
 import { OperationCoordinator, resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
 import type { AuditSeverity } from '../utils';
+import { createStructuredAuditResult } from './fixtures/packagesProviderMocks';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -128,10 +131,10 @@ function createAuditDependencies(project: AuditProject): AuditOrchestrationDepen
       ));
       return { projects: [project, createAuditProject(otherProjectRoot, 'yarn')], rejected: [] };
     },
-    createClient: (_packageManager, root) => ({
-      runAudit: async () => {
+    createClient: (packageManager, root) => ({
+      runAuditReport: async () => {
         await resolveYarnFamily(root);
-        return new Map<string, AuditSeverity>();
+        return createStructuredAuditResult(new Map<string, AuditSeverity>(), new Map(), packageManager);
       },
     }),
     realpath: path => Promise.resolve(path),

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FilterManager, PackagesProvider, StatusItem } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
 import {
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,

@@ -2,17 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { setWorkspaceFolders } from './fixtures';
 import { createProvider } from './fixtures/providerStub';
-import {
-  PackageItem,
-  PackagesProvider,
-  resolvePackageFileLabels,
-  StatusItem,
-} from '../providers';
-import type {
-  AuditOrchestrationServiceContract,
-  PackageLoadingServiceContract,
-  PackageLoadingSnapshot,
-} from '../providers';
+import { PackageItem } from '../providers/PackageItem';
+import { PackagesProvider, resolvePackageFileLabels } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
+import type { AuditOrchestrationServiceContract } from '../providers/auditOrchestrationService';
+import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers/packageLoadingService';
 import type { AuditOrchestrationResult } from '../providers/auditOrchestrationService';
 import type {
   CachedUpdateData,

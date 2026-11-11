@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { GroupItem, PackageItem } from '../../providers';
+import { GroupItem } from '../../providers/GroupItem';
+import { PackageItem } from '../../providers/PackageItem';
 import type { PackagesProvider } from '../../providers';
 import { vi } from 'vitest';
 import { fetchAllLatestVersions, fetchPackageMetadata, getWorkspacePackageFilePaths, readAllWorkspaceDependencies, resolveYarnFamily } from '../../utils';

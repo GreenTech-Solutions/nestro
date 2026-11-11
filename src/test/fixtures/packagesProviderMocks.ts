@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { AuditAdvisory } from '../../utils';
+import type { AuditAdvisory, AuditPackageManager, AuditResult, AuditSchemaId, AuditSeverity } from '../../utils';
 import { runWithYarnFamilyMemoPassthrough } from './yarnFamilyMemo';
 
 export const packagesProviderMocks = {
@@ -7,6 +7,40 @@ export const packagesProviderMocks = {
   resolveAuditProjects: vi.fn(),
   getUpdateType: vi.fn(),
 };
+
+export function createStructuredAuditResult(
+  vulnerabilities: ReadonlyMap<string, AuditSeverity>,
+  resolvedVersions: ReadonlyMap<string, string> = new Map(),
+  manager: AuditPackageManager = 'npm',
+): AuditResult {
+  const schema: AuditSchemaId = manager === 'yarn'
+    ? 'yarn-modern-npm-audit'
+    : manager === 'bun' ? 'bun-bulk-advisory' : 'npm-v2-vulnerabilities';
+  const advisories: AuditAdvisory[] = [...vulnerabilities].map(([packageName, severity]) => ({
+    identity: `${manager}\0${schema}\0${packageName}\0fixture`,
+    identityStability: 'stable',
+    packageName,
+    severity,
+    manager,
+    schema,
+    advisoryId: `fixture-${packageName}`,
+    sources: [],
+    titles: [],
+    urls: [],
+    affectedRanges: ['<999999.0.0'],
+    resolvedPaths: [`node_modules/${packageName}`],
+    resolvedVersions: [resolvedVersions.get(packageName) ?? '18.0.0'],
+    attribution: 'direct',
+    via: [],
+  }));
+  return {
+    vulnerabilities: new Map(vulnerabilities),
+    total: vulnerabilities.size,
+    advisories,
+    manager,
+    schema,
+  };
+}
 
 export function createClientsModuleMock(): Record<string, unknown> {
   return {

@@ -7,7 +7,7 @@ import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
 import { installUpdateCommand, updateAllVisibleCommand } from '../commands/installUpdate';
 import { runInstallCommand } from '../commands/runInstall';
-import { PackageItem } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 import {
   DependencyTypeConflictError,
   logger,

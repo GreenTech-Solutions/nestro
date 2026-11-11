@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { expect, vi } from 'vitest';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../../providers';
+import { FilterManager, PackagesProvider } from '../../providers';
+import { GroupItem } from '../../providers/GroupItem';
+import { PackageItem } from '../../providers/PackageItem';
 import type { ReleaseAgeState } from '../../utils';
 import { mockNestroConfiguration } from './config';
 import { makeProvider } from './providerStub';

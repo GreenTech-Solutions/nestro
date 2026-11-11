@@ -1,6 +1,6 @@
 import { parseVsixManifestIdentity } from './vsixManifest';
 import { VSIX_EXTENSION_PREFIX } from './vsixRules';
-import { isRecord } from '../shared';
+import { isRecord, parseConcreteSemver } from '../shared';
 
 /** The `publisher.name@version` identity an extension declares in `package.json`. */
 export interface ExtensionIdentity {
@@ -16,7 +16,6 @@ interface IdentityBytes {
 
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 const EXTENSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
-const SEMVER_IDENTIFIER_PATTERN = /^[0-9A-Za-z-]+$/u;
 
 /** Reads the non-empty `name`, `version` and `publisher` strings of a `package.json`. */
 export function parseExtensionIdentity(manifestBytes: Uint8Array, label = 'extension/package.json'): ExtensionIdentity {
@@ -36,36 +35,8 @@ export function parseExtensionIdentity(manifestBytes: Uint8Array, label = 'exten
   return { name: parsed.name, version: parsed.version, publisher: parsed.publisher };
 }
 
-function isValidNumericSemverIdentifier(identifier: string): boolean {
-  return /^\d+$/u.test(identifier) && (identifier === '0' || !identifier.startsWith('0'));
-}
-
-function isValidSemverIdentifiers(value: string, forbidNumericLeadingZero: boolean): boolean {
-  if (value.length === 0) {
-    return false;
-  }
-  return value.split('.').every(identifier => SEMVER_IDENTIFIER_PATTERN.test(identifier)
-    && (!forbidNumericLeadingZero || !/^\d+$/u.test(identifier) || isValidNumericSemverIdentifier(identifier)));
-}
-
 function isValidSemver(version: string): boolean {
-  const buildSeparator = version.indexOf('+');
-  if (buildSeparator !== -1 && version.indexOf('+', buildSeparator + 1) !== -1) {
-    return false;
-  }
-  const coreAndPrerelease = buildSeparator === -1 ? version : version.slice(0, buildSeparator);
-  const build = buildSeparator === -1 ? null : version.slice(buildSeparator + 1);
-  if (build !== null && !isValidSemverIdentifiers(build, false)) {
-    return false;
-  }
-
-  const prereleaseSeparator = coreAndPrerelease.indexOf('-');
-  const core = prereleaseSeparator === -1 ? coreAndPrerelease : coreAndPrerelease.slice(0, prereleaseSeparator);
-  const prerelease = prereleaseSeparator === -1 ? null : coreAndPrerelease.slice(prereleaseSeparator + 1);
-  const coreIdentifiers = core.split('.');
-  return coreIdentifiers.length === 3
-    && coreIdentifiers.every(isValidNumericSemverIdentifier)
-    && (prerelease === null || isValidSemverIdentifiers(prerelease, true));
+  return parseConcreteSemver(version) !== undefined;
 }
 
 function assertSafeExtensionIdentity(identity: ExtensionIdentity, label: string): void {

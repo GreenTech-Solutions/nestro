@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { buildPackageItem, makeContext } from './fixtures';
 import { activate } from '../extension';
-import { PackageItem } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 
 vi.mock('../providers', async () => {
   // isPackageItem/PackageItem come from the real module: the guard these commands rely on

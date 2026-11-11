@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { PackageManagerClient } from './PackageManagerClient';
 import { detectPackageManagerSignalFromAncestors } from './projectResolver';
 import { isWorkspaceRoot } from './workspaceRoot';
-import { logger } from '../utils/logger';
+import { logger } from '../utils';
 import { DEFAULT_PACKAGE_MANAGER } from '../shared';
 import type { PackageManager } from '../shared';
 
@@ -27,7 +27,10 @@ export class ClientManager {
     return new PackageManagerClient(packageManager, cwd, atWorkspaceRoot);
   }
 
-  async detectPackageManager(cwd: string): Promise<PackageManager> {
+  async detectPackageManager(cwd: string | undefined): Promise<PackageManager> {
+    if (cwd === undefined) {
+      return DEFAULT_PACKAGE_MANAGER;
+    }
     try {
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(cwd));
       const signal = await detectPackageManagerSignalFromAncestors(cwd, workspaceFolder?.uri.fsPath);

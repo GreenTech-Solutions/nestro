@@ -1,20 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
-import {
-  parseYarnAuditOutcome,
-  runYarnAudit,
-  runYarnAuditOutcome,
-  UnrecognizedAuditResultError,
-} from '../utils';
+import { parseYarnAuditOutcome, runYarnAuditOutcome } from '../utils/yarnAuditClient';
+import { runYarnAudit } from '../utils';
+import { UnrecognizedAuditResultError } from '../utils/audit/outcome';
 import type {
   AuditAdvisoriesOutcome,
   AuditCleanOutcome,
   AuditIncompleteOutcome,
   AuditIncompleteReason,
   AuditOutcome,
-  YarnFamily,
-} from '../utils';
+} from '../utils/audit/outcome';
+import type { YarnFamily } from '../utils/yarnFamily';
 import { createAuditProcessMocks } from './fixtures/auditProcess';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());

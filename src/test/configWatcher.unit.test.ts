@@ -4,7 +4,9 @@ import { makeContext } from './fixtures';
 import { mockNestroConfiguration } from './fixtures/config';
 import { makeProvider } from './fixtures/providerStub';
 import { registerConfigurationWatcher, registerWorkspaceFoldersWatcher } from '../extension';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
 import {
   fetchAllLatestVersions,
   fetchPackageMetadata,

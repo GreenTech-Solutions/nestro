@@ -16,16 +16,12 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { setWorkspaceFolders } from './fixtures/workspaceFolders';
 import { buildPackageItem } from './fixtures/packageItem';
-import {
-  FilterManager,
-  GroupItem,
-  PackageDetailItem,
-  PackageItem,
-  PackagesProvider,
-  resolvePackageFileLabels,
-  StatusItem,
-  WorkspaceFolderItem,
-} from '../providers';
+import { FilterManager, PackagesProvider, resolvePackageFileLabels } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageDetailItem } from '../providers/PackageDetailItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
+import { WorkspaceFolderItem } from '../providers/WorkspaceFolderItem';
 import {
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,

@@ -2,7 +2,10 @@ import * as vscode from 'vscode';
 import { writeFile } from 'node:fs/promises';
 import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from '../../config';
 import { registerPackageJsonWatcher } from '../../extension';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider, WorkspaceFolderItem } from '../../providers';
+import { FilterManager, PackagesProvider } from '../../providers';
+import { GroupItem } from '../../providers/GroupItem';
+import { PackageItem } from '../../providers/PackageItem';
+import { WorkspaceFolderItem } from '../../providers/WorkspaceFolderItem';
 
 /**
  * Ceiling for the native file-watcher backend to attach to a freshly added workspace folder.

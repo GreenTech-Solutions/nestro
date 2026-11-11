@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { formatDependencySpec, parseDependencySpec } from '../utils';
-import type { PinnableDependencySpec } from '../utils';
+import { formatDependencySpec } from '../utils/dependencySpec';
+import { parseDependencySpec } from '../utils';
+import type { PinnableDependencySpec } from '../utils/dependencySpec';
 
 describe('parseDependencySpec() — supported specs', () => {
   it.each([

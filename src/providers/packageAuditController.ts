@@ -55,6 +55,7 @@ export class PackageAuditController {
     this.state.auditResults = new Map();
     this.state.rebuildPackageItems();
     this.emitTreeChanged();
+    let shouldEmit = false;
     try {
       await this.state.auditLifecycle.withProgress(
         {
@@ -68,51 +69,50 @@ export class PackageAuditController {
           }
           await this.state.loadLifecycle.waitForCurrent(operation.abortController.signal);
           if (this.isAuditCurrent(operation)) {
-            await this.runAuditCore(operation);
+            shouldEmit = await this.runAuditCore(operation);
           }
         },
         () => this.cancelAudit(),
       );
     }
     finally {
-      if (this.state.auditLifecycle.finish(operation) && this.state.auditState === 'running') {
-        this.state.auditState = 'idle';
-        if (!operation.abortController.signal.aborted) {
+      if (this.state.auditLifecycle.finish(operation)) {
+        if (this.state.auditState === 'running') {
+          this.state.auditState = 'idle';
+          shouldEmit = !operation.abortController.signal.aborted;
+        }
+        if (shouldEmit) {
           this.emitTreeChanged();
         }
       }
     }
   }
 
-  private async runAuditCore(operation: OperationRun<'audit'>): Promise<void> {
+  private async runAuditCore(operation: OperationRun<'audit'>): Promise<boolean> {
     if (!this.isAuditCurrent(operation)) {
-      return;
+      return false;
     }
-    let shouldEmit = false;
     try {
       const request = this.createAuditRequest(operation);
       if (!this.isAuditCurrent(operation)) {
-        return;
+        return false;
       }
       if (request.packageFilePaths.length === 0) {
         this.state.auditState = 'idle';
-        shouldEmit = true;
-        return;
+        return true;
       }
       const result = await this.service.run(request);
       if (!this.isAuditCurrent(operation) || result.kind === 'discarded') {
-        return;
+        return false;
       }
-      shouldEmit = this.applyAuditResult(result);
+      return this.applyAuditResult(result);
     }
     catch (error) {
       if (this.isAuditCurrent(operation)) {
         this.recordAuditFailure(error);
-        shouldEmit = true;
+        return true;
       }
-    }
-    finally {
-      this.finishAuditCore(operation, shouldEmit);
+      return false;
     }
   }
 
@@ -177,19 +177,6 @@ export class PackageAuditController {
     this.state.auditFailures = [{ packageFilePaths: [], reason: failure.reason, detail: failure.detail }];
     this.state.auditState = 'failed';
     showError(vscode.l10n.t('Package audit failed — the security audit report is incomplete.'));
-  }
-
-  private finishAuditCore(operation: OperationRun<'audit'>, shouldEmit: boolean): void {
-    if (!this.state.auditLifecycle.finish(operation)) {
-      return;
-    }
-    if (this.state.auditState === 'running') {
-      this.state.auditState = 'idle';
-      shouldEmit = !operation.abortController.signal.aborted;
-    }
-    if (shouldEmit) {
-      this.emitTreeChanged();
-    }
   }
 
   private isAuditCurrent(operation: OperationRun<'audit'>): boolean {

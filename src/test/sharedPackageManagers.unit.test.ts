@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PACKAGE_MANAGER,
   isPackageManager,
-  LOCKFILE_PRIORITY,
   LOCKFILES,
   PACKAGE_MANAGER_NAMES,
   PACKAGE_MANAGERS,
   parsePackageManagerField,
   YARN_DIALECTS,
 } from '../shared';
+import { LOCKFILE_PRIORITY } from '../shared/packageManagers';
 
 describe('PACKAGE_MANAGERS', () => {
   it('has one entry per supported manager', () => {

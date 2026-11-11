@@ -1,4 +1,4 @@
-import { resolveMutationCoordinatorKey } from '../clients';
+import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import * as utils from '../utils';
 import type { OperationCoordinator } from '../utils';
 import { fetchMetadataOutcomes, fetchUpdateVersions } from './updateCheckFetcher';
@@ -18,6 +18,12 @@ import type {
   UpdateOrchestrationResult,
   UpdateOrchestrationServiceContract,
 } from './updateOrchestrationTypes';
+
+const clientManager = new ClientManager();
+
+function detectPackageManager(cwd: string | undefined) {
+  return clientManager.detectPackageManager(cwd);
+}
 
 export { computeUpdateFingerprint } from './updateFingerprint';
 export type {
@@ -41,10 +47,19 @@ function createDefaultDependencies(
       utils.fetchAllLatestVersions(packageFilePath, target, includePreReleases, minimumReleaseAgeDays)
     ),
     resolveMetadataRegistryKey: (packageName, packageFilePath) => (
-      utils.resolveMetadataRegistryKey(packageName, packageFilePath)
+      utils.resolveMetadataRegistryKey(
+        detectPackageManager,
+        packageName,
+        packageFilePath,
+      )
     ),
     fetchPackageMetadata: (packageName, packageFilePath, signal) => (
-      utils.fetchPackageMetadata(packageName, packageFilePath, signal)
+      utils.fetchPackageMetadata(
+        detectPackageManager,
+        packageName,
+        packageFilePath,
+        signal,
+      )
     ),
     // Keeps partial client mocks lazy; the missing export fails only when this dependency runs.
     resolveMutationCoordinatorKey: packageFilePath => resolveMutationCoordinatorKey(packageFilePath),
@@ -109,7 +124,6 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
       && hasReusableUpdateResult(this.cache, fingerprint, now);
     request.onCheckStarted?.();
     if (cacheValid) {
-      request.onCheckCompleted?.();
       return {
         kind: 'completed',
         data: this.cache?.data ?? new Map<string, CachedUpdateData>(),
@@ -136,7 +150,6 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
     const allFailed = request.packageFiles.length > 0 && failedPaths.size === request.packageFiles.length;
     if (allFailed) {
       this.cache = undefined;
-      request.onCheckCompleted?.();
       return {
         kind: 'completed',
         data: new Map(),

@@ -7,13 +7,13 @@ import {
 } from 'vitest';
 import * as vscode from 'vscode';
 import { FilterManager, PackagesProvider } from '../providers';
-import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers';
+import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers/packageLoadingService';
 import { LoadingItem } from '../providers/LoadingItem';
 import {
   readAllWorkspaceDependencies,
 } from '../utils';
 import type { PackageFileEntry } from '../utils';
-import { packagesProviderMocks } from './fixtures/packagesProviderMocks';
+import { createStructuredAuditResult, packagesProviderMocks } from './fixtures/packagesProviderMocks';
 import { getLastContextValue, getPackageItems, resetPackagesProviderDefaults } from './fixtures/packagesProviderHarness';
 // LoadingItem is not part of the providers barrel's public surface (used only internally by
 // PackagesProvider), so it must be imported directly from its implementation file.
@@ -291,11 +291,11 @@ describe('PackagesProvider', () => {
     });
 
     it('does not open a second audit guard when a reload runs while an audit is in progress', async () => {
-      let resolveFirstAudit: (value: Map<string, string>) => void = () => {};
-      const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, string>>((resolve) => {
+      let resolveFirstAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
+      const runAuditMock = vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveFirstAudit = resolve;
       }));
-      createClientMock.mockReturnValue({ runAudit: runAuditMock });
+      createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
       const provider = new PackagesProvider(new FilterManager('all'));
       await provider.loadPackages();
 
@@ -310,7 +310,7 @@ describe('PackagesProvider', () => {
 
       expect(createClientMock).toHaveBeenCalledTimes(1);
 
-      resolveFirstAudit(new Map([['react', 'high']]));
+      resolveFirstAudit(createStructuredAuditResult(new Map([['react', 'high']])));
       await firstAudit;
     });
   });

@@ -72,7 +72,6 @@ export class PackageLoadController {
     this.state.packageLocationBaselines = new Map(snapshot.packageLocationBaselines);
     this.state.setPackageFilePaths(snapshot.packageFilePaths);
     this.state.readablePackageFilePaths = [...snapshot.readablePackageFilePaths];
-    this.state.failedPackageReadPaths = [...snapshot.failedPackageReadPaths];
     this.state.packageReadFailures = createPackageReadFailureSnapshot(
       snapshot.failedPackageReadPaths,
       snapshot.failedPackageReadDetails,
@@ -159,7 +158,6 @@ export class PackageLoadController {
     this.state.failedUpdatePaths = [];
     this.state.packageReadFailures = [];
     this.state.updateFailures = [];
-    this.state.failedPackageReadPaths = [];
   }
 
   private isLoadOutdated(operation: OperationRun<'load'>): boolean {

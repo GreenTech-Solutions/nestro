@@ -11,7 +11,6 @@ import {
 import type { DependencySection, PackageFileDependencyUpdates, PackageVersionUpdate } from './packageTransforms';
 import {
   findWorkspacePackageJsonFiles,
-  getWorkspacePackageFilePath,
   readPackageFile,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
@@ -44,15 +43,6 @@ export interface PackageReadFailure {
 export type PackageFileEntries = PackageFileEntry[] & {
   readonly skippedFiles?: readonly SkippedPackageFile[];
 };
-
-export async function updateWorkspaceDependencyVersions(updates: readonly PackageVersionUpdate[]): Promise<void> {
-  const packageFilePath = getWorkspacePackageFilePath();
-  if (packageFilePath === undefined) {
-    throw new Error('No workspace folder found.');
-  }
-
-  await updateDependencyVersionsInFile(packageFilePath, updates);
-}
 
 export async function updateDependencyVersionsInFile(
   packageFilePath: string,
@@ -148,11 +138,6 @@ export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersion
   }
   await writeManyPreparedPackageFilesAtomically(prepared);
   return { count, skippedFiles };
-}
-
-export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
-  const entries = await readAllWorkspaceDependencies();
-  return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
 }
 
 export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntries> {

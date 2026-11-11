@@ -1,10 +1,6 @@
 import * as vscode from 'vscode';
-import { runNpmAudit, runPackageAudit } from '../utils/auditClient';
-import type { AuditResult } from '../utils/audit/outcome';
-import type { AuditSeverity } from '../utils/audit/types';
-import { runBunAudit } from '../utils/bunAuditClient';
-import type { ShellTaskCommand } from '../utils/shellTask';
-import { runYarnAudit } from '../utils/yarnAuditClient';
+import { runBunAudit, runNpmAudit, runPackageAudit, runYarnAudit } from '../utils';
+import type { AuditResult, ShellTaskCommand } from '../utils';
 import { PACKAGE_MANAGERS } from '../shared';
 import type { PackageManager, PackageManagerSpec } from '../shared';
 import { validatePackageName, validatePackageVersionSpec } from './operandValidation';
@@ -62,11 +58,6 @@ export class PackageManagerClient {
       case 'bun':
         return await runBunAudit(this.cwd, signal);
     }
-  }
-
-  async runAudit(signal?: AbortSignal): Promise<Map<string, AuditSeverity>> {
-    const result = await this.runAuditReport(signal);
-    return new Map(result.vulnerabilities);
   }
 
   /** The only place that validates operands and inserts the `--` that keeps a name from parsing as an option. */

@@ -16,12 +16,8 @@ vi.mock('node:os', () => ({
   homedir: vi.fn(() => '/home/user'),
 }));
 
-const detectPackageManagerMock = vi.hoisted(() => vi.fn());
 const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../utils/packageManager', () => ({
-  detectPackageManager: detectPackageManagerMock,
-}));
 vi.mock('../utils/yarnFamily', async () => {
   const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
   return {
@@ -36,7 +32,6 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     vi.stubEnv('NO_PROXY', '');
     vi.stubEnv('no_proxy', '');
     vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
-    detectPackageManagerMock.mockResolvedValue('yarn');
     resolveYarnFamilyMock.mockResolvedValue({ family: 'unknown', source: 'version-probe' });
     setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {

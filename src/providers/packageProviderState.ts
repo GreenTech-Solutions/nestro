@@ -54,7 +54,6 @@ export class PackageProviderState {
   lastAuditSuccessfulRootCount: number | undefined;
   failedAuditPaths: string[] = [];
   failedUpdatePaths: string[] = [];
-  failedPackageReadPaths: string[] = [];
   packageReadFailures: StatusReportFailure[] = [];
   updateFailures: StatusReportFailure[] = [];
   disposed = false;

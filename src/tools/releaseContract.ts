@@ -218,15 +218,3 @@ export function bundleMemberNames(kind: BundleKind, vsixFile: string): string[] 
 export function bundleUploadPaths(kind: BundleKind, directory: string): string {
   return bundleMemberNames(kind, `*${RELEASE_CONTRACT.bundle.vsixExtension}`).map(name => `${directory}/${name}\n`).join('');
 }
-
-export function candidateKey(name: string): string {
-  if (!RELEASE_CONTRACT.candidateKeys.includes(name)) {
-    throw contractError(`${name} is not a candidate key`);
-  }
-  return name;
-}
-
-export function registryDownloadUrl(name: RegistryName, values: { readonly name: string; readonly publisher: string; readonly version: string }): string {
-  const { downloadPath, url } = RELEASE_CONTRACT.registries[name];
-  return `${url}${downloadPath.replaceAll('{publisher}', values.publisher).replaceAll('{name}', values.name).replaceAll('{version}', values.version)}`;
-}

@@ -14,18 +14,15 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  FilterManager,
-  PackagesProvider,
-  StatusItem,
-} from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
 import {
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
 import type { AuditAdvisory, AuditResult } from '../utils';
-import { packagesProviderMocks } from './fixtures/packagesProviderMocks';
+import { createStructuredAuditResult, packagesProviderMocks } from './fixtures/packagesProviderMocks';
 import { getPackageItems, resetPackagesProviderDefaults } from './fixtures/packagesProviderHarness';
 const { createClient: createClientMock, resolveAuditProjects: resolveAuditProjectsMock } = packagesProviderMocks;
 
@@ -85,8 +82,12 @@ describe('PackagesProvider', () => {
       }],
       rejected: [],
     });
-    const runAuditMock = vi.fn().mockResolvedValue(new Map([['react', 'high']]));
-    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    const runAuditMock = vi.fn().mockResolvedValue(createStructuredAuditResult(
+      new Map([['react', 'high']]),
+      new Map([['react', '18.0.0']]),
+      'pnpm',
+    ));
+    createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
 
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
@@ -462,7 +463,7 @@ describe('PackagesProvider', () => {
       },
     ]);
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['react', 'high']]))),
     });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -474,7 +475,7 @@ describe('PackagesProvider', () => {
 
   it('never attaches a badge for a transitive-only advisory that matches no direct dependency row', async () => {
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map([['left-pad', 'critical']])),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['left-pad', 'critical']]))),
     });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -486,7 +487,7 @@ describe('PackagesProvider', () => {
 
   it('returns a fresh array from getAuditProjects on each call rather than the live internal state', async () => {
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map()),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map())),
     });
     const provider = new PackagesProvider(new FilterManager('all'));
 
@@ -500,13 +501,13 @@ describe('PackagesProvider', () => {
   });
 
   it('clears audit projects for the duration of a new audit run', async () => {
-    let resolveSecondAudit: (value: Map<string, string>) => void = () => {};
+    let resolveSecondAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
     const runAuditMock = vi.fn()
-      .mockResolvedValueOnce(new Map([['react', 'high']]))
-      .mockReturnValueOnce(new Promise<Map<string, string>>((resolve) => {
+      .mockResolvedValueOnce(createStructuredAuditResult(new Map([['react', 'high']])))
+      .mockReturnValueOnce(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveSecondAudit = resolve;
       }));
-    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
 
@@ -516,13 +517,13 @@ describe('PackagesProvider', () => {
     const secondAudit = provider.runAudit();
     expect(provider.getAuditProjects()).toEqual([]);
 
-    resolveSecondAudit(new Map());
+    resolveSecondAudit(createStructuredAuditResult(new Map()));
     await secondAudit;
   });
 
   it('clears stale audit projects after an early exit with no package files', async () => {
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['react', 'high']]))),
     });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
@@ -557,29 +558,43 @@ describe('PackagesProvider', () => {
   });
 
   it('clears stale audit projects after an exception during project resolution', async () => {
+    const fixture = await createRealAuditProject(['react']);
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['react', 'high']]))),
     });
-    const provider = new PackagesProvider(new FilterManager('all'));
-    await provider.loadPackages();
-    await provider.runAudit();
-    expect(provider.getAuditProjects()).toHaveLength(1);
-    expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBe('high');
+    try {
+      vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
+        name: 'react',
+        current: '18.0.0',
+        dev: false,
+        versionPrefix: '',
+        packageFilePath: fixture.manifest,
+      }]);
+      vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce([fixture.manifest]);
+      const provider = new PackagesProvider(new FilterManager('all'));
+      await provider.loadPackages();
+      await provider.runAudit();
+      expect(provider.getAuditProjects()).toHaveLength(1);
+      expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBe('high');
 
-    resolveAuditProjectsMock.mockRejectedValueOnce(new Error('resolution exploded'));
-    await provider.runAudit();
+      resolveAuditProjectsMock.mockRejectedValueOnce(new Error('resolution exploded'));
+      await provider.runAudit();
 
-    expect(provider.getAuditProjects()).toEqual([]);
-    expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
-      packageFilePaths: [],
-      reason: 'audit-failed',
-    })]);
-    const auditStatus = provider.getChildren().find(item => (
-      item instanceof StatusItem && item.label === 'Audit failed'
-    ));
-    expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
-    expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
-    expect(showError).toHaveBeenCalled();
+      expect(provider.getAuditProjects()).toEqual([]);
+      expect(provider.getAuditFailures()).toEqual([expect.objectContaining({
+        packageFilePaths: [],
+        reason: 'audit-failed',
+      })]);
+      const auditStatus = provider.getChildren().find(item => (
+        item instanceof StatusItem && item.label === 'Audit failed'
+      ));
+      expect(auditStatus?.command?.command).toBe('nestro.openStatusReport');
+      expect(getPackageItems(provider).every(item => item.vulnerabilitySeverity === undefined)).toBe(true);
+      expect(showError).toHaveBeenCalled();
+    }
+    finally {
+      await fixture.cleanup();
+    }
   });
 
   it('treats a rejected project resolution as a failed audit root without calling a client', async () => {

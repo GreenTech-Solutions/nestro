@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { MARKETPLACE_STEP_NAMES, PUBLISH_TOOL_INSTALL_COMMAND, scriptRun } from './releaseWorkflowParts';
 import type { WorkflowViolation } from './workflowYaml';
-import { describeError, hasExactKeys, isRecord } from '../shared';
+import { describeError, hasExactKeys, isPlainNumericSemver, isRecord } from '../shared';
 
 export const PUBLISH_TOOL_MANIFEST_PATH = '.github/publish-tool/package.json';
 export const PUBLISH_TOOL_LOCKFILE_PATH = '.github/publish-tool/package-lock.json';
@@ -14,7 +14,6 @@ export interface PublishToolFiles {
 }
 
 const VSCE_PACKAGE = '@vscode/vsce';
-const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const NPM_RESOLVED_PATTERN = /^https:\/\/registry\.npmjs\.org\/[^\s?#]+$/u;
 const SHA512_INTEGRITY_PATTERN = /^sha512-[A-Za-z0-9+/]+={0,2}$/u;
 const MARKETPLACE_CREDENTIAL_PATTERN = /secrets\.|--pat\b|\bpat\b|_PAT\b/iu;
@@ -113,7 +112,7 @@ function toolManifestViolations(manifest: Record<string, unknown>, rootVersion: 
     return [violation('publish-tool', `${PUBLISH_TOOL_MANIFEST_PATH} must be a private manifest with the single dependency ${VSCE_PACKAGE}`)];
   }
   const pinned = dependencies[VSCE_PACKAGE];
-  if (typeof pinned !== 'string' || !EXACT_VERSION_PATTERN.test(pinned) || pinned !== rootVersion) {
+  if (typeof pinned !== 'string' || !isPlainNumericSemver(pinned) || pinned !== rootVersion) {
     return [violation('publish-tool', `${VSCE_PACKAGE} in ${PUBLISH_TOOL_MANIFEST_PATH} must be an exact version equal to the root devDependency`)];
   }
   return [];

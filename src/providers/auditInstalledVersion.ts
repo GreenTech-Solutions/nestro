@@ -2,11 +2,8 @@ import * as path from 'node:path';
 import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
 import { AUDIT_NODE_PACKAGE_JSON_MAX_BYTES } from '../config';
 import type { AuditProject } from '../clients';
-import { isPathWithin } from '../shared';
+import { isAuditInstalledVersionCandidate, isPathWithin } from '../shared';
 import type { AuditAdvisory } from '../utils';
-
-/** Loose enough to accept a prerelease/build suffix; the exact major.minor.patch parser downstream still fail-closes on it. */
-const PLAIN_SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /** The file-system probes audit attribution needs, injectable so tests stay hermetic. */
 export interface AuditFileProbe {
@@ -32,7 +29,7 @@ export async function readNodePackageJsonVersion(packageJsonPath: string): Promi
       return undefined;
     }
     const { version } = parsed as { version?: unknown };
-    return typeof version === 'string' && PLAIN_SEMVER_PATTERN.test(version) ? version : undefined;
+    return typeof version === 'string' && isAuditInstalledVersionCandidate(version) ? version : undefined;
   }
   catch {
     return undefined;

@@ -4,8 +4,8 @@ import type { ClientRequest, IncomingMessage } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
 import { isRecord } from '../shared';
-import { runBoundedMetadataRequest } from '../utils';
-import type { MetadataSchemaResult } from '../utils';
+import { runBoundedMetadataRequest } from '../utils/metadataRunner';
+import type { MetadataSchemaResult } from '../utils/metadataRunner';
 
 vi.mock('node:https', () => ({
   get: vi.fn(),

@@ -4,7 +4,7 @@ import { sanitizeAuditText } from './auditReport';
 import type { AuditAdvisory, AuditFixAvailability } from './auditReport';
 import { formatAdvisoryRows, formatPackageLevelFindings } from './localization';
 import type { AuditProjectFailure, AuditProjectSummary } from '../providers';
-import { PACKAGE_PRESENTATION } from '../shared';
+import { PACKAGE_PRESENTATION, WORKSPACE_PROTOCOL } from '../shared';
 
 /** Formats all project reports as plain text; package-controlled values never create lines. */
 export function formatAuditReport(
@@ -148,7 +148,7 @@ function formatResolvedPath(value: string, projectRoot: string): string {
     return safe(relative === '' || relative.startsWith('..') ? vscode.l10n.t('(outside project)') : relative);
   }
   const normalized = value.replace(/\\/g, '/');
-  if (normalized.startsWith('workspace:')) {
+  if (normalized.startsWith(WORKSPACE_PROTOCOL)) {
     return safe(vscode.l10n.t('{0} (virtual locator)', normalized));
   }
   const relative = path.posix.normalize(normalized);

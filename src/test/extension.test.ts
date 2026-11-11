@@ -3,7 +3,10 @@ import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
 import { sep } from 'node:path';
 import { ClientManager } from '../clients';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider, StatusItem } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
 import { resolveYarnFamily, runShellTaskAndWait } from '../utils';
 import {
   assertTaskExitCode,

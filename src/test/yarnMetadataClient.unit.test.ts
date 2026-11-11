@@ -4,7 +4,7 @@ import {
   fetchPackageMetadataFromYarnModern,
   parseYarnClassicMetadata,
   parseYarnModernMetadata,
-} from '../utils';
+} from '../utils/yarnMetadataClient';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());

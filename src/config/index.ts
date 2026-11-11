@@ -15,19 +15,4 @@ export {
   YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
   YARN_VERSION_PROBE_TIMEOUT_MS,
 } from './limits';
-export {
-  getCheckUpdatesDebounce,
-  getCheckUpdatesForceAlways,
-  getCheckUpdatesOnStartup,
-  getConfirmBulkUpdate,
-  getDeferInstallAfterUpdate,
-  getDefaultFilter,
-  getIncludePreReleases,
-  getMinimumReleaseAgeDays,
-  getMonorepoGlob,
-  getRunAuditOnStartup,
-  getUpdatePolicySettings,
-  getUpdateTarget,
-  SETTING_DEFAULTS,
-} from './settings';
-export type { SettingValues, UpdatePolicySettings } from './settings';
+export { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getCheckUpdatesOnStartup, getConfirmBulkUpdate, getDeferInstallAfterUpdate, getDefaultFilter, getIncludePreReleases, getMinimumReleaseAgeDays, getMonorepoGlob, getRunAuditOnStartup, getUpdatePolicySettings } from './settings';

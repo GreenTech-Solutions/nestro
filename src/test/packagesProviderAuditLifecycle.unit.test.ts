@@ -6,23 +6,20 @@ import {
   vi,
 } from 'vitest';
 import * as vscode from 'vscode';
-import {
-  FilterManager,
-  GroupItem,
-  PackageItem,
-  PackagesProvider,
-  StatusItem,
-} from '../providers';
-import {
-  CHECK_CONCURRENCY_CAP,
-  getWorkspacePackageFilePaths,
-  logger,
-  readAllWorkspaceDependencies,
-  showError,
-} from '../utils';
-import { packagesProviderMocks } from './fixtures/packagesProviderMocks';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
+import { CHECK_CONCURRENCY_CAP } from '../utils/operationCoordinator';
+import { getWorkspacePackageFilePaths, logger, readAllWorkspaceDependencies, showError } from '../utils';
+import { createStructuredAuditResult, packagesProviderMocks } from './fixtures/packagesProviderMocks';
 import { getPackageItems, resetPackagesProviderDefaults } from './fixtures/packagesProviderHarness';
 const { createClient: createClientMock, resolveAuditProjects: resolveAuditProjectsMock } = packagesProviderMocks;
+
+vi.mock('node:fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs/promises')>(),
+  realpath: (value: string) => Promise.resolve(value),
+}));
 
 vi.mock('../clients', async () => (await import('./fixtures/packagesProviderMocks')).createClientsModuleMock());
 
@@ -52,14 +49,17 @@ describe('PackagesProvider', () => {
       release = resolve;
     });
     createClientMock.mockImplementation((_manager: string, projectRoot: string) => ({
-      runAudit: async () => {
+      runAuditReport: async () => {
         active += 1;
         peak = Math.max(peak, active);
         started.push(projectRoot);
         await gate;
         active -= 1;
         const index = roots.indexOf(projectRoot);
-        return new Map([[`audit-package-${index}`, 'high' as const]]);
+        return createStructuredAuditResult(
+          new Map([[`audit-package-${index}`, 'high' as const]]),
+          new Map([[`audit-package-${index}`, '1.0.0']]),
+        );
       },
     }));
 
@@ -102,12 +102,12 @@ describe('PackagesProvider', () => {
       release = resolve;
     });
     createClientMock.mockImplementation(() => ({
-      runAudit: async (signal?: AbortSignal) => {
+      runAuditReport: async (signal?: AbortSignal) => {
         if (signal !== undefined) {
           signals.push(signal);
         }
         await auditGate;
-        return new Map<string, never>();
+        return createStructuredAuditResult(new Map());
       },
     }));
 
@@ -159,9 +159,9 @@ describe('PackagesProvider', () => {
       }
       order.push(`exit-${index}`);
       active -= 1;
-      return new Map<string, never>();
+      return createStructuredAuditResult(new Map());
     });
-    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
 
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
@@ -203,11 +203,11 @@ describe('PackagesProvider', () => {
       release = resolve;
     });
     createClientMock.mockImplementation(() => ({
-      runAudit: async () => {
+      runAuditReport: async () => {
         active += 1;
         await gate;
         active -= 1;
-        return new Map<string, never>();
+        return createStructuredAuditResult(new Map());
       },
     }));
 
@@ -268,10 +268,10 @@ describe('PackagesProvider', () => {
     ]);
     createClientMock
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockRejectedValue(new Error('web audit unavailable')),
+        runAuditReport: vi.fn().mockRejectedValue(new Error('web audit unavailable')),
       })
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockRejectedValue(new Error('ui audit unavailable')),
+        runAuditReport: vi.fn().mockRejectedValue(new Error('ui audit unavailable')),
       });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -291,7 +291,7 @@ describe('PackagesProvider', () => {
 
   it('preserves complete audit wording when all roots succeed', async () => {
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(new Map()),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map())),
     });
     const provider = new PackagesProvider(new FilterManager('all'));
 
@@ -304,14 +304,14 @@ describe('PackagesProvider', () => {
   });
 
   it('ignores concurrent audits while allowing a later manual audit', async () => {
-    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    let resolveAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
     const runAuditMock = vi.fn()
-      .mockReturnValueOnce(new Promise<Map<string, 'high'>>((resolve) => {
+      .mockReturnValueOnce(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveAudit = resolve;
       }))
-      .mockResolvedValueOnce(new Map([['react', 'moderate']]));
+      .mockResolvedValueOnce(createStructuredAuditResult(new Map([['react', 'moderate']])));
     createClientMock.mockReturnValue({
-      runAudit: runAuditMock,
+      runAuditReport: runAuditMock,
     });
     const provider = new PackagesProvider(new FilterManager('all'));
 
@@ -323,7 +323,7 @@ describe('PackagesProvider', () => {
 
     expect(createClientMock).toHaveBeenCalledTimes(1);
 
-    resolveAudit(new Map([['react', 'high']]));
+    resolveAudit(createStructuredAuditResult(new Map([['react', 'high']])));
     await Promise.all([firstAudit, secondAudit]);
 
     await provider.runAudit();
@@ -340,9 +340,9 @@ describe('PackagesProvider', () => {
   });
 
   it('discards an audit result after the package snapshot reloads', async () => {
-    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
+    let resolveAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+      runAuditReport: vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveAudit = resolve;
       })),
     });
@@ -369,7 +369,7 @@ describe('PackagesProvider', () => {
     ]);
     await provider.loadPackages();
 
-    resolveAudit(new Map([['react', 'high']]));
+    resolveAudit(createStructuredAuditResult(new Map([['react', 'high']])));
     await audit;
 
     expect(getPackageItems(provider).find(item => item.packageName === 'react')?.vulnerabilitySeverity).toBeUndefined();
@@ -383,14 +383,14 @@ describe('PackagesProvider', () => {
   });
 
   it('keeps the current audit failure when a cancelled predecessor succeeds late', async () => {
-    let resolveOldAudit: (value: Map<string, 'high'>) => void = () => {};
-    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+    let resolveOldAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
       resolveOldAudit = resolve;
     }));
     const newRunAudit = vi.fn().mockRejectedValue(new Error('current audit failed'));
     createClientMock
-      .mockReturnValueOnce({ runAudit: oldRunAudit })
-      .mockReturnValueOnce({ runAudit: newRunAudit });
+      .mockReturnValueOnce({ runAuditReport: oldRunAudit })
+      .mockReturnValueOnce({ runAuditReport: newRunAudit });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
     let treeChangeCount = 0;
@@ -403,7 +403,7 @@ describe('PackagesProvider', () => {
     provider.cancelAudit();
 
     const currentAudit = provider.runAudit();
-    resolveOldAudit(new Map([['react', 'high']]));
+    resolveOldAudit(createStructuredAuditResult(new Map([['react', 'high']])));
     await Promise.all([oldAudit, currentAudit]);
     const treeChangesAfterCurrentRun = treeChangeCount;
 
@@ -420,13 +420,13 @@ describe('PackagesProvider', () => {
 
   it('keeps the current audit success when a cancelled predecessor fails late', async () => {
     let rejectOldAudit: (reason: Error) => void = () => {};
-    const oldRunAudit = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((_, reject) => {
+    const oldRunAudit = vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((_, reject) => {
       rejectOldAudit = reject;
     }));
-    const newRunAudit = vi.fn().mockResolvedValue(new Map<string, never>());
+    const newRunAudit = vi.fn().mockResolvedValue(createStructuredAuditResult(new Map()));
     createClientMock
-      .mockReturnValueOnce({ runAudit: oldRunAudit })
-      .mockReturnValueOnce({ runAudit: newRunAudit });
+      .mockReturnValueOnce({ runAuditReport: oldRunAudit })
+      .mockReturnValueOnce({ runAuditReport: newRunAudit });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
 
@@ -446,11 +446,11 @@ describe('PackagesProvider', () => {
   });
 
   it('resets the busy state synchronously when the audit is cancelled, discarding the run', async () => {
-    let resolveAudit: (value: Map<string, 'high'>) => void = () => {};
-    const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>((resolve) => {
+    let resolveAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
+    const runAuditMock = vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
       resolveAudit = resolve;
     }));
-    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
 
@@ -462,11 +462,11 @@ describe('PackagesProvider', () => {
     provider.cancelAudit();
 
     // Synchronous: gone the instant cancelAudit() returns, before the aborted
-    // client.runAudit() call has actually settled in the background.
+    // client.runAuditReport() call has actually settled in the background.
     expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Running audit…')).toBe(false);
     expect(signal.aborted).toBe(true);
 
-    resolveAudit(new Map([['react', 'high']]));
+    resolveAudit(createStructuredAuditResult(new Map([['react', 'high']])));
     await audit;
 
     // The cancelled run's result is discarded rather than surfaced as a finished audit.
@@ -476,25 +476,25 @@ describe('PackagesProvider', () => {
   });
 
   it('keeps a replacement audit controller alive after the cancelled run finally settles', async () => {
-    let resolveOldAudit: (value: Map<string, 'high'>) => void = () => {};
-    let resolveNewAudit: (value: Map<string, 'high'>) => void = () => {};
+    let resolveOldAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
+    let resolveNewAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
     let oldSignal!: AbortSignal;
     let newSignal!: AbortSignal;
     const oldRunAudit = vi.fn().mockImplementation((signal: AbortSignal) => {
       oldSignal = signal;
-      return new Promise<Map<string, 'high'>>((resolve) => {
+      return new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveOldAudit = resolve;
       });
     });
     const newRunAudit = vi.fn().mockImplementation((signal: AbortSignal) => {
       newSignal = signal;
-      return new Promise<Map<string, 'high'>>((resolve) => {
+      return new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         resolveNewAudit = resolve;
       });
     });
     createClientMock
-      .mockReturnValueOnce({ runAudit: oldRunAudit })
-      .mockReturnValueOnce({ runAudit: newRunAudit });
+      .mockReturnValueOnce({ runAuditReport: oldRunAudit })
+      .mockReturnValueOnce({ runAuditReport: newRunAudit });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
 
@@ -504,7 +504,7 @@ describe('PackagesProvider', () => {
     expect(oldSignal.aborted).toBe(true);
 
     const newAudit = provider.runAudit();
-    resolveOldAudit(new Map());
+    resolveOldAudit(createStructuredAuditResult(new Map()));
     await oldAudit;
     await vi.waitFor(() => expect(newRunAudit).toHaveBeenCalledTimes(1));
     expect(newSignal.aborted).toBe(false);
@@ -516,7 +516,7 @@ describe('PackagesProvider', () => {
 
     provider.cancelAudit();
     expect(newSignal.aborted).toBe(true);
-    resolveNewAudit(new Map());
+    resolveNewAudit(createStructuredAuditResult(new Map()));
     await newAudit;
   });
 
@@ -528,16 +528,16 @@ describe('PackagesProvider', () => {
     let provider!: PackagesProvider;
     createClientMock
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockImplementation(() => {
+        runAuditReport: vi.fn().mockImplementation(() => {
           // Cancellation lands mid-loop, after the first project's own audit already
           // succeeded — proves the loop stops *starting new* work rather than
           // discarding a project that had already finished.
           provider.cancelAudit();
-          return Promise.resolve(new Map<string, never>());
+          return Promise.resolve(createStructuredAuditResult(new Map()));
         }),
       })
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockResolvedValue(new Map()),
+        runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map())),
       });
     provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
@@ -553,8 +553,8 @@ describe('PackagesProvider', () => {
     // the signal it was called with flipping to aborted, matching what a real
     // execFile(..., { signal }) call would then react to (see processRunner.unit.test.ts
     // for that real-process proof).
-    const runAuditMock = vi.fn().mockReturnValue(new Promise<Map<string, 'high'>>(() => {}));
-    createClientMock.mockReturnValue({ runAudit: runAuditMock });
+    const runAuditMock = vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>(() => {}));
+    createClientMock.mockReturnValue({ runAuditReport: runAuditMock });
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();
 
@@ -587,9 +587,9 @@ describe('PackagesProvider', () => {
     vi.mocked(getWorkspacePackageFilePaths)
       .mockRejectedValueOnce(new Error('workspace scan failed'))
       .mockResolvedValueOnce(['/workspace/package.json']);
-    const runAuditMock = vi.fn().mockResolvedValue(new Map([['react', 'high']]));
+    const runAuditMock = vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['react', 'high']])));
     createClientMock.mockReturnValue({
-      runAudit: runAuditMock,
+      runAuditReport: runAuditMock,
     });
     const provider = new PackagesProvider(new FilterManager('all'));
 

@@ -10,9 +10,9 @@ import {
   evaluateReleaseDispatchWorkflowPolicy,
   evaluateReleasePrepareWorkflowPolicy,
   evaluateReleaseWorkflowPolicy,
-  loadReviewedActionsRegistry,
+  parseReviewedActionsRegistry,
   RELEASE_CONTRACT,
-  reviewedActionReference,
+  REVIEWED_ACTIONS_PATH,
 } from '../tools';
 import type { ReleaseCandidateEvidence, ReviewedActionsRegistry, WorkflowViolation } from '../tools';
 
@@ -20,7 +20,7 @@ type Workflow = Record<string, unknown>;
 type Mapping = Record<string, unknown>;
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
-const registry = loadReviewedActionsRegistry(repositoryRoot);
+const registry = parseReviewedActionsRegistry(readFileSync(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8'));
 const readWorkflow = (name: string): string => readFileSync(resolve(repositoryRoot, '.github/workflows', name), 'utf8');
 const prepareSource = readWorkflow('release-prepare.yml');
 const candidateSource = readWorkflow('release-candidate.yml');
@@ -259,7 +259,7 @@ describe('release workflow policies', () => {
       delete jobs(workflow).publish.environment;
     })), 'job-contract');
     expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
-      steps(workflow, 'publish').push({ name: 'Checkout source', uses: reviewedActionReference('actions/checkout') });
+      steps(workflow, 'publish').push({ name: 'Checkout source', uses: `actions/checkout@${registry.actions['actions/checkout'].sha}` });
     })), 'step-allowlist');
     expectViolation(evaluateRelease(mutate(releaseSource, (workflow) => {
       stepNamed(workflow, 'publish', 'Verify the candidate manifest, tag and digest').run = 'test -n candidate.json';
@@ -346,7 +346,7 @@ describe('release workflow policies', () => {
   it('rejects a second checkout, install or build in the publish and finalize jobs', () => {
     for (const job of ['publish', 'finalize']) {
       for (const extra of [
-        { name: 'Checkout source', uses: reviewedActionReference('actions/checkout') },
+        { name: 'Checkout source', uses: `actions/checkout@${registry.actions['actions/checkout'].sha}` },
         { name: 'Build again', run: 'pnpm run build' },
         { name: 'Install', run: 'pnpm install' },
       ]) {

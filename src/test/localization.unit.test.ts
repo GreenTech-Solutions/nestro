@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { formatAdvisoryRows, formatPackageLevelFindings } from '../utils/localization';
 import {
-  formatAdvisoryRows,
   formatAuditSeverityLabel,
   formatDependencySectionLabel,
   formatFilteredPackageCount,
   formatHeldBackDate,
   formatPackageCount,
   formatPackageGroupDescription,
-  formatPackageLevelFindings,
   formatPackageUpdatesAvailable,
   formatPinnedPackageVersions,
   formatUpdateTypeLabel,

@@ -1,16 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  PackageLoadingService,
-} from '../providers';
-import type {
-  CanonicalPackageLocation,
-  CanonicalPackageLocationResult,
-} from '../providers';
-import type {
-  PackageFileEntries,
-  PackageFileEntry,
-  SkippedPackageFile,
-} from '../utils';
+import { PackageLoadingService } from '../providers/packageLoadingService';
+import type { CanonicalPackageLocation, CanonicalPackageLocationResult } from '../providers/packageIdentity';
+import type { PackageFileEntries, PackageFileEntry } from '../utils';
+import type { SkippedPackageFile } from '../utils/packageReader';
 
 function withSkippedFiles(
   entries: PackageFileEntry[],

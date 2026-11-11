@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { logger } from '../utils/logger';
+import { logger } from '../utils';
 import {
   compareCodeUnits,
   DEFAULT_PACKAGE_MANAGER,

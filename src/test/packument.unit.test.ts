@@ -2,14 +2,15 @@ import { EventEmitter } from 'node:events';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchPackageMetadataFromNativeCli } from '../utils/nativeMetadataClient';
 import {
-  fetchPackageMetadataFromNativeCli,
   fetchPackageMetadataFromYarnClassic,
   fetchPackageMetadataFromYarnModern,
-} from '../utils';
+} from '../utils/yarnMetadataClient';
 import { parsePackument } from '../utils/metadata/packument';
 import { fetchPackageMetadataFromRegistry } from '../utils/registryClient';
-import type { MetadataAdapter, PackageMetadataOutcome } from '../utils';
+import type { MetadataAdapter } from '../utils/metadataRegistry';
+import type { PackageMetadataOutcome } from '../utils';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());

@@ -3,28 +3,12 @@ import * as vscode from 'vscode';
 import { setWorkspaceFolders } from './fixtures';
 import {
   findWorkspacePackageJsonFiles,
-  getWorkspacePackageFilePath,
-  getWorkspacePackageFilePaths,
-  readPackageFile,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
-} from '../utils';
-import type { PreparedPackageFile } from '../utils';
+} from '../utils/packageRepository';
+import { getWorkspacePackageFilePaths, readPackageFile } from '../utils';
+import type { PreparedPackageFile } from '../utils/packageRepository';
 import { toWorkspaceRelativePackageFilePath } from '../utils/packageRepository';
-
-describe('getWorkspacePackageFilePath()', () => {
-  resetWorkspaceFoldersBeforeEach();
-
-  it('joins the first workspace folder with package.json', () => {
-    expect(getWorkspacePackageFilePath()).toBe('/workspace/package.json');
-  });
-
-  it('returns undefined when no workspace folder is open', () => {
-    setWorkspaceFolders(undefined);
-
-    expect(getWorkspacePackageFilePath()).toBeUndefined();
-  });
-});
 
 describe('readPackageFile()', () => {
   beforeEach(() => {

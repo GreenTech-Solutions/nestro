@@ -4,8 +4,9 @@ import * as vscode from 'vscode';
 import { setWorkspaceFolders } from './fixtures';
 import { createMockRequest, expectRegistryUrl, expectRequestHeaders, mockNpmrcFiles, mockRegistryResponse, toClientRequest } from './fixtures/registryClientHarness';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry, parseBunConfig } from '../utils';
-import type { MetadataAdapter } from '../utils';
+import { configAwareHttpsMetadataAdapter, MetadataAdapterRegistry } from '../utils/metadataRegistry';
+import { parseBunConfig } from '../utils/bunConfig';
+import type { MetadataAdapter } from '../utils/metadataRegistry';
 import { fetchPackageMetadataFromRegistry } from '../utils/registryClient';
 
 vi.mock('node:fs/promises', () => ({
@@ -18,12 +19,8 @@ vi.mock('node:os', () => ({
   homedir: vi.fn(() => '/home/user'),
 }));
 
-const detectPackageManagerMock = vi.hoisted(() => vi.fn());
 const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../utils/packageManager', () => ({
-  detectPackageManager: detectPackageManagerMock,
-}));
 vi.mock('../utils/yarnFamily', async () => {
   const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
   return {
@@ -38,7 +35,6 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     vi.stubEnv('NO_PROXY', '');
     vi.stubEnv('no_proxy', '');
     vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
-    detectPackageManagerMock.mockResolvedValue('yarn');
     resolveYarnFamilyMock.mockResolvedValue({ family: 'unknown', source: 'version-probe' });
     setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {
@@ -303,7 +299,6 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('does not retry an unreachable Bun private scope against public npm', async () => {
-    detectPackageManagerMock.mockResolvedValueOnce('bun');
     mockNpmrcFiles({
       '/workspace/bunfig.toml': [
         '[install.scopes]',
@@ -324,7 +319,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       }),
     };
 
-    await expect(new MetadataAdapterRegistry([
+    await expect(new MetadataAdapterRegistry(() => Promise.resolve('bun'), [
       configAwareHttpsMetadataAdapter,
       publicAdapter,
     ]).fetchMetadata({

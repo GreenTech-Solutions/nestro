@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import type { AuditProject } from '../clients';
-import { isPathWithin } from '../shared';
+import { isPathWithin, WORKSPACE_PROTOCOL } from '../shared';
 import { inferPathAttribution, mergeSeverity } from '../utils';
 import type { AuditAdvisory, AuditSeverity } from '../utils';
 import type { AuditFileProbe } from './auditInstalledVersion';
@@ -13,36 +13,6 @@ export interface AuditableRow {
   readonly packageFilePath: string;
   readonly dev: boolean;
   readonly currentVersion: string;
-}
-
-/** Legacy Map-only adapters retain the conservative single-manifest behavior. */
-export function applyLegacyProjectAuditResults(
-  rows: readonly AuditableRow[],
-  project: AuditProject,
-  vulnerabilities: ReadonlyMap<string, AuditSeverity>,
-  auditResults: Map<string, AuditSeverity>,
-): void {
-  if (project.originManifests.length !== 1) {
-    return;
-  }
-
-  const [packageFilePath] = project.originManifests;
-  for (const [packageName, severity] of vulnerabilities) {
-    const matchingRows = rows.filter(row => (
-      row.packageFilePath === packageFilePath && row.packageName === packageName
-    ));
-    if (matchingRows.length === 1) {
-      const [matchingRow] = matchingRows;
-      auditResults.set(
-        packageIdentityKey(packageIdentityFromValues(
-          matchingRow.packageName,
-          matchingRow.packageFilePath,
-          matchingRow.dev,
-        )),
-        severity,
-      );
-    }
-  }
 }
 
 /** Attribute a row only when direct ownership and one manifest/section/version match are proven. */
@@ -108,7 +78,7 @@ async function resolvedPathBelongsToManifest(
 ): Promise<boolean> {
   if (project.originManifests.length !== 1
     || resolvedPath.trim() === ''
-    || resolvedPath.startsWith('workspace:')) {
+    || resolvedPath.startsWith(WORKSPACE_PROTOCOL)) {
     return false;
   }
   if (packageFilePath !== project.originManifests[0]

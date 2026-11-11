@@ -8,21 +8,18 @@ import {
 import * as vscode from 'vscode';
 import { mockNestroConfiguration } from './fixtures/config';
 import { buildPackageItem } from './fixtures/packageItem';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
+import { CHECK_CONCURRENCY_CAP } from '../utils/operationCoordinator';
 import {
-  FilterManager,
-  GroupItem,
-  PackageItem,
-  PackagesProvider,
-  StatusItem,
-} from '../providers';
-import {
-  CHECK_CONCURRENCY_CAP,
   fetchAllLatestVersions,
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
-import { packagesProviderMocks } from './fixtures/packagesProviderMocks';
+import { createStructuredAuditResult, packagesProviderMocks } from './fixtures/packagesProviderMocks';
 import { getPackageItems, resetPackagesProviderDefaults, setProviderState } from './fixtures/packagesProviderHarness';
 const { createClient: createClientMock } = packagesProviderMocks;
 
@@ -326,11 +323,11 @@ describe('PackagesProvider', () => {
       }
     });
     createClientMock.mockImplementation((_manager: string, projectRoot: string) => ({
-      runAudit: async () => {
+      runAuditReport: async () => {
         enter(projectRoot);
         try {
           await gate;
-          return new Map<string, never>();
+          return createStructuredAuditResult(new Map());
         }
         finally {
           leave(projectRoot);

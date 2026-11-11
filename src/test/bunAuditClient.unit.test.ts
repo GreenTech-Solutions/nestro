@@ -1,18 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
-import {
-  parseBunAuditOutcome,
-  runBunAudit,
-  runBunAuditOutcome,
-  UnrecognizedAuditResultError,
-} from '../utils';
+import { parseBunAuditOutcome, runBunAuditOutcome } from '../utils/bunAuditClient';
+import { runBunAudit } from '../utils';
+import { UnrecognizedAuditResultError } from '../utils/audit/outcome';
 import type {
   AuditAdvisoriesOutcome,
   AuditCleanOutcome,
   AuditIncompleteOutcome,
   AuditIncompleteReason,
   AuditOutcome,
-} from '../utils';
+} from '../utils/audit/outcome';
 import { createAuditProcessMocks } from './fixtures/auditProcess';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());

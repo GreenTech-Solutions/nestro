@@ -1,4 +1,5 @@
-import { PackageItem, type PackageOperation } from '../../providers';
+import { PackageItem } from '../../providers/PackageItem';
+import type { PackageOperation } from '../../providers/PackageItem';
 import type { AuditSeverity, ReleaseAgeState, UpdateType } from '../../utils';
 
 export interface BuildPackageItemOptions {

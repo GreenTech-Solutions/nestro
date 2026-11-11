@@ -1,8 +1,6 @@
 import { vi } from 'vitest';
 import { FilterManager, PackagesProvider } from '../../providers';
-import type {
-  PackageLoadingServiceContract,
-} from '../../providers';
+import type { PackageLoadingServiceContract } from '../../providers/packageLoadingService';
 
 function createProviderMethods() {
   const markPackageUpdated = vi.fn<PackagesProvider['markPackageUpdated']>();

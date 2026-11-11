@@ -8,13 +8,12 @@ import type { RawCommit } from './releaseAnalyzer';
 import { runReleasePrepare } from './releasePrepare';
 import type { ReleasePrepareIo } from './releasePrepare';
 import { runCliAsEntry } from './cliBootstrap';
-import { describeError, readOptionalFile } from '../shared';
+import { compareNumericSemvers, describeError, isPlainNumericSemver, parsePlainNumericSemver, readOptionalFile } from '../shared';
 
 const execFileAsync = promisify(execFile);
 const GIT_LOG_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const RECORD_SEPARATOR = '';
 const FIELD_SEPARATOR = '';
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 
 function parsePackageJson(source: string): Record<string, unknown> {
   let value: unknown;
@@ -36,7 +35,7 @@ function parsePackageJson(source: string): Record<string, unknown> {
 
 function readPlainPackageVersion(source: string): string {
   const value = parsePackageJson(source).version;
-  if (typeof value !== 'string' || !VERSION_PATTERN.test(value)) {
+  if (typeof value !== 'string' || !isPlainNumericSemver(value)) {
     throw new Error('package.json must declare a plain major.minor.patch version');
   }
   return value;
@@ -80,7 +79,7 @@ export function createNodeReleasePrepareDependencies(
     cwd,
     async latestReleaseTag() {
       const { stdout } = await execFileAsync('git', ['tag', '-l', 'v*'], { cwd });
-      const tags = stdout.split('\n').map(line => line.trim()).filter(line => /^v\d+\.\d+\.\d+$/u.test(line));
+      const tags = stdout.split('\n').map(line => line.trim()).filter(tag => tag.startsWith('v') && isPlainNumericSemver(tag.slice(1)));
       if (tags.length === 0) {
         return undefined;
       }
@@ -102,7 +101,7 @@ export function createNodeReleasePrepareDependencies(
     },
     async writePackageVersion(version) {
       const source = await readFile(packageJsonPath, 'utf8');
-      if (!VERSION_PATTERN.test(version)) {
+      if (!isPlainNumericSemver(version)) {
         throw new Error('package.json version update must be a plain major.minor.patch version');
       }
       const packageJson = parsePackageJson(source);
@@ -128,10 +127,11 @@ export function createNodeReleasePrepareDependencies(
 }
 
 function compareVersions(left: string, right: string): number {
-  const parse = (value: string): readonly number[] => value.slice(1).split('.').map(Number);
-  const [leftMajor, leftMinor, leftPatch] = parse(left);
-  const [rightMajor, rightMinor, rightPatch] = parse(right);
-  return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
+  const leftVersion = parsePlainNumericSemver(left.slice(1));
+  const rightVersion = parsePlainNumericSemver(right.slice(1));
+  return leftVersion === undefined || rightVersion === undefined
+    ? 0
+    : compareNumericSemvers(leftVersion, rightVersion);
 }
 
 export async function mainReleasePrepare(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<number> {

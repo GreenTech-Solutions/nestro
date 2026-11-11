@@ -10,23 +10,25 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockNestroConfiguration } from './fixtures/config';
 import { buildPackageItem } from './fixtures/packageItem';
-import {
-  FilterManager,
-  PackageItem,
-  PackagesProvider,
-  StatusItem,
-  WorkspaceFolderItem,
-} from '../providers';
-import type { AuditOrchestrationServiceContract } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
+import { WorkspaceFolderItem } from '../providers/WorkspaceFolderItem';
+import type { AuditOrchestrationServiceContract } from '../providers/auditOrchestrationService';
 import {
   fetchAllLatestVersions,
   readAllWorkspaceDependencies,
   showError,
 } from '../utils';
 import type { AuditSeverity } from '../utils';
-import { packagesProviderMocks } from './fixtures/packagesProviderMocks';
+import { createStructuredAuditResult, packagesProviderMocks } from './fixtures/packagesProviderMocks';
 import { getPackageItems, resetPackagesProviderDefaults } from './fixtures/packagesProviderHarness';
 const { createClient: createClientMock } = packagesProviderMocks;
+
+vi.mock('node:fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs/promises')>(),
+  realpath: (value: string) => Promise.resolve(value),
+}));
 
 interface ContextMenuContribution {
   readonly command: string;
@@ -132,7 +134,12 @@ describe('PackagesProvider', () => {
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce(packageEntries);
     vi.mocked(fetchAllLatestVersions).mockResolvedValue(latestVersions);
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockResolvedValue(vulnerabilities),
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(vulnerabilities, new Map([
+        [outdatedPackageName, '1.0.0'],
+        ['current', '1.0.0'],
+        ['installing', '1.0.0'],
+        ['unsupported', '1.0.0'],
+      ]))),
     });
     mockNestroConfiguration({ checkUpdatesForceAlways: true, minimumReleaseAgeDays: 0 });
 
@@ -199,10 +206,10 @@ describe('PackagesProvider', () => {
     ]);
     createClientMock
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])),
+        runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map([['react', 'high']]))),
       })
       .mockReturnValueOnce({
-        runAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')),
+        runAuditReport: vi.fn().mockRejectedValue(new Error('audit unavailable')),
       });
 
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -292,9 +299,9 @@ describe('PackagesProvider', () => {
   });
 
   it('shows the running audit state and contains package detail paths defensively', async () => {
-    let releaseAudit: (value: Map<string, AuditSeverity>) => void = () => {};
+    let releaseAudit: (value: ReturnType<typeof createStructuredAuditResult>) => void = () => {};
     createClientMock.mockReturnValue({
-      runAudit: vi.fn().mockReturnValue(new Promise<Map<string, AuditSeverity>>((resolve) => {
+      runAuditReport: vi.fn().mockReturnValue(new Promise<ReturnType<typeof createStructuredAuditResult>>((resolve) => {
         releaseAudit = resolve;
       })),
     });
@@ -303,7 +310,7 @@ describe('PackagesProvider', () => {
     const audit = provider.runAudit();
 
     expect(provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Running audit…')).toBe(true);
-    releaseAudit(new Map());
+    releaseAudit(createStructuredAuditResult(new Map()));
     await audit;
 
     const emptyPathItem = buildPackageItem({ name: 'empty', currentVersion: '1.0.0', packageFilePath: '' });

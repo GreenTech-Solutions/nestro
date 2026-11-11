@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
 import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
-import { describeError, isRecord, PACKAGE_MANAGERS, parsePackageManagerField, resolveSpawnTarget, YARN_DIALECTS } from '../shared';
+import { describeError, isRecord, PACKAGE_MANAGERS, parsePackageManagerField, parseYarnSemverMajor, resolveSpawnTarget, YARN_DIALECTS } from '../shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,13 +88,13 @@ function parsePackageManagerFamily(packageManager: string | undefined): YarnFami
     return 'unknown';
   }
   const field = parsePackageManagerField(packageManager.trim());
-  const match = field?.packageManager === 'yarn' && field.version !== undefined
-    ? /^(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(field.version)
-    : null;
-  if (match === null) {
+  const major = field?.packageManager === 'yarn' && field.version !== undefined
+    ? parseYarnSemverMajor(field.version)
+    : undefined;
+  if (major === undefined) {
     return 'unknown';
   }
-  return familyFromMajor(Number(match[1]));
+  return familyFromMajor(major);
 }
 
 async function resolveMarkerFamily(projectRoot: string): Promise<YarnFamilyResolution | undefined> {
@@ -148,9 +148,9 @@ async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResoluti
       ...(target.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
     }) as { stdout: string } | string;
     const stdout = typeof result === 'string' ? result : result.stdout;
-    const match = /^(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(stdout.trim());
+    const major = parseYarnSemverMajor(stdout.trim());
     return {
-      family: match === null ? 'unknown' : familyFromMajor(Number(match[1])),
+      family: major === undefined ? 'unknown' : familyFromMajor(major),
       source: 'version-probe',
     };
   }

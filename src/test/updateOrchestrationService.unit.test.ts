@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  computeUpdateFingerprint,
-  UpdateOrchestrationService,
-} from '../providers';
+import { computeUpdateFingerprint, UpdateOrchestrationService } from '../providers/updateOrchestrationService';
+import type { CanonicalPackageLocation, PackageIdentityTuple } from '../providers/packageIdentity';
 import type {
-  CanonicalPackageLocation,
-  PackageIdentityTuple,
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
   UpdateOrchestrationResult,
-} from '../providers';
+} from '../providers/updateOrchestrationService';
 import { OperationCoordinator } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 

@@ -6,13 +6,10 @@ import {
   diffViewContexts,
   resolvePublishedWorkspaceCapabilities,
   VIEW_CONTEXT_KEYS,
-} from '../providers';
-import type {
-  PackageTreeEntry,
-  ViewContextMap,
-  ViewProjectionSnapshot,
-  WorkspaceCapabilities,
-} from '../providers';
+} from '../providers/viewProjectionService';
+import type { PackageTreeEntry } from '../providers/treeBuilder';
+import type { ViewContextMap, ViewProjectionSnapshot } from '../providers/viewProjectionService';
+import type { WorkspaceCapabilities } from '../providers/PackagesProvider';
 import type { UpdateType } from '../utils';
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {

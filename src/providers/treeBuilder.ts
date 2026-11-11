@@ -102,14 +102,6 @@ export function getFilterCounts(
   return projectPackageTree(entries, 'all', search).filterCounts;
 }
 
-export function getFilteredEntries(
-  entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
-  search = '',
-): PackageTreeEntry[] {
-  return [...projectPackageTree(entries, filterType, search).visibleEntries];
-}
-
 /** Compact `treeView.description` for the active filter/search state; `undefined` when both are at their defaults. */
 export function formatViewDescription(
   filterType: FilterType,

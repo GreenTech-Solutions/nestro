@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildPackageItem } from './fixtures';
-import { PackageItem } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 
 interface ViewItemMenuEntry {
   readonly command: string;

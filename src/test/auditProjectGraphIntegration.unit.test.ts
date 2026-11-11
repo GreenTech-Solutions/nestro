@@ -4,6 +4,7 @@ import { setWorkspaceFolders } from './fixtures';
 import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { FilterManager, PackagesProvider } from '../providers';
 import { readAllWorkspaceDependencies } from '../utils';
+import { createStructuredAuditResult } from './fixtures/packagesProviderMocks';
 
 // Every other provider-level suite mocks `resolveAuditProjects`, so none of them prove that
 // the real resolver, wired to the real provider, collapses several manifests sharing one lock
@@ -56,7 +57,9 @@ describe('audit project graph integration (real resolver + real provider)', () =
       { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/packages/ui/package.json' },
       { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/packages/cli/package.json' },
     ]);
-    createClientMock.mockReturnValue({ runAudit: vi.fn().mockResolvedValue(new Map()) });
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map(), new Map(), 'pnpm')),
+    });
 
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();

@@ -4,7 +4,8 @@ import { makeProvider } from './fixtures/providerStub';
 import { buildPackageItem } from './fixtures';
 import { pickVersionCommand } from '../commands/pickVersion';
 import { runResolvedPackageVersion } from '../commands/installUpdate';
-import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 import { fetchPackageMetadata, showError } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 
@@ -107,10 +108,12 @@ describe('pickVersionCommand()', () => {
       makeProvider(),
     );
     expect(fetchPackageMetadata).toHaveBeenCalledWith(
+      expect.any(Function),
       'react',
       '/workspace/package.json',
       expect.any(AbortSignal),
     );
+    await expect(vi.mocked(fetchPackageMetadata).mock.calls[0][0](undefined)).resolves.toBe('npm');
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();

@@ -12,15 +12,11 @@ import * as vscode from 'vscode';
 import { mockNestroConfiguration } from './fixtures/config';
 import { setWorkspaceFolders } from './fixtures/workspaceFolders';
 import { buildPackageItem } from './fixtures/packageItem';
-import {
-  FilterManager,
-  GroupItem,
-  PACKAGE_IDENTITY_REJECTED_MESSAGE,
-  PackageItem,
-  PackagesProvider,
-  StatusItem,
-  WorkspaceFolderItem,
-} from '../providers';
+import { FilterManager, PACKAGE_IDENTITY_REJECTED_MESSAGE, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
+import { StatusItem } from '../providers/StatusItem';
+import { WorkspaceFolderItem } from '../providers/WorkspaceFolderItem';
 import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 import { LoadingItem } from '../providers/LoadingItem';
 import {

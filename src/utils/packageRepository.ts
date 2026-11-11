@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { getMonorepoGlob } from '../config';
 import { logger } from './logger';
-import { describeError } from '../shared';
+import { describeError, NODE_MODULES_EXCLUDE_GLOB } from '../shared';
 
 export interface RawPackageFile {
   readonly uri: vscode.Uri;
@@ -17,15 +17,6 @@ export interface PreparedPackageFile {
 }
 
 type PackageFileLocation = string | vscode.Uri;
-
-export function getWorkspacePackageFilePath(): string | undefined {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (folder === undefined) {
-    return undefined;
-  }
-
-  return vscode.Uri.joinPath(folder.uri, 'package.json').fsPath;
-}
 
 export async function readPackageFile(packageFilePath: string): Promise<RawPackageFile>;
 export async function readPackageFile(uri: vscode.Uri): Promise<RawPackageFile>;
@@ -74,7 +65,7 @@ export async function findWorkspacePackageJsonFiles(glob?: string): Promise<vsco
   }
 
   const configuredGlob = glob ?? getMonorepoGlob();
-  return await vscode.workspace.findFiles(configuredGlob, '**/node_modules/**');
+  return await vscode.workspace.findFiles(configuredGlob, NODE_MODULES_EXCLUDE_GLOB);
 }
 
 /** Package file path relative to its owning workspace folder, for user-facing messages. */

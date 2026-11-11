@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
@@ -42,6 +41,8 @@ export interface MetadataAdapter {
   fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome>;
 }
 
+type PackageManagerDetector = (cwd: string | undefined) => Promise<PackageManager>;
+
 const tierOrder: Readonly<Record<MetadataAdapterTier, number>> = {
   'native-cli': 0,
   'config-aware-https': 1,
@@ -61,12 +62,15 @@ export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
 export class MetadataAdapterRegistry {
   private readonly adapters: readonly MetadataAdapter[];
 
-  constructor(adapters: readonly MetadataAdapter[] = [
-    nativeCliMetadataAdapter,
-    yarnClassicMetadataAdapter,
-    yarnModernMetadataAdapter,
-    configAwareHttpsMetadataAdapter,
-  ]) {
+  constructor(
+    private readonly detectPackageManager: PackageManagerDetector,
+    adapters: readonly MetadataAdapter[] = [
+      nativeCliMetadataAdapter,
+      yarnClassicMetadataAdapter,
+      yarnModernMetadataAdapter,
+      configAwareHttpsMetadataAdapter,
+    ],
+  ) {
     this.adapters = [...adapters].sort((left, right) => tierOrder[left.tier] - tierOrder[right.tier]);
   }
 
@@ -85,7 +89,7 @@ export class MetadataAdapterRegistry {
   private async fetchMetadataInMemo(request: MetadataRequest): Promise<PackageMetadataOutcome> {
     let packageManager: PackageManager;
     try {
-      packageManager = await detectPackageManager(
+      packageManager = await this.detectPackageManager(
         request.packageFilePath === undefined ? undefined : path.dirname(request.packageFilePath),
       );
     }
@@ -137,17 +141,17 @@ function hasPrivateRegistryMarker(outcome: PackageMetadataOutcome): boolean {
   return outcome.privateRegistry === true;
 }
 
-export const metadataAdapterRegistry = new MetadataAdapterRegistry();
-
 export async function fetchPackageMetadata(
+  detectPackageManager: PackageManagerDetector,
   packageName: string,
   packageFilePath?: string,
   signal?: AbortSignal,
 ): Promise<PackageMetadataOutcome> {
-  return await metadataAdapterRegistry.fetchMetadata({ packageName, packageFilePath, signal });
+  return await new MetadataAdapterRegistry(detectPackageManager).fetchMetadata({ packageName, packageFilePath, signal });
 }
 
 export async function resolveMetadataRegistryKey(
+  detectPackageManager: PackageManagerDetector,
   packageName: string,
   packageFilePath?: string,
 ): Promise<string | undefined> {

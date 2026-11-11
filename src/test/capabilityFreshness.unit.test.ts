@@ -5,14 +5,16 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { setWorkspaceFolders } from './fixtures';
 import { installUpdateCommand } from '../commands/installUpdate';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { GroupItem } from '../providers/GroupItem';
+import { PackageItem } from '../providers/PackageItem';
 import type {
   AuditOrchestrationResult,
   AuditOrchestrationServiceContract,
-  CanonicalPackageLocation,
-  PackageLoadingServiceContract,
-  ResolvedPackageItem,
-} from '../providers';
+} from '../providers/auditOrchestrationService';
+import type { CanonicalPackageLocation } from '../providers/packageIdentity';
+import type { PackageLoadingServiceContract } from '../providers/packageLoadingService';
+import type { ResolvedPackageItem } from '../providers';
 import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 import type { UpdateOrchestrationServiceContract } from '../providers/updateOrchestrationService';
 import { runShellTaskAndWait, updateDependencyVersionsInFile } from '../utils';

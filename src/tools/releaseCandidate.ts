@@ -1,10 +1,9 @@
 import { bundleFileName, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
-import { compareCodeUnits } from '../shared';
+import { compareCodeUnits, isPlainNumericSemver } from '../shared';
 
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const RUN_ID_PATTERN = /^[1-9]\d*$/u;
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SAFE_FILE_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 export interface ReleaseCandidateEvidence {
@@ -79,7 +78,7 @@ function findCandidateInputViolation(
   existingTags: readonly string[],
   context: ReleaseCandidateContext,
 ): string | undefined {
-  if (!VERSION_PATTERN.test(packageVersion)) {
+  if (!isPlainNumericSemver(packageVersion)) {
     return `package version "${packageVersion}" is not a plain major.minor.patch semver`;
   }
   const tag = `v${packageVersion}`;
@@ -162,7 +161,7 @@ export function findManifestViolation(manifest: ReleaseCandidateManifest): strin
   if (manifest.schemaVersion !== RELEASE_CONTRACT.schemaVersions.candidate) {
     return `schemaVersion must be exactly ${RELEASE_CONTRACT.schemaVersions.candidate}`;
   }
-  if (typeof manifest.version !== 'string' || !VERSION_PATTERN.test(manifest.version)) {
+  if (typeof manifest.version !== 'string' || !isPlainNumericSemver(manifest.version)) {
     return 'version must be a plain major.minor.patch semver';
   }
   if (typeof manifest.sourceSha !== 'string' || !COMMIT_SHA_PATTERN.test(manifest.sourceSha)) {
@@ -204,11 +203,4 @@ export function findManifestViolation(manifest: ReleaseCandidateManifest): strin
     return 'notes must be non-empty';
   }
   return undefined;
-}
-
-export function isWellFormedManifest(value: unknown): value is ReleaseCandidateManifest {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return findManifestViolation(value as ReleaseCandidateManifest) === undefined;
 }

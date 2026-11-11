@@ -10,10 +10,10 @@ import {
   getMinimumReleaseAgeDays,
   getMonorepoGlob,
   getUpdatePolicySettings,
-  getUpdateTarget,
-  SETTING_DEFAULTS,
 } from '../config';
-import { FILTER_TYPES, isRecord, MAX_MINIMUM_RELEASE_AGE_DAYS, UPDATE_TARGETS } from '../shared';
+import { getUpdateTarget, SETTING_DEFAULTS } from '../config/settings';
+import { FILTER_TYPES, isRecord } from '../shared';
+import { MAX_MINIMUM_RELEASE_AGE_DAYS, UPDATE_TARGETS } from '../shared/settingValues';
 
 interface ConfigurationSetting {
   readonly default: boolean | number | string;

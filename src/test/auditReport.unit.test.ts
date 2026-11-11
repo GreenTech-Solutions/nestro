@@ -2,21 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { openAuditReportCommand } from '../commands';
 import {
   cloneAuditAdvisory,
-  createAuditAdvisory,
   formatAuditReport,
   inferPathAttribution,
-  mergeAttribution,
   mergeAuditAdvisories,
-  mergePathAttributions,
   mergeSeverity,
-  parseAuditOutcome,
-  parseBunAuditOutcome,
-  parseSeverity,
-  parseYarnAuditOutcome,
-  toAuditResult,
-  validateAdvisoryUrl,
 } from '../utils';
-import type { AuditAdvisory, AuditOutcome, AuditSeverity } from '../utils';
+import { createAuditAdvisory, mergeAttribution } from '../utils/auditReport';
+import { parseAuditOutcome } from '../utils/auditClient';
+import { parseBunAuditOutcome } from '../utils/bunAuditClient';
+import { parseSeverity } from '../utils/audit/types';
+import { parseYarnAuditOutcome } from '../utils/yarnAuditClient';
+import { toAuditResult } from '../utils/audit/outcome';
+import { validateAdvisoryUrl } from '../utils/auditReportFormatter';
+import type { AuditAdvisory, AuditSeverity } from '../utils';
+import type { AuditOutcome } from '../utils/audit/outcome';
 import {
   compareSeverity,
   emptySeverityCounts,
@@ -353,11 +352,6 @@ describe('advisory identity and report safety', () => {
     expect(inferPathAttribution('react', ['workspace:.'])).toBe('direct');
     expect(mergeAttribution('direct', 'direct')).toBe('direct');
     expect(mergeAttribution('direct', 'transitive')).toBe('unknown');
-    expect(mergePathAttributions([])).toBe('unknown');
-    expect(mergePathAttributions(['unknown', 'direct'])).toBe('direct');
-    expect(mergePathAttributions(['direct', 'transitive'])).toBe('unknown');
-    expect(mergePathAttributions(['transitive'])).toBe('transitive');
-
     const sameVia = createAuditAdvisory({
       ...original,
       title: undefined,

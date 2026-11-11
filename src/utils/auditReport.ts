@@ -1,7 +1,6 @@
-import { sanitizeInlineText } from '../shared';
+import { compareCodeUnits, sanitizeInlineText, WORKSPACE_PROTOCOL } from '../shared';
 import { compareSeverity, mergeSeverity } from './audit/types';
 import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
-import { compareCodeUnits } from '../shared';
 
 export type AuditAttribution = 'direct' | 'transitive' | 'unknown';
 
@@ -176,19 +175,6 @@ export function inferPathAttribution(packageName: string, paths: readonly string
   return attributions.size === 1 ? [...attributions][0] : 'unknown';
 }
 
-export function mergePathAttributions(
-  values: readonly AuditAttribution[],
-): AuditAttribution {
-  const known = values.filter(value => value !== 'unknown');
-  if (known.length === 0) {
-    return 'unknown';
-  }
-  const unique = new Set(known);
-  return unique.size === 1 && values.every(value => value === known[0] || value === 'unknown')
-    ? known[0]
-    : 'unknown';
-}
-
 function mergeAdvisory(left: AuditAdvisory, right: AuditAdvisory): AuditAdvisory {
   const sources = uniqueSorted([...left.sources, ...right.sources]);
   const titles = uniqueSorted([...left.titles, ...right.titles]);
@@ -288,7 +274,7 @@ function chooseStableString(left: string | undefined, right: string | undefined)
 
 function inferSinglePathAttribution(packageName: string, value: string): AuditAttribution {
   const path = value.trim().replace(/\\/g, '/');
-  if (path === '' || path === 'workspace:.' || path === 'workspace:root') {
+  if (path === '' || path === `${WORKSPACE_PROTOCOL}.` || path === `${WORKSPACE_PROTOCOL}root`) {
     return 'direct';
   }
   const nodeModuleCount = path.split('/').filter(segment => segment === 'node_modules').length;

@@ -6,12 +6,9 @@ import {
   vi,
 } from 'vitest';
 import * as vscode from 'vscode';
-import {
-  FilterManager,
-  PackagesProvider,
-  StatusItem,
-} from '../providers';
-import type { AuditOrchestrationServiceContract } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
+import type { AuditOrchestrationServiceContract } from '../providers/auditOrchestrationService';
 import { LoadingItem } from '../providers/LoadingItem';
 import {
   getWorkspacePackageFilePaths,

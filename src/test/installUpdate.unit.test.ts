@@ -6,7 +6,7 @@ import { mockNestroConfiguration } from './fixtures/config';
 import { makeProvider } from './fixtures/providerStub';
 import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { installUpdateCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
-import { PackageItem } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 import { formatShellTaskFailureMessage } from '../utils';
 
 const identityMocks = getIdentityMocks();

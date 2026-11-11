@@ -22,8 +22,6 @@ export const COMMAND_IDS = {
   pinAllVersions: 'nestro.pinAllVersions',
 } as const;
 
-export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];
-
 /** View and view-container ids declared in `contributes.views` and `contributes.viewsContainers`. */
 export const VIEW_IDS = {
   container: 'nestro',
@@ -45,8 +43,6 @@ export const CONTEXT_KEYS = {
   noWorkspace: 'nestro.noWorkspace',
   hasSearchQuery: 'nestro.hasSearchQuery',
 } as const;
-
-export type ContextKey = keyof typeof CONTEXT_KEYS;
 
 /** Tree item `contextValue` tokens; the manifest's `viewItem =~` patterns match the row tokens. */
 export const CONTEXT_VALUE_TOKENS = {

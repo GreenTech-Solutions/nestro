@@ -38,56 +38,6 @@ interface AllowlistEntry {
 
 const ALLOWLIST: readonly AllowlistEntry[] = [
   {
-    file: 'src/clients/ClientManager.ts',
-    target: '../utils/logger',
-    reason: 'clients never imports the utils barrel: it re-exports packageManager.ts, which imports ClientManager from clients, so routing through the barrel would recreate the clients-utils-clients cycle this rule exists to avoid.',
-  },
-  {
-    file: 'src/clients/projectResolver.ts',
-    target: '../utils/logger',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/audit/outcome',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/audit/types',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/bunAuditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/yarnAuditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PackageManagerClient.ts',
-    target: '../utils/shellTask',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/workspaceRoot.ts',
-    target: '../utils/yarnFamily',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/utils/packageManager.ts',
-    target: '../clients',
-    reason: 'detectPackageManager() only delegates to ClientManager for the metadata adapters in utils; relocating it to clients would ripple through every metadata caller and test for no behavior change.',
-  },
-  {
     file: 'src/utils/auditReportFormatter.ts',
     target: '../providers',
     reason: 'AuditProjectFailure/AuditProjectSummary compose AuditProject (from clients) with utils audit primitives, so they can only be defined at the providers layer above both; the import is type-only and erased at compile time, so it carries no runtime cycle.',
