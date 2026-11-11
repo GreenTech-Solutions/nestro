@@ -254,7 +254,7 @@ project root, not serialized against each other:
   `AuditOrchestrationService` — both constructed with the *same* instance via
   `UpdateOrchestrationService.withCoordinators()`/`AuditOrchestrationService.withCoordinator()`.
   This serializes an update check and a security audit on the same root against each other and
-  bounds their combined fan-out, pinned by `packagesProvider.unit.test.ts`'s *"shares the read
+  bounds their combined fan-out, pinned by `packagesProviderUpdateLifecycle.unit.test.ts`'s *"shares the read
   cap and canonical root serialization between update and audit runs"*.
 - `metadataCoordinator` (`METADATA_CONCURRENCY_CAP = 4`) is a third, provider-owned instance
   nested inside the check coordinator's work: every metadata lookup acquires a check-coordinator
@@ -415,7 +415,7 @@ superseded it is discarded rather than applied over the fresh snapshot — pinne
 and never starts queued roots from the old snapshot"*. A **cancelled** predecessor's result
 arriving *late*, after a newer operation has started or finished, must not clobber that newer
 state either — pinned by *"keeps the current audit failure when a cancelled predecessor
-succeeds late"* and its mirror (all in `packagesProvider.unit.test.ts`).
+succeeds late"* and its mirror (all in `packagesProviderAuditLifecycle.unit.test.ts`).
 
 **Partial statuses.** `checkState` and `auditState` both carry an `'incomplete'` value distinct
 from `'done'` (and, for `auditState`, from `'failed'`): a run with at least one successful and
@@ -583,9 +583,9 @@ test (all under `src/test/`, path prefix omitted for brevity).
 | A manifest resolving outside its owning workspace is rejected, never treated as a project root. | `projectResolver.unit.test.ts` — *"rejects a project root whose canonical path escapes the owning workspace folder"* |
 | Two manifests colliding across workspace folders never silently merge. | `projectResolver.unit.test.ts` — *"rejects a cross-workspace collision instead of silently merging two workspace folders"* |
 | The update fingerprint mismatch discards a fetch instead of caching it. | `updateOrchestrationService.unit.test.ts` — *"discards as stale when the manifest spec changes mid-fetch…"*, *"discards as stale when the live policy changes mid-fetch"* |
-| Metadata lookups are deduplicated and bounded, not fetched once per row. | `packagesProvider.unit.test.ts` — *"deduplicates metadata by package and registry while capping concurrent requests"* |
-| A superseded audit/update result is discarded, never applied over a newer snapshot. | `packagesProvider.unit.test.ts` — *"discards an audit result after the package snapshot reloads"*, *"aborts an audit on reload and never starts queued roots from the old snapshot"* |
-| A late result from a cancelled predecessor never overwrites the current operation's outcome. | `packagesProvider.unit.test.ts` — *"keeps the current audit failure when a cancelled predecessor succeeds late"* and its mirror |
+| Metadata lookups are deduplicated and bounded, not fetched once per row. | `packagesProviderUpdates.unit.test.ts` — *"deduplicates metadata by package and registry while capping concurrent requests"* |
+| A superseded audit/update result is discarded, never applied over a newer snapshot. | `packagesProviderAuditLifecycle.unit.test.ts` — *"discards an audit result after the package snapshot reloads"*, *"aborts an audit on reload and never starts queued roots from the old snapshot"* |
+| A late result from a cancelled predecessor never overwrites the current operation's outcome. | `packagesProviderAuditLifecycle.unit.test.ts` — *"keeps the current audit failure when a cancelled predecessor succeeds late"* and its mirror |
 | A multi-file write rolls back every already-written file, in reverse order, on failure. | `packageRepository.unit.test.ts` — *"rolls back only successfully written files in reverse order on failure"* |
 | A dependency-type-switch collision writes nothing. | `packageTransforms.unit.test.ts` — *"throws a typed conflict when the target already has the package"* |
 | An audit outcome with an unrecognized or truncated result is never reported as clean. | `auditClient.unit.test.ts`, `bunAuditClient.unit.test.ts`, `yarnAuditClient.unit.test.ts` — incomplete/error classification cases |
