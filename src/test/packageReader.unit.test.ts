@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import {
   DependencyTypeConflictError,
   extractVersionPrefix,
@@ -29,10 +30,7 @@ describe('extractVersionPrefix()', () => {
 
 describe('getWorkspacePackageFilePath()', () => {
   afterEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
   });
 
   it('joins the first workspace folder with package.json', () => {
@@ -40,10 +38,7 @@ describe('getWorkspacePackageFilePath()', () => {
   });
 
   it('returns undefined when no workspace folder is open', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
+    setWorkspaceFolders(undefined);
 
     expect(getWorkspacePackageFilePath()).toBeUndefined();
   });
@@ -190,10 +185,7 @@ describe('updateWorkspaceDependencyVersions()', () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
   });
 
   it('preserves the existing version prefix when updating package.json', async () => {
@@ -268,10 +260,7 @@ describe('updateWorkspaceDependencyVersions()', () => {
   });
 
   it('throws when no workspace folder is open', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
+    setWorkspaceFolders(undefined);
 
     await expect(updateWorkspaceDependencyVersions([
       { name: 'react', version: '18.0.0', section: 'dependencies' },

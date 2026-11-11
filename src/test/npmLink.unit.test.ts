@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeContext } from './fixtures';
 import { activate } from '../extension';
 import { PackageItem } from '../providers';
 
@@ -29,10 +30,6 @@ vi.mock('../providers', async () => {
     }),
   };
 });
-
-function makeContext(): vscode.ExtensionContext {
-  return { subscriptions: [] } as unknown as vscode.ExtensionContext;
-}
 
 function getRegisteredCommand(command: string): (item: unknown) => void {
   const call = vi.mocked(vscode.commands.registerCommand).mock.calls.find(([id]) => id === command);

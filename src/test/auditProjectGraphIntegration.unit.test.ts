@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { FilterManager, PackagesProvider } from '../providers';
 import { readAllWorkspaceDependencies } from '../utils';
 
@@ -30,24 +32,11 @@ vi.mock('../utils', async () => {
   };
 });
 
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = files[uri.fsPath];
-    if (value === undefined) {
-      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
-    }
-    return Promise.resolve(Buffer.from(value));
-  });
-}
-
 describe('audit project graph integration (real resolver + real provider)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.realpath.mockImplementation((value: string) => Promise.resolve(value));
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) =>
       vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(folder.uri.fsPath)));
     createClientMock.mockReset();

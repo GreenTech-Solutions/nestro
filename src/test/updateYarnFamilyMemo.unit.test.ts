@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import type { ChildProcess, ExecFileOptions } from 'node:child_process';
 import { dirname } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as vscode from 'vscode';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { AuditOrchestrationService, UpdateOrchestrationService } from '../providers';
 import type {
   AuditOrchestrationDependencies,
@@ -32,15 +32,6 @@ const packageFilePath = `${projectRoot}/package.json`;
 const otherProjectRoot = '/workspace/other-project';
 const otherPackageFilePath = `${otherProjectRoot}/package.json`;
 let probeCounts = new Map<string, number>();
-
-function mockWorkspaceFiles(files: Readonly<Record<string, string>>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const contents = files[uri.fsPath];
-    return contents === undefined
-      ? Promise.reject(new Error(`File not found: ${uri.fsPath}`))
-      : Promise.resolve(Buffer.from(contents));
-  });
-}
 
 function mockVersionProbe(stdout: string): void {
   vi.mocked(execFile).mockImplementation((

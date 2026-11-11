@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getConfigFilePaths, getPackageRoot, readConfigFile } from '../utils/registry/configFiles';
 
@@ -13,10 +14,7 @@ vi.mock('node:os', () => ({
 describe('registry config files', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => (
       vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(`${folder.uri.fsPath}/`))
     ));
@@ -39,10 +37,7 @@ describe('registry config files', () => {
   });
 
   it('lists a file once when the workspace root is the home directory', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/home/user' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/home/user' } }]);
 
     expect(getConfigFilePaths(undefined, '.yarnrc')).toEqual(['/home/user/.yarnrc']);
   });

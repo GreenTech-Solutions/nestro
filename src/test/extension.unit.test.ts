@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeContext } from './fixtures';
+import { mockNestroConfiguration } from './fixtures/config';
 import { activate, deactivate } from '../extension';
 import { PackagesProvider } from '../providers';
 import {
@@ -94,18 +96,6 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ExtensionMani
 // rather than a hardcoded copy, so this list cannot silently drift from the manifest
 // (CLAUDE.md convention: command IDs must match exactly between package.json and registerCommand).
 const REGISTERED_COMMAND_IDS = manifest.contributes.commands.map(entry => entry.command);
-
-function makeContext(): vscode.ExtensionContext {
-  return { subscriptions: [] } as unknown as vscode.ExtensionContext;
-}
-
-function mockNestroConfiguration(values: Record<string, unknown>): void {
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: vi.fn((key: string, defaultValue: unknown) => (
-      Object.hasOwn(values, key) ? values[key] : defaultValue
-    )),
-  } as unknown as vscode.WorkspaceConfiguration);
-}
 
 describe('activate()', () => {
   beforeEach(() => {

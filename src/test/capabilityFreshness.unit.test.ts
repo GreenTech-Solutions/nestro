@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { installUpdateCommand } from '../commands/installUpdate';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import type {
@@ -87,10 +88,7 @@ async function createFixture(): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'nestro-capability-freshness-'));
   const manifest = join(root, 'package.json');
   await writeFile(manifest, JSON.stringify(MANIFEST));
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: [{ uri: { fsPath: root } }],
-  });
+  setWorkspaceFolders([{ uri: { fsPath: root } }]);
   const location = await resolveCanonicalPackageLocation(manifest);
   if (!location.ok) {
     throw new Error('expected a canonical manifest location');
@@ -142,7 +140,7 @@ describe('capability freshness across row rebuilds', () => {
 
   afterEach(async () => {
     fixture?.provider.dispose();
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, value: previousFolders });
+    setWorkspaceFolders(previousFolders);
     if (fixture !== undefined) {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -239,7 +237,7 @@ describe('install command with a row rebuild in flight', () => {
 
   afterEach(async () => {
     fixture?.provider.dispose();
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, value: previousFolders });
+    setWorkspaceFolders(previousFolders);
     if (fixture !== undefined) {
       await rm(fixture.root, { recursive: true, force: true });
     }

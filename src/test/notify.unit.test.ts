@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { showError } from '../utils';
 
 interface TestLogChannel {
@@ -12,10 +13,7 @@ const channel = vi.mocked(vscode.window.createOutputChannel).mock.results[0].val
 describe('showError', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     (channel.entries as { message: string }[]).length = 0;
     channel.logLevel = vscode.LogLevel.Info;
   });

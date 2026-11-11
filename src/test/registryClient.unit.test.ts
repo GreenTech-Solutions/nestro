@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchPackageMetadataFromRegistry,
@@ -31,7 +32,13 @@ const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
 vi.mock('../utils/packageManager', () => ({
   detectPackageManager: detectPackageManagerMock,
 }));
-vi.mock('../utils/yarnFamily', () => ({ resolveYarnFamily: resolveYarnFamilyMock, runWithYarnFamilyMemo: <T>(operation: () => Promise<T>) => operation() }));
+vi.mock('../utils/yarnFamily', async () => {
+  const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
+  return {
+    resolveYarnFamily: resolveYarnFamilyMock,
+    runWithYarnFamilyMemo: runWithYarnFamilyMemoPassthrough,
+  };
+});
 
 interface MockClientRequest extends EventEmitter {
   destroy: ReturnType<typeof vi.fn>;
@@ -46,10 +53,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     vi.mocked(readFile).mockRejectedValue(new Error('missing npmrc'));
     detectPackageManagerMock.mockResolvedValue('yarn');
     resolveYarnFamilyMock.mockResolvedValue({ family: 'unknown', source: 'version-probe' });
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {
       return vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(`${folder.uri.fsPath}/`));
     });
@@ -552,13 +556,10 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('uses the owning workspace .npmrc in a multi-root workspace', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [
-        { uri: { fsPath: '/workspace/app-one' } },
-        { uri: { fsPath: '/workspace/app-two' } },
-      ],
-    });
+    setWorkspaceFolders([
+      { uri: { fsPath: '/workspace/app-one' } },
+      { uri: { fsPath: '/workspace/app-two' } },
+    ]);
     mockNpmrcFiles({
       '/workspace/app-one/.npmrc': 'registry=https://one.example.com',
       '/workspace/app-two/.npmrc': 'registry=https://two.example.com',
@@ -580,13 +581,10 @@ describe('fetchPackageMetadataFromRegistry()', () => {
   });
 
   it('uses a scoped registry from the owning workspace in multi-root mode', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [
-        { uri: { fsPath: '/workspace/public-app' } },
-        { uri: { fsPath: '/workspace/private-app' } },
-      ],
-    });
+    setWorkspaceFolders([
+      { uri: { fsPath: '/workspace/public-app' } },
+      { uri: { fsPath: '/workspace/private-app' } },
+    ]);
     mockNpmrcFiles({
       '/workspace/public-app/.npmrc': '@private:registry=https://wrong.example.com',
       '/workspace/private-app/.npmrc': '@private:registry=https://private.example.com/npm/',

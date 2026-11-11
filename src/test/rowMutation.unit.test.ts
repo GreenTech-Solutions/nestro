@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
 import { installUpdateCommand } from '../commands/installUpdate';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { pinAllVersionsCommand } from '../commands/pinAllVersions';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers';
 import { runRowMutation } from '../commands/rowMutation';
 import { showError } from '../utils';
 
@@ -92,11 +93,7 @@ describe('row mutation pipeline', () => {
 
   it('reports a coordinator-key rejection through the command before marking a row', async () => {
     mutationMocks.resolveLockKey.mockRejectedValue(mutationMocks.lockError);
-    const provider = {
-      markPackageUpdatingForCapability: vi.fn(),
-      withWriteSuppressed: vi.fn(),
-      loadPackages: vi.fn(),
-    } as unknown as PackagesProvider;
+    const provider = makeProvider();
 
     await pinVersionCommand(
       new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
@@ -153,13 +150,11 @@ describe('row mutation pipeline', () => {
   });
 
   it('reconciles and reports an immediate single update that cannot be verified', async () => {
-    const provider = {
+    const provider = makeProvider({
       markPackageUpdatingForCapability: vi.fn(() => mutationMocks.capability),
       refreshPackageBaselineForCapability: vi.fn(() => Promise.resolve(undefined)),
       markPackageUpdatedForCapability: vi.fn(),
-      invalidateUpdateCache: vi.fn(),
-      loadPackages: vi.fn(),
-    } as unknown as PackagesProvider;
+    });
 
     await installUpdateCommand(
       new PackageItem('react', '^18.0.0', '18.0.1', 'minor', false, undefined, '/workspace/package.json', false, '^'),
@@ -173,13 +168,7 @@ describe('row mutation pipeline', () => {
   });
 
   it('names skipped Pin All manifests by their tree labels, not absolute paths', async () => {
-    const provider = {
-      getPackageIdentitiesForFile: vi.fn(() => []),
-      markPackageUpdating: vi.fn(),
-      withWriteSuppressed: vi.fn(async (write: () => Promise<unknown>) => await write()),
-      loadPackages: vi.fn(),
-      invalidateUpdateCache: vi.fn(),
-    } as unknown as PackagesProvider;
+    const provider = makeProvider();
 
     await pinAllVersionsCommand(provider);
 

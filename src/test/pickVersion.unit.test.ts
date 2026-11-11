@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
 import { pickVersionCommand } from '../commands/pickVersion';
 import { runResolvedPackageVersion } from '../commands/installUpdate';
-import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem, PackagesProvider } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem } from '../providers';
 import { fetchPackageMetadata, showError } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 
@@ -494,8 +495,4 @@ function makeQuickPick(): QuickPickMock {
     selectedItems: [],
     show: vi.fn(),
   };
-}
-
-function makeProvider(): PackagesProvider {
-  return {} as PackagesProvider;
 }

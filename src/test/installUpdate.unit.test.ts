@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { mockNestroConfiguration } from './fixtures/config';
+import { makeProvider } from './fixtures/providerStub';
 import { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from '../commands';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import { formatDependencySectionLabel, formatHeldBackDate, formatShellTaskFailureMessage, logger, type ReleaseAgeState } from '../utils';
@@ -89,7 +92,7 @@ describe('installUpdateCommand()', () => {
     vi.resetAllMocks();
     identityMocks.resolveCommandPackageItem.mockImplementation(item => item.packageFilePath === '' ? undefined : identityMocks.makeCapability(item));
     identityMocks.revalidateCommandPackageItem.mockImplementation(capability => capability);
-    resetWorkspaceFolders();
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
@@ -99,13 +102,13 @@ describe('installUpdateCommand()', () => {
   });
 
   it('uses the detected package manager in the update task command', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       loadPackages: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     vi.mocked(vscode.workspace.findFiles)
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
@@ -123,12 +126,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('passes package targets as strongly quoted shell args', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     vi.mocked(vscode.workspace.findFiles)
       .mockResolvedValueOnce([{ path: '/workspace/package.json' }] as vscode.Uri[])
       .mockResolvedValueOnce([{ path: '/workspace/pnpm-lock.yaml' }] as vscode.Uri[]);
@@ -151,12 +154,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('marks the package updated after the task exits successfully', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
     expect(provider.markPackageUpdated).toHaveBeenCalledWith({
@@ -168,12 +171,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('shows package update progress while the task runs', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     mockNextTaskExit(1);
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
@@ -191,12 +194,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('shows an error when an update task exits with a non-zero code', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     mockNextTaskExit(1);
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
@@ -210,12 +213,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('shows an error when an update task ends without an exit code', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     mockNextTaskExit(undefined);
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
@@ -229,12 +232,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('clears package update progress when starting the task throws', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     const error = new Error('task launch failed');
     vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce(error);
 
@@ -249,12 +252,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('rejects an option-shaped manifest key before the update task ever launches', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await installUpdateCommand(
       new PackageItem('--global', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
@@ -272,12 +275,12 @@ describe('installUpdateCommand()', () => {
     const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^');
     const capability = identityMocks.makeCapability(item);
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await runResolvedPackageVersion(capability, '5.9.3', provider);
 
@@ -294,13 +297,13 @@ describe('installUpdateCommand()', () => {
       dependencies: { typescript: '^5.0.0' },
     })));
     const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^');
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       loadPackages: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     vi.mocked(provider.refreshPackageBaselineForCapability).mockResolvedValueOnce(undefined);
 
     await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
@@ -315,12 +318,12 @@ describe('installUpdateCommand()', () => {
     identityMocks.revalidateCommandPackageItem
       .mockResolvedValueOnce(capability)
       .mockResolvedValueOnce(undefined as never);
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await runResolvedPackageVersion(capability, '5.9.3', provider);
 
@@ -342,12 +345,12 @@ describe('installUpdateCommand()', () => {
       '^',
       { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
     );
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
 
@@ -369,12 +372,12 @@ describe('installUpdateCommand()', () => {
       '^',
       { kind: 'held-back', version: '5.9.3', eligibleAt: '2026-06-02T00:00:00.000Z' },
     );
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await runResolvedPackageVersion(identityMocks.makeCapability(item), '5.9.3', provider);
 
@@ -394,12 +397,12 @@ describe('installUpdateCommand()', () => {
       '}',
       '',
     ].join('\n')));
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
 
@@ -422,12 +425,12 @@ describe('installUpdateCommand()', () => {
       dependencies: { typescript: '^4.0.0' },
       devDependencies: { typescript: '~5.0.0' },
     }, undefined, 2)));
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await installUpdateCommand(
       new PackageItem('typescript', '~5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', true, '~'),
@@ -494,12 +497,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('does nothing when the package is already installing', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', true, undefined, '/workspace/package.json', false, '^'), provider);
 
@@ -510,7 +513,7 @@ describe('installUpdateCommand()', () => {
 
   it('does nothing when the resolved row has no current latest version', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('typescript', '^5.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -523,7 +526,7 @@ describe('installUpdateCommand()', () => {
   it('stops a bulk update before progress when its first revalidation rejects', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
     ]);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(undefined);
@@ -537,7 +540,7 @@ describe('installUpdateCommand()', () => {
   it('stops deferred bulk updates when the second pre-write revalidation rejects', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
     ]);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(identityMocks.makeCapability(provider.getVisibleOutdatedPackages()[0]));
@@ -553,7 +556,7 @@ describe('installUpdateCommand()', () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
     const first = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
     const second = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([first, second]);
+    const provider = makeInstallUpdateProvider([first, second]);
     const firstCapability = identityMocks.makeCapability(first);
     const secondCapability = identityMocks.makeCapability(second);
     vi.mocked(provider.reissuePackageCapability)
@@ -574,12 +577,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('rejects an item without a canonical package file path before any side effect', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await installUpdateCommand(new PackageItem('orphan', '^1.0.0', '1.1.0', 'minor', false, undefined, '', false, '^'), provider);
 
@@ -590,12 +593,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('shows a fallback error message when the update fails with a non-Error value', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce('boom' as never);
 
     await installUpdateCommand(new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'), provider);
@@ -610,12 +613,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('preserves devDependencies when updating through the package manager', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(
       Buffer.from(JSON.stringify({ packageManager: 'pnpm@11.0.8' })),
     );
@@ -635,12 +638,12 @@ describe('installUpdateCommand()', () => {
     ['a malformed non-PackageItem object', { packageName: 'react', latest: '19.0.0' }],
     ['a primitive value', 'react'],
   ] as const)('safely no-ops instead of dereferencing %s', async (_label, malformedItem) => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
 
     await expect(installUpdateCommand(malformedItem as unknown as PackageItem, provider)).resolves.toBeUndefined();
 
@@ -650,12 +653,12 @@ describe('installUpdateCommand()', () => {
   });
 
   it('fails closed for an argument proxy whose prototype lookup throws', async () => {
-    const provider = addCapabilityMethods({
+    const provider = makeProvider({
       invalidateUpdateCache: vi.fn(),
       markPackageUpdated: vi.fn(),
       markPackageUpdating: vi.fn(),
       withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-    } as unknown as PackagesProvider);
+    });
     const hostile = new Proxy({}, {
       getPrototypeOf: () => {
         throw new Error('hostile getter');
@@ -674,7 +677,7 @@ describe('runInstallCommand()', () => {
     vi.resetAllMocks();
     identityMocks.resolveCommandPackageItem.mockImplementation(item => item.packageFilePath === '' ? undefined : identityMocks.makeCapability(item));
     identityMocks.revalidateCommandPackageItem.mockImplementation(capability => capability);
-    resetWorkspaceFolders();
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ fsPath: '/workspace/package.json', path: '/workspace/package.json' }] as vscode.Uri[]);
@@ -706,7 +709,7 @@ describe('runInstallCommand()', () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
       Buffer.from(JSON.stringify({ packageManager: 'npm@11.0.0' })),
     );
-    const provider = makeProvider([]);
+    const provider = makeInstallUpdateProvider([]);
     const identity = {
       packageName: 'react',
       packageFilePath: '/workspace/package.json',
@@ -743,13 +746,10 @@ describe('runInstallCommand()', () => {
   });
 
   it('disambiguates sibling root manifests with the owning workspace name', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [
-        { uri: { fsPath: '/workspace/app' } },
-        { uri: { fsPath: '/workspace/app-mobile' } },
-      ],
-    });
+    setWorkspaceFolders([
+      { uri: { fsPath: '/workspace/app' } },
+      { uri: { fsPath: '/workspace/app-mobile' } },
+    ]);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/workspace/app/package.json', path: '/workspace/app/package.json' },
       { fsPath: '/workspace/app-mobile/package.json', path: '/workspace/app-mobile/package.json' },
@@ -774,13 +774,10 @@ describe('runInstallCommand()', () => {
   });
 
   it('disambiguates two workspace folders sharing the same display name by path suffix', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [
-        { uri: { fsPath: '/repos/team-a/service' }, name: 'service', index: 0 },
-        { uri: { fsPath: '/repos/team-b/service' }, name: 'service', index: 1 },
-      ],
-    });
+    setWorkspaceFolders([
+      { uri: { fsPath: '/repos/team-a/service' }, name: 'service', index: 0 },
+      { uri: { fsPath: '/repos/team-b/service' }, name: 'service', index: 1 },
+    ]);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/repos/team-a/service/package.json', path: '/repos/team-a/service/package.json' },
       { fsPath: '/repos/team-b/service/package.json', path: '/repos/team-b/service/package.json' },
@@ -802,13 +799,10 @@ describe('runInstallCommand()', () => {
   });
 
   it('sorts picker items by workspace index, root first within each workspace', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [
-        { uri: { fsPath: '/repos/first' }, name: 'first', index: 0 },
-        { uri: { fsPath: '/repos/second' }, name: 'second', index: 1 },
-      ],
-    });
+    setWorkspaceFolders([
+      { uri: { fsPath: '/repos/first' }, name: 'first', index: 0 },
+      { uri: { fsPath: '/repos/second' }, name: 'second', index: 1 },
+    ]);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
       { fsPath: '/repos/second/apps/web/package.json', path: '/repos/second/apps/web/package.json' },
       { fsPath: '/repos/first/apps/web/package.json', path: '/repos/first/apps/web/package.json' },
@@ -955,7 +949,7 @@ describe('updateAllVisibleCommand()', () => {
     vi.resetAllMocks();
     identityMocks.resolveCommandPackageItem.mockImplementation(item => item.packageFilePath === '' ? undefined : identityMocks.makeCapability(item));
     identityMocks.revalidateCommandPackageItem.mockImplementation(capability => capability);
-    resetWorkspaceFolders();
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     mockTaskListeners();
     mockDeferredInstall(false);
     vi.mocked(vscode.workspace.findFiles).mockResolvedValue([{ path: '/workspace/package.json' }] as vscode.Uri[]);
@@ -966,7 +960,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('runs one batch task for visible outdated packages in immediate mode', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
     ]);
@@ -986,7 +980,7 @@ describe('updateAllVisibleCommand()', () => {
       dependencies: { react: '^18.0.0' },
       devDependencies: { typescript: '^5.0.0' },
     }, undefined, 2)));
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', true, '^'),
     ]);
@@ -1056,7 +1050,7 @@ describe('updateAllVisibleCommand()', () => {
       }
       return Promise.resolve();
     });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
     ]);
@@ -1106,7 +1100,7 @@ describe('updateAllVisibleCommand()', () => {
       }
       return Promise.resolve();
     });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
     ]);
@@ -1117,7 +1111,7 @@ describe('updateAllVisibleCommand()', () => {
   });
 
   it('does nothing when there are no visible outdated packages', async () => {
-    const provider = makeProvider([]);
+    const provider = makeInstallUpdateProvider([]);
 
     await updateAllVisibleCommand(provider);
 
@@ -1129,7 +1123,7 @@ describe('updateAllVisibleCommand()', () => {
   it('updates after confirmation when bulk confirmation is enabled', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: true });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update All' as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^'),
     ]);
@@ -1147,7 +1141,7 @@ describe('updateAllVisibleCommand()', () => {
   it('does nothing when bulk confirmation is cancelled', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: true });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -1164,7 +1158,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('skips confirmation when bulk confirmation is disabled', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -1178,7 +1172,7 @@ describe('updateAllVisibleCommand()', () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Update Risky Packages' as never);
     const eligibleAt = '2026-06-02T00:00:00.000Z';
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem(
         'react',
         '^18.0.0',
@@ -1210,7 +1204,7 @@ describe('updateAllVisibleCommand()', () => {
   it('cancels a risky bulk update before any task starts', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem(
         'react',
         '^18.0.0',
@@ -1258,7 +1252,7 @@ describe('updateAllVisibleCommand()', () => {
       '^',
       { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
     ));
-    const provider = makeProvider([safeItem]);
+    const provider = makeInstallUpdateProvider([safeItem]);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
 
     await updateAllVisibleCommand(provider);
@@ -1299,7 +1293,7 @@ describe('updateAllVisibleCommand()', () => {
       '^',
       { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
     ));
-    const provider = makeProvider([safeItem]);
+    const provider = makeInstallUpdateProvider([safeItem]);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(safe).mockResolvedValueOnce(safe).mockResolvedValueOnce(risky);
 
     await updateAllVisibleCommand(provider);
@@ -1315,7 +1309,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('splits immediate bulk updates by dependency section', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vitest', '^4.0.0', '4.1.0', 'minor', false, undefined, '/workspace/package.json', true, '^'),
     ]);
@@ -1334,7 +1328,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('rejects an option-shaped manifest key before any batch task launches', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -1349,7 +1343,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('rejects a whole group when it mixes a valid and an option-shaped manifest key', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
@@ -1365,7 +1359,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('runs an earlier valid group before a later group is rejected for an option-shaped key', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('--global', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', true, '^'),
     ]);
@@ -1388,7 +1382,7 @@ describe('updateAllVisibleCommand()', () => {
   it('reports updated and failed roots and reloads when a later root fails', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     mockTaskExitSequence([0, 1]);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
     ]);
@@ -1408,7 +1402,7 @@ describe('updateAllVisibleCommand()', () => {
   it('names every root as not updated when the first root fails', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     mockTaskExitSequence([1]);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
     ]);
@@ -1426,7 +1420,7 @@ describe('updateAllVisibleCommand()', () => {
   it('separates the sections of one root in the partial-failure message', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     mockTaskExitSequence([0, 1]);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vitest', '^4.0.0', '4.1.0', 'minor', false, undefined, '/workspace/package.json', true, '^'),
     ]);
@@ -1444,7 +1438,7 @@ describe('updateAllVisibleCommand()', () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const first = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
     const second = new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^');
-    const provider = makeProvider([first, second]);
+    const provider = makeInstallUpdateProvider([first, second]);
     const secondCapability = identityMocks.makeCapability(second);
     vi.mocked(provider.reissuePackageCapability).mockImplementation(capability => (
       Promise.resolve(capability.item.packageName === 'vite' && taskExecutionCount > 0 ? undefined : capability)
@@ -1466,7 +1460,7 @@ describe('updateAllVisibleCommand()', () => {
   it('still shows the update failure when the reconciling reload fails', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     mockTaskExitSequence([1]);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
     vi.mocked(provider.loadPackages).mockRejectedValue(new Error('reload boom'));
@@ -1489,7 +1483,7 @@ describe('updateAllVisibleCommand()', () => {
       new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
       { releaseAge: heldBack },
     ));
-    const provider = makeProvider([first, second]);
+    const provider = makeInstallUpdateProvider([first, second]);
     vi.mocked(provider.reissuePackageCapability).mockImplementation(capability => (
       Promise.resolve(capability.item.packageName === 'vite' && taskExecutionCount > 0 ? risky : capability)
     ));
@@ -1505,7 +1499,7 @@ describe('updateAllVisibleCommand()', () => {
   it('stops an immediate group when its group revalidation rejects', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([item]);
+    const provider = makeInstallUpdateProvider([item]);
     const capability = identityMocks.makeCapability(item);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(capability).mockResolvedValueOnce(undefined);
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
@@ -1519,7 +1513,7 @@ describe('updateAllVisibleCommand()', () => {
   it('stops an immediate group when its final task-bound revalidation rejects', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([item]);
+    const provider = makeInstallUpdateProvider([item]);
     const capability = identityMocks.makeCapability(item);
     vi.mocked(provider.reissuePackageCapability)
       .mockResolvedValueOnce(capability)
@@ -1537,7 +1531,7 @@ describe('updateAllVisibleCommand()', () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const first = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
     const second = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([first, second]);
+    const provider = makeInstallUpdateProvider([first, second]);
     const firstCapability = identityMocks.makeCapability(first);
     const secondCapability = identityMocks.makeCapability(second);
     vi.mocked(provider.reissuePackageCapability)
@@ -1561,7 +1555,7 @@ describe('updateAllVisibleCommand()', () => {
   it('reports a successful task whose refreshed baseline cannot be verified', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([item]);
+    const provider = makeInstallUpdateProvider([item]);
     const capability = identityMocks.makeCapability(item);
     vi.mocked(provider.reissuePackageCapability)
       .mockResolvedValueOnce(capability)
@@ -1583,7 +1577,7 @@ describe('updateAllVisibleCommand()', () => {
       dependencies: { react: '^18.0.0' },
     })));
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([item]);
+    const provider = makeInstallUpdateProvider([item]);
     const capability = identityMocks.makeCapability(item);
     vi.mocked(provider.reissuePackageCapability).mockResolvedValueOnce(capability).mockResolvedValueOnce(capability);
     vi.mocked(provider.refreshPackageBaselineForCapability).mockResolvedValueOnce(undefined);
@@ -1597,7 +1591,7 @@ describe('updateAllVisibleCommand()', () => {
   it('rejects an installing row during a final bulk identity check', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
-    const provider = makeProvider([item]);
+    const provider = makeInstallUpdateProvider([item]);
     const current = identityMocks.makeCapability(item);
     const installing = identityMocks.makeCapability(new PackageItem(
       'react', '^18.0.0', '19.0.0', 'breaking', true, undefined, '/workspace/package.json', false, '^',
@@ -1612,7 +1606,7 @@ describe('updateAllVisibleCommand()', () => {
   it('returns after a non-zero immediate bulk task without starting later groups', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     mockNextTaskExit(1);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -1631,7 +1625,7 @@ describe('updateAllVisibleCommand()', () => {
     vi.mocked(vscode.tasks.executeTask)
       .mockResolvedValueOnce(firstExecution)
       .mockResolvedValueOnce(secondExecution);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('vitest', '^4.0.0', '4.1.0', 'minor', false, undefined, '/workspace/package.json', true, '^'),
     ]);
@@ -1659,7 +1653,7 @@ describe('updateAllVisibleCommand()', () => {
   it('shows a fallback error message when a bulk update fails with a non-Error value', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     vi.mocked(vscode.tasks.executeTask).mockRejectedValueOnce('bulk boom' as never);
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
     ]);
 
@@ -1670,7 +1664,7 @@ describe('updateAllVisibleCommand()', () => {
 
   it('rejects a bulk update when any visible row lacks a canonical package file path', async () => {
     mockNestroConfiguration({ deferInstallAfterUpdate: true, confirmBulkUpdate: false });
-    const provider = makeProvider([
+    const provider = makeInstallUpdateProvider([
       new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
       new PackageItem('orphan', '^1.0.0', '1.1.0', 'minor', false, undefined, '', false, '^'),
     ]);
@@ -1694,13 +1688,6 @@ function mockTaskListeners(): void {
   vi.mocked(vscode.tasks.onDidEndTask).mockImplementation((listener) => {
     taskEndListener = listener;
     return { dispose: vi.fn() } as vscode.Disposable;
-  });
-}
-
-function resetWorkspaceFolders(): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: [{ uri: { fsPath: '/workspace' } }],
   });
 }
 
@@ -1735,14 +1722,6 @@ function mockDeferredInstall(enabled: boolean): void {
   mockNestroConfiguration({ deferInstallAfterUpdate: enabled });
 }
 
-function mockNestroConfiguration(values: Record<string, unknown>): void {
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: vi.fn((key: string, defaultValue: unknown) => (
-      Object.hasOwn(values, key) ? values[key] : defaultValue
-    )),
-  } as unknown as vscode.WorkspaceConfiguration);
-}
-
 /**
  * Stub `vscode.workspace.fs.readFile` by path rather than by call order. Needed
  * whenever a test spans more than one manifest: the coordinator resolves a
@@ -1757,28 +1736,8 @@ function mockReadFileByPath(contentsByPath: Record<string, string>): void {
   });
 }
 
-function makeProvider(packages: PackageItem[]): PackagesProvider {
-  return addCapabilityMethods({
-    getVisibleOutdatedPackages: vi.fn(() => packages),
-    invalidateUpdateCache: vi.fn(),
-    loadPackages: vi.fn(),
-    markPackageUpdated: vi.fn(),
-    markPackageUpdating: vi.fn(),
-    withWriteSuppressed: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
-  } as unknown as PackagesProvider);
-}
-
-function addCapabilityMethods(provider: PackagesProvider): PackagesProvider {
-  provider.refreshPackageBaselineForCapability = vi.fn(capability => Promise.resolve(capability));
-  provider.reissuePackageCapability = vi.fn(capability => Promise.resolve(capability));
-  provider.markPackageUpdatedForCapability = vi.fn((capability, version) => {
-    provider.markPackageUpdated(capability.identity, version);
-  });
-  provider.markPackageUpdatingForCapability = vi.fn((capability, installing) => {
-    provider.markPackageUpdating(capability.identity, installing);
-    return capability;
-  });
-  return provider;
+function makeInstallUpdateProvider(packages: PackageItem[]) {
+  return makeProvider({ getVisibleOutdatedPackages: vi.fn(() => packages) });
 }
 
 function makeRealProvider(packages: PackageItem[]): PackagesProvider {

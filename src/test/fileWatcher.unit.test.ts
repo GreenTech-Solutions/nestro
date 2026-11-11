@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeContext } from './fixtures';
+import { makeProvider } from './fixtures/providerStub';
 import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from '../config';
 import { registerPackageJsonWatcher } from '../extension';
 import { FilterManager, PackagesProvider } from '../providers';
@@ -27,7 +29,7 @@ describe('registerPackageJsonWatcher()', () => {
     const provider = makeProvider();
     const uri = vscode.Uri.file('/workspace/package.json');
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     getWatcherHandler('onDidChange')(uri);
     vi.advanceTimersByTime(PACKAGE_JSON_WATCHER_DEBOUNCE_MS - 1);
     expect(provider.loadPackages).not.toHaveBeenCalled();
@@ -41,7 +43,7 @@ describe('registerPackageJsonWatcher()', () => {
     const provider = makeProvider();
     const uri = vscode.Uri.file('/workspace/package.json');
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     getWatcherHandler('onDidChange')(uri);
     vi.advanceTimersByTime(100);
     getWatcherHandler('onDidCreate')(uri);
@@ -59,7 +61,7 @@ describe('registerPackageJsonWatcher()', () => {
     const invalidateUpdateCache = vi.spyOn(provider, 'invalidateUpdateCache');
     const uri = vscode.Uri.file(filePath);
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     await provider.withWriteSuppressed(writeManifest(files, filePath, 'provider write'));
     getWatcherHandler('onDidChange')(uri);
     await vi.advanceTimersByTimeAsync(PACKAGE_JSON_WATCHER_DEBOUNCE_MS);
@@ -74,7 +76,7 @@ describe('registerPackageJsonWatcher()', () => {
     const invalidateUpdateCache = vi.spyOn(provider, 'invalidateUpdateCache');
     const uri = vscode.Uri.file(filePath);
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     await provider.withWriteSuppressed(writeManifest(files, filePath, 'provider write'));
     files.set(filePath, 'external edit');
     getWatcherHandler('onDidChange')(uri);
@@ -89,7 +91,7 @@ describe('registerPackageJsonWatcher()', () => {
     const { provider, files } = await makeDigestProvider([filePath]);
     const uri = vscode.Uri.file(filePath);
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     await provider.withWriteSuppressed(() => {
       files.delete(filePath);
       return Promise.resolve();
@@ -105,7 +107,7 @@ describe('registerPackageJsonWatcher()', () => {
     const { provider, files } = await makeDigestProvider([filePath]);
     const uri = vscode.Uri.file(filePath);
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     await provider.withWriteSuppressed(writeManifest(files, filePath, 'provider write'));
     files.delete(filePath);
     getWatcherHandler('onDidChange')(uri);
@@ -119,7 +121,7 @@ describe('registerPackageJsonWatcher()', () => {
     const packageFileB = '/workspace/b/package.json';
     const { provider, files } = await makeDigestProvider([packageFileA, packageFileB]);
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     files.set(packageFileB, 'external edit');
     getWatcherHandler('onDidChange')(vscode.Uri.file(packageFileB));
     await provider.withWriteSuppressed(writeManifest(files, packageFileA, 'provider write'));
@@ -146,7 +148,7 @@ describe('registerPackageJsonWatcher()', () => {
     const provider = makeProvider();
     const uri = vscode.Uri.file('/workspace/package.json');
 
-    registerPackageJsonWatcher(makeContext(), provider);
+    registerPackageJsonWatcher(trackContext(), provider);
     getWatcherHandler('onDidDelete')(uri);
     vi.advanceTimersByTime(PACKAGE_JSON_WATCHER_DEBOUNCE_MS - 1);
     expect(provider.loadPackages).not.toHaveBeenCalled();
@@ -160,7 +162,7 @@ describe('registerPackageJsonWatcher()', () => {
   it('recreates watchers when refresh is called', () => {
     const provider = makeProvider();
 
-    const watcherController = registerPackageJsonWatcher(makeContext(), provider);
+    const watcherController = registerPackageJsonWatcher(trackContext(), provider);
     expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(1);
 
     watcherController.refresh();
@@ -170,7 +172,7 @@ describe('registerPackageJsonWatcher()', () => {
 
   it('disposes watchers and cancels a pending debounce on dispose', async () => {
     const provider = makeProvider();
-    const watcherController = registerPackageJsonWatcher(makeContext(), provider);
+    const watcherController = registerPackageJsonWatcher(trackContext(), provider);
     const watcher = vi.mocked(vscode.workspace.createFileSystemWatcher).mock.results[0].value;
     getWatcherHandler('onDidChange')(vscode.Uri.file('/workspace/package.json'));
 
@@ -181,20 +183,6 @@ describe('registerPackageJsonWatcher()', () => {
     expect(provider.loadPackages).not.toHaveBeenCalled();
   });
 });
-
-interface WatcherProvider {
-  invalidateUpdateCache: ReturnType<typeof vi.fn<() => void>>;
-  loadPackages: ReturnType<typeof vi.fn<() => Promise<void>>>;
-  isOwnManifestWrite: ReturnType<typeof vi.fn<(uri: vscode.Uri) => Promise<boolean>>>;
-}
-
-function makeProvider(): WatcherProvider {
-  return {
-    invalidateUpdateCache: vi.fn(),
-    loadPackages: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    isOwnManifestWrite: vi.fn<(uri: vscode.Uri) => Promise<boolean>>().mockResolvedValue(false),
-  };
-}
 
 function writeManifest(files: Map<string, string>, filePath: string, contents: string): () => Promise<void> {
   return () => {
@@ -235,8 +223,8 @@ async function makeDigestProvider(packageFilePaths: readonly string[]): Promise<
   return { provider, files };
 }
 
-function makeContext(): vscode.ExtensionContext {
-  const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+function trackContext(): vscode.ExtensionContext {
+  const context = makeContext();
   contexts.push(context);
   return context;
 }

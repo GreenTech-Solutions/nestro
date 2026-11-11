@@ -1,22 +1,17 @@
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PackageProviderState } from '../providers/packageProviderState';
 
 const previousWorkspaceFolders = vscode.workspace.workspaceFolders;
 
 afterEach(() => {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: previousWorkspaceFolders,
-  });
+  setWorkspaceFolders(previousWorkspaceFolders);
 });
 
 describe('PackageProviderState', () => {
   it('creates package items without owner labels when workspace folders are absent', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [],
-    });
+    setWorkspaceFolders([]);
     const state = new PackageProviderState();
 
     const emptyPathItem = state.createPackageItem({

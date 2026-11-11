@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
 import { switchDepTypeCommand } from '../commands/switchDepType';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 const malformedCommandCases: readonly [string, string, unknown, string][] = [
@@ -76,7 +77,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
     ['removed', { dependencies: {} }, '^1.2.3', '<missing>'],
   ] as const)('rejects a source %s after final revalidation without writing or reloading', async (_label, nextManifest, expectedSourceSpec, actualSourceSpec) => {
     let manifest: Manifest = { dependencies: { pkg: '^1.2.3' } };
-    const provider = makeProvider(() => {
+    const provider = createSwitchProvider(() => {
       manifest = nextManifest;
     });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
@@ -113,7 +114,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
       dependencies: { pkg: '^1.2.3' },
       devDependencies: { pkg: targetSpec },
     };
-    const provider = makeProvider(() => {});
+    const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
     await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
@@ -144,7 +145,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
           dependencies: { pkg: '^1.2.3' },
           devDependencies: { pkg: malformedSpec },
         };
-    const provider = makeProvider(() => {});
+    const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
     await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
@@ -180,14 +181,12 @@ interface Manifest {
   devDependencies?: Record<string, unknown>;
 }
 
-function makeProvider(onBeforeWrite: () => void): PackagesProvider {
-  const provider = {
+function createSwitchProvider(onBeforeWrite: () => void) {
+  return makeProvider({
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => {
       onBeforeWrite();
       return await fn();
     }),
-    loadPackages: vi.fn(),
     markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
-  } as unknown as PackagesProvider;
-  return provider;
+  });
 }

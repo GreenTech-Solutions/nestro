@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
+import { mockNestroConfiguration } from './fixtures/config';
+import { setWorkspaceFolders } from './fixtures/workspaceFolders';
 import {
   FilterManager,
   GroupItem,
@@ -136,6 +138,7 @@ vi.mock('../clients', () => ({
 }));
 
 vi.mock('../utils', async () => {
+  const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
   const { parseDependencySpec } = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   const releaseAge = await vi.importActual<typeof import('../utils/releaseAge')>('../utils/releaseAge');
@@ -189,7 +192,7 @@ vi.mock('../utils', async () => {
     },
     parseDependencySpec,
     readAllWorkspaceDependencies: vi.fn(),
-    runWithYarnFamilyMemo: vi.fn((operation: () => Promise<unknown>) => operation()),
+    runWithYarnFamilyMemo: vi.fn(runWithYarnFamilyMemoPassthrough),
     resolveYarnFamily: vi.fn(),
     resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (
       Promise.resolve(packageFilePath ?? 'https://registry.npmjs.org/')
@@ -3712,10 +3715,7 @@ describe('PackagesProvider', () => {
       await writeFile(secondManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
       // Neither folder declares a `name`, so both derive the same "app" folder name and
       // can only be told apart by the same suffix disambiguation the tree/picker use.
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: firstManifest },
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: secondManifest },
@@ -3744,7 +3744,7 @@ describe('PackagesProvider', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -3794,10 +3794,7 @@ describe('PackagesProvider', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       // First load: a single folder named "app" — no collision, no disambiguation needed.
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: firstRoot } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: firstRoot } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: firstManifest },
       ]);
@@ -3811,10 +3808,7 @@ describe('PackagesProvider', () => {
 
       // Second load on the same provider: a same-named sibling folder now collides,
       // so the label cached for the single-folder load must not survive unchanged.
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: firstManifest },
         { name: 'react', current: '1.0.0', dev: false, versionPrefix: '', packageFilePath: secondManifest },
@@ -3838,18 +3832,10 @@ describe('PackagesProvider', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
     }
   });
 });
-
-function mockNestroConfiguration(values: Record<string, unknown>): void {
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: vi.fn((key: string, defaultValue: unknown) => (
-      Object.hasOwn(values, key) ? values[key] : defaultValue
-    )),
-  } as unknown as vscode.WorkspaceConfiguration);
-}
 
 function getPackageItems(provider: PackagesProvider): PackageItem[] {
   return provider.getChildren()
@@ -3880,7 +3866,7 @@ describe('package identity boundary', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
         name: 'react',
         current: '^1.0.0',
@@ -3907,7 +3893,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -3919,7 +3905,7 @@ describe('package identity boundary', () => {
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
       const beforeRewrite = await stat(manifest);
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
         name: 'react',
         current: '^1.0.0',
@@ -3948,7 +3934,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -3959,7 +3945,7 @@ describe('package identity boundary', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([{
         name: 'react',
         current: '^1.0.0',
@@ -3995,7 +3981,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4006,7 +3992,7 @@ describe('package identity boundary', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       const entry = {
         name: 'react',
         current: '^1.0.0',
@@ -4069,7 +4055,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4083,7 +4069,7 @@ describe('package identity boundary', () => {
         dependencies: { react: '^1.0.0' },
         devDependencies: { react: '~1.1.0' },
       }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: manifest },
         { name: 'react', current: '~1.1.0', dev: true, versionPrefix: '~', packageFilePath: manifest },
@@ -4101,7 +4087,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4112,7 +4098,7 @@ describe('package identity boundary', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([{
         name: 'react',
         current: '^1.0.0',
@@ -4134,7 +4120,7 @@ describe('package identity boundary', () => {
       secondProvider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4145,7 +4131,7 @@ describe('package identity boundary', () => {
     const previousFolders = vscode.workspace.workspaceFolders;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([{
         name: 'react',
         current: '^1.0.0',
@@ -4208,7 +4194,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4225,10 +4211,7 @@ describe('package identity boundary', () => {
       await mkdir(secondRoot);
       await writeFile(firstManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
       await writeFile(secondManifest, JSON.stringify({ dependencies: { react: '~1.1.0' } }));
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: firstRoot } }, { uri: { fsPath: secondRoot } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: firstManifest },
         { name: 'react', current: '~1.1.0', dev: false, versionPrefix: '~', packageFilePath: secondManifest },
@@ -4246,7 +4229,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4262,7 +4245,7 @@ describe('package identity boundary', () => {
     let createdDistinctCaseSymlink = false;
     try {
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       const result = await resolveCanonicalPackageLocation(caseAlias);
       const aliasExists = await stat(caseAlias).then(() => true).catch(() => false);
       if (aliasExists) {
@@ -4298,7 +4281,7 @@ describe('package identity boundary', () => {
       try {
         await symlink(root, symlinkWorkspaceRoot);
         createdWorkspaceSymlink = true;
-        setWorkspaceFolders(symlinkWorkspaceRoot);
+        setWorkspaceFolders([{ uri: { fsPath: symlinkWorkspaceRoot } }]);
         const symlinkAliasResult = await resolveCanonicalPackageLocation(symlinkWorkspaceAlias);
         const symlinkAliasExists = await stat(symlinkWorkspaceAlias).then(() => true).catch(() => false);
         if (symlinkAliasExists) {
@@ -4319,7 +4302,7 @@ describe('package identity boundary', () => {
       }
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
       if (createdDistinctCaseSymlink) {
         await rm(distinctCaseSymlinkRoot, { recursive: true, force: true });
@@ -4343,17 +4326,14 @@ describe('package identity boundary', () => {
       await writeFile(otherManifest, JSON.stringify({ dependencies: { react: '^2.0.0' } }));
       await symlink(targetRoot, aliasRoot);
 
-      setWorkspaceFolders(workspaceRoot);
+      setWorkspaceFolders([{ uri: { fsPath: workspaceRoot } }]);
       const internal = await resolveCanonicalPackageLocation(internalManifest);
       expect(internal.ok).toBe(true);
       if (internal.ok) {
         expect(internal.value.packageFilePath).toBe(await realpath(join(targetRoot, 'package.json')));
       }
 
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: [{ uri: { fsPath: workspaceRoot } }, { uri: { fsPath: otherRoot } }],
-      });
+      setWorkspaceFolders([{ uri: { fsPath: workspaceRoot } }, { uri: { fsPath: otherRoot } }]);
       const foreignPath = join(workspaceRoot, 'foreign', 'package.json');
       await mkdir(join(workspaceRoot, 'foreign'));
       await symlink(otherManifest, foreignPath);
@@ -4361,7 +4341,7 @@ describe('package identity boundary', () => {
       expect(foreign).toEqual({ ok: false, reason: 'cross-workspace' });
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4377,7 +4357,7 @@ describe('package identity boundary', () => {
       await mkdir(targetRoot);
       await writeFile(targetManifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
       await symlink(targetRoot, aliasRoot);
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: targetManifest },
         { name: 'react', current: '^1.0.0', dev: false, versionPrefix: '^', packageFilePath: aliasManifest },
@@ -4394,7 +4374,7 @@ describe('package identity boundary', () => {
       provider.dispose();
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -4414,12 +4394,12 @@ describe('package identity boundary', () => {
         await mkdir(join(root, 'link'));
         await symlink(outsideManifest, manifest);
       }
-      setWorkspaceFolders(root);
+      setWorkspaceFolders([{ uri: { fsPath: root } }]);
       const result = await resolveCanonicalPackageLocation(manifest);
       expect(result).toEqual({ ok: false, reason });
     }
     finally {
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
       await rm(root, { recursive: true, force: true });
       await rm(outside, { recursive: true, force: true });
     }
@@ -4439,7 +4419,7 @@ describe('update fingerprint', () => {
     manifest = join(root, 'package.json');
     await writeFile(manifest, JSON.stringify({ dependencies: { react: '^1.0.0' } }));
     previousFolders = vscode.workspace.workspaceFolders;
-    setWorkspaceFolders(root);
+    setWorkspaceFolders([{ uri: { fsPath: root } }]);
     vi.mocked(readAllWorkspaceDependencies).mockResolvedValue([{
       name: 'react',
       current: '^1.0.0',
@@ -4453,7 +4433,7 @@ describe('update fingerprint', () => {
   });
 
   afterEach(async () => {
-    restoreWorkspaceFolders(previousFolders);
+    setWorkspaceFolders(previousFolders);
     await rm(root, { recursive: true, force: true });
   });
 
@@ -4692,20 +4672,6 @@ describe('update fingerprint', () => {
     expect(rows.every(item => item.latest === undefined)).toBe(true);
   });
 });
-
-function setWorkspaceFolders(root: string): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: [{ uri: { fsPath: root } }],
-  });
-}
-
-function restoreWorkspaceFolders(folders: typeof vscode.workspace.workspaceFolders): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: folders,
-  });
-}
 
 describe('PackageDetailItem', () => {
   it('leaves the icon unset when none is provided', () => {

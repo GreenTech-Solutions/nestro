@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { ClientManager, PackageManagerClient } from '../clients';
 import { AUDIT_PROCESS_MAX_BUFFER_BYTES, AUDIT_PROCESS_TIMEOUT_MS } from '../config';
 
@@ -363,10 +365,7 @@ describe('runAudit()', () => {
 describe('ClientManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => {
       return vscode.workspace.workspaceFolders?.find(candidate => uri.fsPath.startsWith(candidate.uri.fsPath));
     });
@@ -628,17 +627,6 @@ describe('ClientManager', () => {
     await expect(operation(new ClientManager())).rejects.toThrow('workspace lookup failed');
   });
 });
-
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = files[uri.fsPath];
-    if (value === undefined) {
-      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
-    }
-
-    return Promise.resolve(Buffer.from(value));
-  });
-}
 
 function quoted(value: string): vscode.ShellQuotedString {
   return { value, quoting: vscode.ShellQuoting.Strong };

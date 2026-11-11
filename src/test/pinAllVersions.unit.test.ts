@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
 import { pinAllVersionsCommand } from '../commands/pinAllVersions';
-import { PackagesProvider } from '../providers';
 import { pinAllWorkspaceDependencyVersions, showError } from '../utils';
 
 vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), realpath: (value: string) => Promise.resolve(value) }));
@@ -150,13 +150,3 @@ describe('pinAllVersionsCommand()', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Pinned 2 package versions.');
   });
 });
-
-function makeProvider(): PackagesProvider {
-  return {
-    loadPackages: vi.fn(),
-    invalidateUpdateCache: vi.fn(),
-    getPackageIdentitiesForFile: vi.fn(() => []),
-    markPackageUpdating: vi.fn(),
-    withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
-  } as unknown as PackagesProvider;
-}

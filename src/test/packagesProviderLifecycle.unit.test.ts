@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { createProvider } from './fixtures/providerStub';
 import {
-  FilterManager,
   PackageItem,
   PackagesProvider,
   resolvePackageFileLabels,
@@ -81,7 +82,7 @@ interface ProviderHarness {
   readonly auditRun: AuditOrchestrationServiceContract['run'];
 }
 
-function createProvider(load: PackageLoadingServiceContract['load']): ProviderHarness {
+function createProviderHarness(load: PackageLoadingServiceContract['load']): ProviderHarness {
   const readPackageEntries = vi.fn<PackageLoadingServiceContract['readPackageEntries']>(() => Promise.resolve([]));
   const discoverPackageFilePaths = vi.fn<PackageLoadingServiceContract['discoverPackageFilePaths']>(() => Promise.resolve([]));
   const packageLoadingService: PackageLoadingServiceContract = {
@@ -96,12 +97,11 @@ function createProvider(load: PackageLoadingServiceContract['load']): ProviderHa
     computeFingerprint: () => Promise.resolve('fingerprint'),
   };
   const auditRun = vi.fn<AuditOrchestrationServiceContract['run']>(() => Promise.resolve(auditResult));
-  const provider = new PackagesProvider(
-    new FilterManager('all'),
+  const provider = createProvider({
     packageLoadingService,
-    updateService,
-    { run: auditRun },
-  );
+    updateOrchestrationService: updateService,
+    auditOrchestrationService: { run: auditRun },
+  });
   return {
     provider,
     load,
@@ -140,25 +140,11 @@ function mockCancelledProgress(): void {
   ));
 }
 
-function setWorkspaceFolder(name: string): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: [{ name, uri: { fsPath: '/workspace' } }],
-  });
-}
-
-function restoreWorkspaceFolders(folders: typeof vscode.workspace.workspaceFolders): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: folders,
-  });
-}
-
 describe('PackagesProvider operation lifecycle', () => {
   it('waits for the current load before checking or auditing packages', async () => {
     const loadGate = deferred<PackageLoadingSnapshot>();
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => loadGate.promise);
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     const loading = harness.provider.loadPackages();
     const checking = harness.provider.checkUpdates();
     const auditing = harness.provider.runAudit();
@@ -182,7 +168,7 @@ describe('PackagesProvider operation lifecycle', () => {
   it('discards checks and audits cancelled while waiting for the load', async () => {
     const loadGate = deferred<PackageLoadingSnapshot>();
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => loadGate.promise);
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     const checking = harness.provider.checkUpdates();
     const auditing = harness.provider.runAudit();
 
@@ -198,7 +184,7 @@ describe('PackagesProvider operation lifecycle', () => {
 
   it('does not start an audit when its progress token was cancelled before start', async () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
     mockCancelledProgress();
 
@@ -209,7 +195,7 @@ describe('PackagesProvider operation lifecycle', () => {
 
   it('does not start an update check when its progress token was cancelled before start', async () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
     mockCancelledProgress();
 
@@ -220,7 +206,7 @@ describe('PackagesProvider operation lifecycle', () => {
 
   it('resets audit state if VS Code cannot start progress', async () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
     vi.mocked(vscode.window.withProgress).mockRejectedValueOnce(new Error('progress failed'));
 
@@ -232,7 +218,7 @@ describe('PackagesProvider operation lifecycle', () => {
 
   it('does nothing when cancelling with no audit running', async () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
 
     harness.provider.cancelAudit();
@@ -244,7 +230,7 @@ describe('PackagesProvider operation lifecycle', () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>()
       .mockResolvedValueOnce(createSnapshot())
       .mockRejectedValueOnce(new Error('reload failed'));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
 
     expect(getPackageNames(harness.provider)).toEqual(['react']);
@@ -268,14 +254,14 @@ describe('PackagesProvider operation lifecycle', () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>()
       .mockResolvedValueOnce(createSnapshot())
       .mockReturnValueOnce(nextLoad.promise);
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     try {
-      setWorkspaceFolder('old-workspace');
+      setWorkspaceFolders([{ name: 'old-workspace', uri: { fsPath: '/workspace' } }]);
       vi.mocked(resolvePackageFileLabels).mockClear();
       await harness.provider.loadPackages();
       expect(resolvePackageFileLabels).toHaveBeenCalledOnce();
 
-      setWorkspaceFolder('new-workspace');
+      setWorkspaceFolders([{ name: 'new-workspace', uri: { fsPath: '/workspace' } }]);
       const reloading = harness.provider.loadPackages();
       harness.provider.markPackageUpdating(
         {
@@ -293,13 +279,13 @@ describe('PackagesProvider operation lifecycle', () => {
     }
     finally {
       harness.provider.dispose();
-      restoreWorkspaceFolders(previousFolders);
+      setWorkspaceFolders(previousFolders);
     }
   });
 
   it('does not emit tree changes after disposal', async () => {
     const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
-    const harness = createProvider(load);
+    const harness = createProviderHarness(load);
     await harness.provider.loadPackages();
     const listener = vi.fn();
     harness.provider.onDidChangeTreeData(listener);

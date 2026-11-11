@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
 import { installUpdateCommand, updateAllVisibleCommand } from '../commands/installUpdate';
 import { runInstallCommand } from '../commands/runInstall';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PackageItem } from '../providers';
 import {
   DependencyTypeConflictError,
   logger,
@@ -751,25 +752,6 @@ describe('cancelled update commands', () => {
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 });
-
-function makeProvider(): PackagesProvider {
-  const provider = {
-    withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
-    loadPackages: vi.fn(),
-    invalidateUpdateCache: vi.fn(),
-    markPackageUpdating: vi.fn(),
-  } as unknown as PackagesProvider;
-  provider.refreshPackageBaselineForCapability = vi.fn(capability => Promise.resolve(capability));
-  provider.markPackageUpdated = vi.fn();
-  provider.markPackageUpdatedForCapability = vi.fn((capability, version) => {
-    provider.markPackageUpdated(capability.identity, version);
-  });
-  provider.markPackageUpdatingForCapability = vi.fn((capability, installing) => {
-    provider.markPackageUpdating(capability.identity, installing);
-    return capability;
-  });
-  return provider;
-}
 
 function mockTaskListeners(): void {
   taskProcessEndListener = undefined;

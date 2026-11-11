@@ -1,37 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { resolveAuditProjects, resolveMutationCoordinatorKey } from '../clients';
+import { setWorkspaceFolders } from './fixtures';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 
 const fsMock = vi.hoisted(() => ({ realpath: vi.fn((value: string) => Promise.resolve(value)) }));
 
 vi.mock('node:fs/promises', () => fsMock);
 
-function mockFileSystem(contentOf: (fsPath: string) => string | undefined): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = contentOf(uri.fsPath);
-    if (value === undefined) {
-      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
-    }
-    return Promise.resolve(Buffer.from(value));
-  });
-  vi.mocked(vscode.workspace.fs.stat).mockImplementation((uri: vscode.Uri) => {
-    const value = contentOf(uri.fsPath);
-    if (value === undefined) {
-      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
-    }
-    return Promise.resolve({ type: vscode.FileType.File, ctime: 0, mtime: 0, size: value.length });
-  });
-}
-
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  mockFileSystem(fsPath => files[fsPath]);
-}
-
-function setWorkspaceFolders(paths: readonly string[]): void {
-  Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-    configurable: true,
-    value: paths.map(fsPath => ({ uri: { fsPath } })),
-  });
+function configureWorkspaceFolders(paths: readonly string[]): void {
+  setWorkspaceFolders(paths.map(fsPath => ({ uri: { fsPath } })));
   vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) =>
     vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(folder.uri.fsPath)));
 }
@@ -40,7 +18,7 @@ describe('resolveAuditProjects()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.realpath.mockImplementation((value: string) => Promise.resolve(value));
-    setWorkspaceFolders(['/workspace']);
+    configureWorkspaceFolders(['/workspace']);
     vi.mocked(vscode.workspace.fs.readFile).mockRejectedValue(new Error('not mocked'));
     vi.mocked(vscode.workspace.fs.stat).mockRejectedValue(new Error('not mocked'));
   });
@@ -230,7 +208,7 @@ describe('resolveAuditProjects()', () => {
   });
 
   it('rejects a cross-workspace collision instead of silently merging two workspace folders', async () => {
-    setWorkspaceFolders(['/workspace-a', '/workspace-b']);
+    configureWorkspaceFolders(['/workspace-a', '/workspace-b']);
     mockWorkspaceFiles({
       '/workspace-a/package.json': JSON.stringify({ packageManager: 'pnpm@9.0.0' }),
       '/workspace-b/package.json': JSON.stringify({ packageManager: 'pnpm@9.0.0' }),
@@ -380,7 +358,7 @@ describe('resolveAuditProjects()', () => {
   // N7: the winner of a cross-workspace collision must not depend on the order
   // findFiles() happens to return manifests in, since that order is not guaranteed.
   it('resolves a cross-workspace collision deterministically regardless of input order', async () => {
-    setWorkspaceFolders(['/workspace-a', '/workspace-b']);
+    configureWorkspaceFolders(['/workspace-a', '/workspace-b']);
     mockWorkspaceFiles({
       '/workspace-a/package.json': JSON.stringify({ packageManager: 'pnpm@9.0.0' }),
       '/workspace-b/package.json': JSON.stringify({ packageManager: 'pnpm@9.0.0' }),
@@ -402,7 +380,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.realpath.mockImplementation((value: string) => Promise.resolve(value));
-    setWorkspaceFolders(['/workspace']);
+    configureWorkspaceFolders(['/workspace']);
     vi.mocked(vscode.workspace.fs.readFile).mockRejectedValue(new Error('not mocked'));
     vi.mocked(vscode.workspace.fs.stat).mockRejectedValue(new Error('not mocked'));
   });
@@ -449,7 +427,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   });
 
   it('falls back to the manifest directory when no workspace folder owns it', async () => {
-    setWorkspaceFolders([]);
+    configureWorkspaceFolders([]);
     mockWorkspaceFiles({ '/elsewhere/package.json': '{}' });
 
     const key = await resolveMutationCoordinatorKey('/elsewhere/package.json');
@@ -458,7 +436,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   });
 
   it('keys by the manifest directory when no workspace folder is open', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, value: undefined });
+    setWorkspaceFolders(undefined);
 
     await expect(resolveMutationCoordinatorKey('/elsewhere/pkg/package.json')).resolves.toBe('/elsewhere/pkg');
   });
@@ -475,7 +453,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   });
 
   it('picks the deepest workspace folder when a manifest is canonically contained by more than one', async () => {
-    setWorkspaceFolders(['/workspace', '/workspace/nested']);
+    configureWorkspaceFolders(['/workspace', '/workspace/nested']);
     mockWorkspaceFiles({
       '/workspace/pnpm-lock.yaml': '',
       '/workspace/nested/pkg/package.json': '{}',
@@ -489,7 +467,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   });
 
   it('ignores a workspace folder whose own path cannot be canonicalized and still matches on the rest', async () => {
-    setWorkspaceFolders(['/workspace', '/broken-folder']);
+    configureWorkspaceFolders(['/workspace', '/broken-folder']);
     mockWorkspaceFiles({ '/workspace/pkg/package.json': '{}' });
     fsMock.realpath.mockImplementation((value: string) => (
       value === '/broken-folder' ? Promise.reject(new Error('ENOENT')) : Promise.resolve(value)
@@ -524,7 +502,7 @@ describe('resolveMutationCoordinatorKey()', () => {
 
   it('canonicalizes the workspace folders once for a batch of concurrent keys', async () => {
     const folders = ['/folder-a', '/folder-b', '/folder-c'];
-    setWorkspaceFolders(folders);
+    configureWorkspaceFolders(folders);
     const manifests = Array.from({ length: 12 }, (_, index) => `${folders[index % folders.length]}/pkg-${index}/package.json`);
 
     const keys = await Promise.all(manifests.map(resolveMutationCoordinatorKey));
@@ -536,7 +514,7 @@ describe('resolveMutationCoordinatorKey()', () => {
   });
 
   it('canonicalizes the workspace folders again for each separate operation', async () => {
-    setWorkspaceFolders(['/folder-a']);
+    configureWorkspaceFolders(['/folder-a']);
 
     await resolveMutationCoordinatorKey('/folder-a/pkg/package.json');
     await resolveMutationCoordinatorKey('/folder-a/pkg/package.json');
@@ -546,7 +524,7 @@ describe('resolveMutationCoordinatorKey()', () => {
 
   it('bounds how many workspace folders are canonicalized at the same time', async () => {
     const folders = Array.from({ length: 20 }, (_, index) => `/folder-${String(index).padStart(2, '0')}`);
-    setWorkspaceFolders(folders);
+    configureWorkspaceFolders(folders);
     let inFlight = 0;
     let maxInFlight = 0;
     fsMock.realpath.mockImplementation(async (value: string) => {
@@ -580,13 +558,17 @@ describe('resolveMutationCoordinatorKey()', () => {
         : value;
 
     fsMock.realpath.mockImplementation((value: string) => Promise.resolve(toCanonical(value)));
-    setWorkspaceFolders([lexicalRoot]);
+    configureWorkspaceFolders([lexicalRoot]);
     const canonicalFiles: Record<string, string> = {
       [`${canonicalRoot}/package.json`]: '{}',
       [`${canonicalRoot}/pnpm-lock.yaml`]: '',
       [`${canonicalRoot}/packages/api/package.json`]: '{}',
     };
-    mockFileSystem(fsPath => canonicalFiles[toCanonical(fsPath)]);
+    const workspaceFiles = { ...canonicalFiles };
+    for (const [fsPath, contents] of Object.entries(canonicalFiles)) {
+      workspaceFiles[`${lexicalRoot}${fsPath.slice(canonicalRoot.length)}`] = contents;
+    }
+    mockWorkspaceFiles(workspaceFiles);
 
     const canonicalKey = await resolveMutationCoordinatorKey(`${canonicalRoot}/packages/api/package.json`);
     const rawKey = await resolveMutationCoordinatorKey(`${lexicalRoot}/packages/api/package.json`);

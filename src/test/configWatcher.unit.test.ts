@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeContext } from './fixtures';
+import { mockNestroConfiguration } from './fixtures/config';
+import { makeProvider } from './fixtures/providerStub';
 import { registerConfigurationWatcher, registerWorkspaceFoldersWatcher } from '../extension';
 import { FilterManager, GroupItem, PackageItem, PackagesProvider } from '../providers';
 import {
@@ -206,29 +209,8 @@ describe('PackagesProvider.resetUpdateData()', () => {
   });
 });
 
-function makeContext(): vscode.ExtensionContext {
-  return { subscriptions: [] } as unknown as vscode.ExtensionContext;
-}
-
-function makeProvider(): Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'resetUpdateData' | 'setFilter'> {
-  return {
-    setFilter: vi.fn(),
-    resetUpdateData: vi.fn(),
-    invalidateUpdateCache: vi.fn(),
-    loadPackages: vi.fn(),
-  };
-}
-
 function makeConfigEvent(changedKeys: string[]): vscode.ConfigurationChangeEvent {
   return {
     affectsConfiguration: vi.fn((key: string) => changedKeys.includes(key)),
   } as unknown as vscode.ConfigurationChangeEvent;
-}
-
-function mockNestroConfiguration(values: Record<string, unknown>): void {
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: vi.fn((key: string, defaultValue: unknown) => (
-      Object.hasOwn(values, key) ? values[key] : defaultValue
-    )),
-  } as unknown as vscode.WorkspaceConfiguration);
 }

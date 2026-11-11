@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PackageCapabilityOperations } from '../providers/packageCapabilityOperations';
 import { PackageProviderState } from '../providers/packageProviderState';
@@ -50,10 +51,7 @@ describe('PackageCapabilityOperations', () => {
     const packageFilePath = join(root, 'package.json');
     await writeFile(packageFilePath, JSON.stringify({ dependencies: { react: '^2.0.0' } }));
     const previousFolders = vscode.workspace.workspaceFolders;
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: vscode.Uri.file(root), index: 0, name: 'workspace' }],
-    });
+    setWorkspaceFolders([{ uri: vscode.Uri.file(root), index: 0, name: 'workspace' }]);
     try {
       const state = createState();
       const location = await resolveCanonicalPackageLocation(packageFilePath);
@@ -80,10 +78,7 @@ describe('PackageCapabilityOperations', () => {
       await expect(operations.revalidatePackageItem(capability)).resolves.toEqual({ ok: false, reason: 'path-replaced' });
     }
     finally {
-      Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-        configurable: true,
-        value: previousFolders,
-      });
+      setWorkspaceFolders(previousFolders);
     }
   });
 });

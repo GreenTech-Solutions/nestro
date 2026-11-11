@@ -19,6 +19,7 @@ import type {
   AuditResult,
   AuditSeverity,
 } from '../utils';
+import { createAuditProcessMocks } from './fixtures/auditProcess';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 const loggerMock = vi.hoisted(() => ({
@@ -36,38 +37,7 @@ vi.mock('../utils/logger', () => ({ logger: loggerMock }));
 
 const cwd = '/workspace';
 const auditArgs = ['audit', '--json'];
-
-function mockAuditProcess(err: unknown, stdout: string): void {
-  runBoundedProcessMock.mockImplementationOnce(() => {
-    if (err === null) {
-      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
-    }
-    const properties = typeof err === 'object' && err !== null
-      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
-      : {};
-    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
-    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
-    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
-    }
-    if (typeof properties.code === 'number') {
-      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    return Promise.resolve({
-      kind: 'spawn-error',
-      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
-      detail: `audit command could not run: ${message}`,
-      message,
-      cause: err,
-    });
-  });
-}
-
-/** Successful run: exit code 0. */
-function mockAuditSuccess(stdout: string): void {
-  mockAuditProcess(null, stdout);
-}
+const { mockAuditProcess, mockAuditSuccess } = createAuditProcessMocks(runBoundedProcessMock, 'audit command');
 
 /** Rejected run: the process exited with `exitCode` after writing `stdout`. */
 function mockAuditExit(exitCode: number, stdout: string): void {

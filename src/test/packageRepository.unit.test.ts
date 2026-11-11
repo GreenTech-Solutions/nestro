@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import {
   findWorkspacePackageJsonFiles,
   getWorkspacePackageFilePath,
@@ -19,10 +20,7 @@ describe('getWorkspacePackageFilePath()', () => {
   });
 
   it('returns undefined when no workspace folder is open', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
+    setWorkspaceFolders(undefined);
 
     expect(getWorkspacePackageFilePath()).toBeUndefined();
   });
@@ -216,10 +214,7 @@ describe('findWorkspacePackageJsonFiles() / getWorkspacePackageFilePaths()', () 
   });
 
   it('returns no files when no workspace folder is open', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [],
-    });
+    setWorkspaceFolders([]);
 
     await expect(findWorkspacePackageJsonFiles()).resolves.toEqual([]);
     expect(vscode.workspace.findFiles).not.toHaveBeenCalled();
@@ -258,9 +253,6 @@ describe('toWorkspaceRelativePackageFilePath()', () => {
 
 function resetWorkspaceFoldersBeforeEach(): void {
   beforeEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
   });
 }

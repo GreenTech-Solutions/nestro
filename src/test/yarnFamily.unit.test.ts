@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as vscode from 'vscode';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
 import { resolveSpawnTarget } from '../shared';
 import { MetadataAdapterRegistry, resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
@@ -18,15 +18,6 @@ vi.mock('../shared', async (importOriginal) => {
 type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
 
 const root = '/workspace/project';
-
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = files[uri.fsPath];
-    return value === undefined
-      ? Promise.reject(new Error(`File not found: ${uri.fsPath}`))
-      : Promise.resolve(Buffer.from(value));
-  });
-}
 
 function mockVersionProbe(err: unknown, stdout: string): void {
   vi.mocked(execFile).mockImplementationOnce((

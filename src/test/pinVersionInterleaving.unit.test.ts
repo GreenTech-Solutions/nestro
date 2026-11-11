@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import type { ProviderStub } from './fixtures/providerStub';
 import { pinVersionCommand } from '../commands/pinVersion';
-import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem, PackagesProvider } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 vi.mock('../clients', async () => {
@@ -23,7 +25,7 @@ describe('pinVersionCommand() writer boundary', () => {
   it('rejects a spec changed after final resolver validation without writing the fresh spec', async () => {
     let manifest: Manifest = { dependencies: { pkg: '1.2.3' } };
     const capability = makeCapability('1.2.3');
-    const { provider, revalidate, beforeWrite } = makeProvider(capability, () => {
+    const { provider, revalidate, beforeWrite } = createPinVersionHarness(capability, () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: { pkg: '~2.0.0' } };
     });
@@ -48,7 +50,7 @@ describe('pinVersionCommand() writer boundary', () => {
   it('rejects a selected entry removed after final resolver validation without writing', async () => {
     let manifest: Manifest = { dependencies: { pkg: '1.2.3' } };
     const capability = makeCapability('1.2.3');
-    const { provider, revalidate, beforeWrite } = makeProvider(capability, () => {
+    const { provider, revalidate, beforeWrite } = createPinVersionHarness(capability, () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: {} };
     });
@@ -97,18 +99,18 @@ function makeCapability(currentVersion: string): ResolvedPackageItem {
   };
 }
 
-function makeProvider(
+function createPinVersionHarness(
   capability: ResolvedPackageItem,
   onBeforeWrite: () => void,
 ): {
-  provider: PackagesProvider;
+  provider: ProviderStub;
   revalidate: ReturnType<typeof vi.fn>;
   beforeWrite: ReturnType<typeof vi.fn>;
 } {
-  const revalidate = vi.fn(() => ({ ok: true as const, value: capability }));
+  const revalidate = vi.fn(() => Promise.resolve({ ok: true as const, value: capability }));
   const beforeWrite = vi.fn(onBeforeWrite);
-  const provider = {
-    resolvePackageItem: vi.fn(() => ({ ok: true as const, value: capability })),
+  const provider = makeProvider({
+    resolvePackageItem: vi.fn(() => Promise.resolve({ ok: true as const, value: capability })),
     revalidatePackageItem: revalidate,
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => {
       beforeWrite();
@@ -116,6 +118,6 @@ function makeProvider(
     }),
     loadPackages: vi.fn(),
     markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
-  } as unknown as PackagesProvider;
+  });
   return { provider, revalidate, beforeWrite };
 }

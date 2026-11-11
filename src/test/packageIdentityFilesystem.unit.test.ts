@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 
 const fsMock = vi.hoisted(() => ({
   lstat: vi.fn(),
@@ -59,10 +60,7 @@ describe('resolveCanonicalPackageLocation() filesystem proof', () => {
   const previousWorkspaceFolders = vscode.workspace.workspaceFolders;
 
   afterEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: previousWorkspaceFolders,
-    });
+    setWorkspaceFolders(previousWorkspaceFolders);
     vi.clearAllMocks();
   });
 
@@ -71,10 +69,7 @@ describe('resolveCanonicalPackageLocation() filesystem proof', () => {
     ['two symlink entries with different device/inode identities', 'different-inode'],
     ['an lstat failure while proving the case-only alias', 'lstat-failure'],
   ] as const)('rejects a case-only alias when %s', async (_label, proof) => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: WORKSPACE_PATH } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: WORKSPACE_PATH } }]);
     configureFilesystem(proof);
 
     await expect(resolveCanonicalPackageLocation(REQUESTED_ALIAS_PATH)).resolves.toEqual({

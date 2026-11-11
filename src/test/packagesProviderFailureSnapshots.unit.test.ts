@@ -1,8 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  FilterManager,
-  PackagesProvider,
-} from '../providers';
 import type {
   PackageLoadingServiceContract,
   PackageLoadingSnapshot,
@@ -14,6 +10,7 @@ import type {
   UpdateOrchestrationServiceContract,
   UpdateRootFailure,
 } from '../providers/updateOrchestrationService';
+import { createProvider } from './fixtures/providerStub';
 
 const packageFilePath = '/workspace/package.json';
 
@@ -45,29 +42,29 @@ function completedUpdateResult(failures: readonly UpdateRootFailure[]): UpdateOr
   };
 }
 
-function createProvider(results: UpdateOrchestrationResult[]): PackagesProvider {
-  const loadingService: PackageLoadingServiceContract = {
-    load: vi.fn(() => Promise.resolve(createSnapshot())),
-    readPackageEntries: vi.fn(() => Promise.resolve([])),
-    discoverPackageFilePaths: vi.fn(() => Promise.resolve([])),
-  };
-  const check = vi.fn<UpdateOrchestrationServiceContract['check']>(() => Promise.resolve(
-    results.shift() ?? completedUpdateResult([]),
-  ));
-  const updateService: UpdateOrchestrationServiceContract = {
-    check,
-    invalidateCache: vi.fn(),
-    computeFingerprint: () => Promise.resolve('fingerprint'),
-  };
-  return new PackagesProvider(new FilterManager(), loadingService, updateService);
-}
-
 describe('PackagesProvider failure snapshots', () => {
   it('fills missing read and update failure details from the failed paths', async () => {
-    const provider = createProvider([
+    const results = [
       completedUpdateResult([]),
       completedUpdateResult([{ packageFilePath, error: 'registry unavailable' }]),
-    ]);
+    ];
+    const loadingService: PackageLoadingServiceContract = {
+      load: vi.fn(() => Promise.resolve(createSnapshot())),
+      readPackageEntries: vi.fn(() => Promise.resolve([])),
+      discoverPackageFilePaths: vi.fn(() => Promise.resolve([])),
+    };
+    const check = vi.fn<UpdateOrchestrationServiceContract['check']>(() => Promise.resolve(
+      results.shift() ?? completedUpdateResult([]),
+    ));
+    const updateService: UpdateOrchestrationServiceContract = {
+      check,
+      invalidateCache: vi.fn(),
+      computeFingerprint: () => Promise.resolve('fingerprint'),
+    };
+    const provider = createProvider({
+      packageLoadingService: loadingService,
+      updateOrchestrationService: updateService,
+    });
     try {
       await provider.loadPackages();
 

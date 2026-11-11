@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveRegistryConfiguration } from '../utils/registry/configResolution';
 
@@ -32,10 +33,7 @@ describe('cafile resolution', () => {
     vi.clearAllMocks();
     vi.stubEnv('npm_config_cafile', undefined);
     resolveYarnFamilyMock.mockResolvedValue({ family: 'classic', source: 'version-probe' });
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) => (
       vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(`${folder.uri.fsPath}/`))
     ));

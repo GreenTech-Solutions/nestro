@@ -23,7 +23,10 @@ pnpm run test:unit:watch  # vitest (watch mode)
 Integration tests: `.vscode-test.mjs` runs the `minimum` and `stable` channels against every
 `out/test/**/*.test.js`; no single-file isolation, and the two channels must not run concurrently
 against the same checkout — each resets its own channel directories on load.
-Unit tests: Vitest, `vscode` mocked via `src/test/__mocks__/vscode.ts`.
+Unit tests: Vitest, `vscode` mocked via `src/test/__mocks__/vscode.ts`. Shared helpers live in
+`src/test/fixtures/`; its `index.ts` barrel is also loaded by the Extension Host suites, so helpers
+that import `vitest` (`providerStub.ts`, `workspaceFs.ts`, `auditProcess.ts`, `config.ts`) are
+imported from their own files, not through the barrel.
 Manual testing: **F5** → Run Extension (`.vscode/launch.json`) → Extension Development Host window.
 
 ## Architecture

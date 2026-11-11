@@ -23,10 +23,13 @@ vi.mock('../utils/registryClient', () => ({
 vi.mock('../utils/processRunner', () => ({
   runBoundedProcess: runBoundedProcessMock,
 }));
-vi.mock('../utils/yarnFamily', () => ({
-  resolveYarnFamily: resolveYarnFamilyMock,
-  runWithYarnFamilyMemo: <T>(operation: () => Promise<T>): Promise<T> => operation(),
-}));
+vi.mock('../utils/yarnFamily', async () => {
+  const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
+  return {
+    resolveYarnFamily: resolveYarnFamilyMock,
+    runWithYarnFamilyMemo: runWithYarnFamilyMemoPassthrough,
+  };
+});
 
 const success: PackageMetadataOutcome = {
   kind: 'success',

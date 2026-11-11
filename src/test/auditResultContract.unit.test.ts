@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUDIT_PROCESS_MAX_BUFFER_BYTES } from '../config';
 import { FilterManager, PackagesProvider, StatusItem } from '../providers';
 import {
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
 } from '../utils';
+import { createAuditProcessMocks } from './fixtures/auditProcess';
 
 // End-to-end guard: the audit runner, the package manager client and the tree status row are
 // wired together with only the child process mocked, so an unrecognized audit result can
 // never reach the user as "No vulnerabilities".
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+const { mockAuditProcess } = createAuditProcessMocks(runBoundedProcessMock, 'npm');
 
 vi.mock('../utils/processRunner', () => ({
   runBoundedProcess: runBoundedProcessMock,
@@ -43,6 +44,7 @@ vi.mock('../clients', async () => {
 });
 
 vi.mock('../utils', async () => {
+  const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
   const auditClient = await vi.importActual<typeof import('../utils/auditClient')>('../utils/auditClient');
   const auditReport = await vi.importActual<typeof import('../utils/auditReport')>('../utils/auditReport');
   const dependencySpec = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
@@ -68,37 +70,10 @@ vi.mock('../utils', async () => {
     getWorkspacePackageFilePaths: vi.fn(),
     logger,
     readAllWorkspaceDependencies: vi.fn(),
-    runWithYarnFamilyMemo: vi.fn((operation: () => Promise<unknown>) => operation()),
+    runWithYarnFamilyMemo: vi.fn(runWithYarnFamilyMemoPassthrough),
     showError: vi.fn(),
   };
 });
-
-function mockAuditProcess(err: unknown, stdout: string): void {
-  runBoundedProcessMock.mockImplementationOnce(() => {
-    if (err === null) {
-      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
-    }
-    const properties = typeof err === 'object' && err !== null
-      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
-      : {};
-    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
-    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
-    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
-    }
-    if (typeof properties.code === 'number') {
-      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    return Promise.resolve({
-      kind: 'spawn-error',
-      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
-      detail: `npm could not run: ${message}`,
-      message,
-      cause: err,
-    });
-  });
-}
 
 function npmReport(vulnerabilities: Record<string, unknown>, total: number): string {
   return JSON.stringify({
