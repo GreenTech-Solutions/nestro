@@ -11,6 +11,7 @@ import {
   awaitTaskOutcome,
   awaitTaskProcessStart,
   buildExitWithCodeCommand,
+  buildPackageItem,
   buildSleepCommand,
   canonicalizeForComparison,
   closeFixtureWorkspace,
@@ -260,17 +261,14 @@ suite('command boundary smoke', function () {
     const restoreDeferredInstall = await setNestroConfigValue('deferInstallAfterUpdate', true);
     try {
       await vscode.commands.executeCommand('nestro.refresh');
-      const forged = new PackageItem(
-        'left-pad',
-        '^1.3.0',
-        '99.99.99',
-        'breaking',
-        undefined,
-        undefined,
+      const forged = buildPackageItem({
+        name: 'left-pad',
+        currentVersion: '^1.3.0',
+        latest: '99.99.99',
+        updateType: 'breaking',
         packageFilePath,
-        false,
-        '^',
-      );
+        versionPrefix: '^',
+      });
       await vscode.commands.executeCommand('nestro.installUpdate', forged);
 
       // Command registrations intentionally fire-and-forget their async handlers;
@@ -858,7 +856,7 @@ suite('Manifest Contracts', () => {
   });
 
   test('row capabilities keep update actions working and hide pin for unsupported specs', () => {
-    const item = new PackageItem('left-pad', '1.0.0', '1.1.0', 'minor', undefined, 'high', '/workspace/package.json', false, '^');
+    const item = buildPackageItem({ name: 'left-pad', currentVersion: '1.0.0', latest: '1.1.0', updateType: 'minor', operation: false, vulnerabilitySeverity: 'high', packageFilePath: '/workspace/package.json', versionPrefix: '^' });
     assert.strictEqual(item.contextValue, 'outdated-pinnable-vulnerable-high');
 
     const menuEntries = getManifest().contributes.menus['view/item/context'];
@@ -884,7 +882,7 @@ suite('Manifest Contracts', () => {
       assert.strictEqual(new RegExp(pinRegexSource ?? '').test(item.contextValue as string), true);
     }
 
-    const unsupported = new PackageItem('local-pkg', 'file:../local-pkg', undefined, 'none');
+    const unsupported = buildPackageItem({ name: 'local-pkg', currentVersion: 'file:../local-pkg', updateType: 'none', operation: false, vulnerabilitySeverity: undefined, packageFilePath: '', versionPrefix: '' });
     assert.strictEqual(unsupported.contextValue, 'package-pin-unsupported');
     assert.strictEqual(unsupported.tooltip?.toString().includes('Pin unavailable: local file dependency'), true);
     for (const pinEntry of pinEntries) {
@@ -910,7 +908,7 @@ suite('Manifest Contracts', () => {
     const rowCases = [
       {
         label: 'outdated vulnerable pinnable',
-        item: new PackageItem('pkg', '^1.0.0', '1.1.0', 'minor', undefined, 'high'),
+        item: buildPackageItem({ name: 'pkg', currentVersion: '^1.0.0', latest: '1.1.0', updateType: 'minor', operation: false, vulnerabilitySeverity: 'high' }),
         commandIds: [
           'nestro.installUpdate',
           'nestro.pickVersion',
@@ -924,7 +922,7 @@ suite('Manifest Contracts', () => {
       },
       {
         label: 'outdated vulnerable pin-unsupported',
-        item: new PackageItem('local-pkg', 'npm:real-pkg@^1.0.0', '2.0.0', 'breaking', undefined, 'critical'),
+        item: buildPackageItem({ name: 'local-pkg', currentVersion: 'npm:real-pkg@^1.0.0', latest: '2.0.0', updateType: 'breaking', operation: false, vulnerabilitySeverity: 'critical' }),
         commandIds: [
           'nestro.installUpdate',
           'nestro.pickVersion',
@@ -937,7 +935,7 @@ suite('Manifest Contracts', () => {
       },
       {
         label: 'current pinnable',
-        item: new PackageItem('stable', '^1.0.0', undefined, 'none'),
+        item: buildPackageItem({ name: 'stable', currentVersion: '^1.0.0', updateType: 'none', operation: false, vulnerabilitySeverity: undefined }),
         commandIds: [
           'nestro.pickVersion',
           'nestro.openOnNpm',
@@ -950,7 +948,7 @@ suite('Manifest Contracts', () => {
       },
       {
         label: 'installing vulnerable',
-        item: new PackageItem('pending', '^1.0.0', '2.0.0', 'minor', { kind: 'update', target: '2.0.0' }, 'high'),
+        item: buildPackageItem({ name: 'pending', currentVersion: '^1.0.0', latest: '2.0.0', updateType: 'minor', operation: { kind: 'update', target: '2.0.0' }, vulnerabilitySeverity: 'high' }),
         commandIds: ['nestro.openOnNpm', 'nestro.copyPackageName'],
         inlineCommandIds: [],
       },

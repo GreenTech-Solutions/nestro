@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { PackageItem, sanitizePackageText } from '../providers';
+import { buildPackageItem } from './fixtures';
+import { sanitizePackageText } from '../providers';
 import { formatHeldBackDate } from '../utils';
 
 describe('PackageItem', () => {
   it('starts collapsed so details can be expanded inline', () => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor');
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor' });
 
     expect(item.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
   });
@@ -15,7 +16,7 @@ describe('PackageItem', () => {
     ['minor', '1.0.0', '1.1.0', 'minor update', 'arrow-up'],
     ['breaking', '1.0.0', '2.0.0', 'breaking update', 'triangle-up'],
   ] as const)('exposes %s in visible text and icon', (updateType, current, latest, visibleType, icon) => {
-    const item = new PackageItem('pkg', current, latest, updateType);
+    const item = buildPackageItem({ name: 'pkg', currentVersion: current, latest, updateType });
 
     expect(item.description).toContain(`${current} → ${latest} (${visibleType})`);
     expect((item.iconPath as vscode.ThemeIcon).id).toBe(icon);
@@ -25,14 +26,14 @@ describe('PackageItem', () => {
   it('keeps update types distinguishable when color is unavailable', () => {
     const iconIds = (['patch', 'minor', 'breaking'] as const).map((updateType) => {
       const latest = updateType === 'patch' ? '1.0.1' : updateType === 'minor' ? '1.1.0' : '2.0.0';
-      return ((new PackageItem('pkg', '1.0.0', latest, updateType).iconPath) as vscode.ThemeIcon).id;
+      return ((buildPackageItem({ name: 'pkg', currentVersion: '1.0.0', latest, updateType }).iconPath) as vscode.ThemeIcon).id;
     });
 
     expect(new Set(iconIds)).toHaveLength(3);
   });
 
   it('keeps the up-to-date icon and describes the absence of an update', () => {
-    const item = new PackageItem('pkg', '1.0.0', undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '1.0.0', latest: undefined, updateType: 'none' });
 
     expect((item.iconPath as vscode.ThemeIcon).id).toBe('check');
     expect(item.accessibilityInformation?.label).toContain('Update type: none');
@@ -47,7 +48,7 @@ describe('PackageItem', () => {
     ['pin', { kind: 'pin' }, 'Pinning typescript version', 'lock'],
     ['switch', { kind: 'switch' }, 'Switching typescript dependency type', 'arrow-swap'],
   ] as const)('renders a %s operation with its own busy presentation', (_kind, operation, tooltip, icon) => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', operation);
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor', operation });
 
     expect(item.operation).toEqual(operation);
     expect(item.contextValue).toBe(`installing-${operation.kind}`);
@@ -65,13 +66,13 @@ describe('PackageItem', () => {
     [{ kind: 'pin' }, 'Active operation: pin in progress'],
     [{ kind: 'switch' }, 'Active operation: dependency type switch in progress'],
   ] as const)('describes the %s busy reason to screen readers', (operation, reason) => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', operation);
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor', operation });
 
     expect(item.accessibilityInformation?.label).toContain(reason);
   });
 
   it('does not render a version target while removing a package', () => {
-    const item = new PackageItem('pkg', '^1.0.0', undefined, 'none', { kind: 'remove' });
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '^1.0.0', operation: { kind: 'remove' } });
 
     expect(item.description).toBe('^1.0.0');
     expect(item.tooltip).toBe('Removing pkg');
@@ -79,7 +80,7 @@ describe('PackageItem', () => {
   });
 
   it('adds vulnerability context and warning icon for vulnerable packages', () => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', undefined, 'high');
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor', vulnerabilitySeverity: 'high' });
 
     expect(item.contextValue).toContain('vulnerable-high');
     expect(item.description).toContain('vulnerability: high');
@@ -96,13 +97,13 @@ describe('PackageItem', () => {
     ['info', 'Vulnerability: info'],
     [undefined, 'Vulnerability: none detected'],
   ] as const)('describes vulnerability state %s accessibly', (severity, accessibleText) => {
-    const item = new PackageItem('typescript', '^5.0.0', '5.9.3', 'minor', undefined, severity);
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', latest: '5.9.3', updateType: 'minor', vulnerabilitySeverity: severity });
 
     expect(item.accessibilityInformation?.label).toContain(accessibleText);
   });
 
   it('does not add vulnerability context for packages without vulnerabilities', () => {
-    const item = new PackageItem('typescript', '^5.0.0', undefined, 'none');
+    const item = buildPackageItem({ name: 'typescript', currentVersion: '^5.0.0', vulnerabilitySeverity: undefined });
 
     expect(item.contextValue).not.toContain('vulnerable');
   });
@@ -114,7 +115,7 @@ describe('PackageItem', () => {
     ['workspace:^1.2.3', 'package-pinnable'],
     ['workspace:~1.2.3-beta.1+meta', 'package-pinnable'],
   ] as const)('marks %s as pinnable in the row context', (currentVersion, contextValue) => {
-    const item = new PackageItem('pkg', currentVersion, undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion });
 
     expect(item.contextValue).toBe(contextValue);
     expect(item.tooltip).not.toContain('Pin unavailable:');
@@ -131,7 +132,7 @@ describe('PackageItem', () => {
     ['Latest', 'dist-tag reference'],
     ['X.2.3', 'wildcard version range'],
   ] as const)('marks unsupported %s as unavailable with a reason', (currentVersion, reason) => {
-    const item = new PackageItem('pkg', currentVersion, undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion });
 
     expect(item.contextValue).toBe('package-pin-unsupported');
     expect(item.tooltip).toContain(`Pin unavailable: ${reason}`);
@@ -139,7 +140,7 @@ describe('PackageItem', () => {
   });
 
   it('keeps the installing context contract while an unsupported spec is busy', () => {
-    const item = new PackageItem('pkg', 'workspace:*', '1.0.0', 'minor', { kind: 'update', target: '1.0.0' });
+    const item = buildPackageItem({ name: 'pkg', currentVersion: 'workspace:*', latest: '1.0.0', updateType: 'minor', operation: { kind: 'update', target: '1.0.0' } });
 
     expect(item.contextValue).toBe('installing-update');
     expect(item.tooltip).not.toContain('Pin unavailable:');
@@ -147,19 +148,15 @@ describe('PackageItem', () => {
   });
 
   it('includes the workspace owner and sanitizes untrusted accessible values', () => {
-    const item = new PackageItem(
-      'pkg\nname',
-      '^1.0.0\u001b[31m',
-      '1.1.0\r',
-      'minor',
-      undefined,
-      'high',
-      '/workspace/package.json',
-      false,
-      '^',
-      { kind: 'accepted' },
-      'web\nowner',
-    );
+    const item = buildPackageItem({
+      name: 'pkg\nname',
+      currentVersion: '^1.0.0\u001b[31m',
+      latest: '1.1.0\r',
+      updateType: 'minor',
+      vulnerabilitySeverity: 'high',
+      versionPrefix: '^',
+      workspaceOwner: 'web\nowner',
+    });
 
     expect(item.workspaceOwner).toBe('web owner');
     expect(item.accessibilityInformation?.label).toContain('Package name: pkg name');
@@ -170,7 +167,7 @@ describe('PackageItem', () => {
   });
 
   it('uses the shared owner-qualified label when no workspace label is supplied', () => {
-    const item = new PackageItem('pkg', '^1.0.0', undefined, 'none', undefined, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '^1.0.0', packageFilePath: '/workspace/package.json', workspaceOwner: undefined });
 
     expect(item.workspaceOwner).toBe('workspace — (root)');
     expect(item.accessibilityInformation?.label).toContain('Workspace owner: workspace — (root)');
@@ -186,7 +183,7 @@ describe('PackageItem', () => {
       throw new Error('workspace lookup failed');
     });
 
-    const item = new PackageItem('pkg', '^1.0.0', undefined, 'none', undefined, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '^1.0.0', packageFilePath: '/workspace/package.json', workspaceOwner: undefined });
 
     expect(item.workspaceOwner).toBeUndefined();
     expect(item.accessibilityInformation?.label).toContain('Workspace owner: unavailable');
@@ -195,18 +192,15 @@ describe('PackageItem', () => {
   it('renders held-back release age with a localized date, not the raw ISO instant', () => {
     const eligibleAt = '2026-06-02T00:00:00.000Z';
     const expectedDate = formatHeldBackDate(eligibleAt);
-    const item = new PackageItem(
-      'typescript',
-      '^5.0.0',
-      '5.9.3',
-      'minor',
-      undefined,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-      { kind: 'held-back', version: '6.0.0', eligibleAt },
-    );
+    const item = buildPackageItem({
+      name: 'typescript',
+      currentVersion: '^5.0.0',
+      latest: '5.9.3',
+      updateType: 'minor',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+      releaseAge: { kind: 'held-back', version: '6.0.0', eligibleAt },
+    });
 
     expect(item.description).toContain(`Held back 6.0.0 until ${expectedDate}`);
     expect(item.tooltip).toContain(`Held back 6.0.0 until ${expectedDate}`);
@@ -219,18 +213,15 @@ describe('PackageItem', () => {
   it('renders the held-back date on the local calendar day, not the UTC one', () => {
     vi.stubEnv('TZ', 'America/Los_Angeles');
     try {
-      const item = new PackageItem(
-        'typescript',
-        '^5.0.0',
-        '5.9.3',
-        'minor',
-        undefined,
-        undefined,
-        '/workspace/package.json',
-        false,
-        '^',
-        { kind: 'held-back', version: '6.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
-      );
+      const item = buildPackageItem({
+        name: 'typescript',
+        currentVersion: '^5.0.0',
+        latest: '5.9.3',
+        updateType: 'minor',
+        packageFilePath: '/workspace/package.json',
+        versionPrefix: '^',
+        releaseAge: { kind: 'held-back', version: '6.0.0', eligibleAt: '2026-06-02T00:00:00.000Z' },
+      });
 
       expect(item.description).toContain('Held back 6.0.0 until Jun 1, 2026');
       expect(item.accessibilityInformation?.label).toContain('Held back 6.0.0 until Jun 1, 2026');
@@ -241,18 +232,15 @@ describe('PackageItem', () => {
   });
 
   it('falls back to the raw value when the held-back instant cannot be parsed', () => {
-    const item = new PackageItem(
-      'typescript',
-      '^5.0.0',
-      '5.9.3',
-      'minor',
-      undefined,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-      { kind: 'held-back', version: '6.0.0', eligibleAt: 'not-a-date' },
-    );
+    const item = buildPackageItem({
+      name: 'typescript',
+      currentVersion: '^5.0.0',
+      latest: '5.9.3',
+      updateType: 'minor',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+      releaseAge: { kind: 'held-back', version: '6.0.0', eligibleAt: 'not-a-date' },
+    });
 
     expect(item.description).toContain('Held back 6.0.0 until not-a-date');
     expect(item.tooltip).toContain('Held back 6.0.0 until not-a-date');
@@ -260,18 +248,15 @@ describe('PackageItem', () => {
   });
 
   it('renders unknown release age without blocking the row', () => {
-    const item = new PackageItem(
-      'typescript',
-      '^5.0.0',
-      '5.9.3',
-      'minor',
-      undefined,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-      { kind: 'unknown', version: '5.9.3' },
-    );
+    const item = buildPackageItem({
+      name: 'typescript',
+      currentVersion: '^5.0.0',
+      latest: '5.9.3',
+      updateType: 'minor',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+      releaseAge: { kind: 'unknown', version: '5.9.3' },
+    });
 
     expect(item.description).toContain('Release age unknown for 5.9.3; update is not blocked.');
     expect(item.contextValue).toBe('outdated-pinnable');

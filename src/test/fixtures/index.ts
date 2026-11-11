@@ -4,6 +4,7 @@ export { fixtureTempRoot, materializeFixture, removeMaterializedFixture, resolve
 export { createPinnedManagerDir, detectCorepackManagedYarn, probeNativeTool, removePinnedManagerDir } from './nativeTool';
 export type { CorepackYarnDetection, PinnedManagerDir } from './nativeTool';
 export { canonicalizeForComparison } from './pathComparison';
+export { buildPackageItem } from './packageItem';
 export { removeFixturePath } from './removeFixturePath';
 export { buildExitWithCodeCommand, buildSleepCommand, createScriptFixture, removeScriptFixture } from './scriptFixtures';
 export type { ScriptFixture } from './scriptFixtures';

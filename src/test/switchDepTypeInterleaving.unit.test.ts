@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { switchDepTypeCommand } from '../commands/switchDepType';
-import { PackageItem } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 const malformedCommandCases: readonly [string, string, unknown, string][] = [
@@ -84,7 +84,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
       Buffer.from(JSON.stringify(manifest)),
     ));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3' }), provider);
 
     expect(identityMocks.revalidateCommandPackageItem).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.readFile).toHaveBeenCalledTimes(1);
@@ -117,7 +117,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
     const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3', packageFilePath: '', dev: false }), provider);
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
@@ -148,7 +148,7 @@ describe('switchDepTypeCommand() writer boundary', () => {
     const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3', packageFilePath: '', dev: false }), provider);
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();

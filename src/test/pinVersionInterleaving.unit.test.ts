@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { makeProvider } from './fixtures/providerStub';
 import type { ProviderStub } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { pinVersionCommand } from '../commands/pinVersion';
-import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 vi.mock('../clients', async () => {
@@ -29,7 +30,7 @@ describe('pinVersionCommand() writer boundary', () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: { pkg: '~2.0.0' } };
     });
-    const item = new PackageItem('pkg', '1.2.3', undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '1.2.3' });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
       Buffer.from(JSON.stringify(manifest)),
     ));
@@ -54,7 +55,7 @@ describe('pinVersionCommand() writer boundary', () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: {} };
     });
-    const item = new PackageItem('pkg', '1.2.3', undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '1.2.3' });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
       Buffer.from(JSON.stringify(manifest)),
     ));

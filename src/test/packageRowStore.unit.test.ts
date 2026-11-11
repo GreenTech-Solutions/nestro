@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PackageItem } from '../providers';
+import { buildPackageItem } from './fixtures';
 import { PackageRowStore } from '../providers/packageRowStore';
 import type { PackageIdentityTuple, PackageTreeEntry } from '../providers';
 
@@ -10,16 +10,12 @@ function createEntry(
   currentVersion = '1.0.0',
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(
-      packageName,
+    item: buildPackageItem({
+      name: packageName,
       currentVersion,
-      undefined,
-      'none',
-      undefined,
-      undefined,
       packageFilePath,
       dev,
-    ),
+    }),
     dev,
     packageFilePath,
   };

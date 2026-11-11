@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { installUpdateCommand } from '../commands/installUpdate';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { pinAllVersionsCommand } from '../commands/pinAllVersions';
-import { PackageItem } from '../providers';
 import { runRowMutation } from '../commands/rowMutation';
 import { showError } from '../utils';
 
@@ -96,7 +96,7 @@ describe('row mutation pipeline', () => {
     const provider = makeProvider();
 
     await pinVersionCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', versionPrefix: '^' }),
       provider,
     );
 
@@ -157,7 +157,7 @@ describe('row mutation pipeline', () => {
     });
 
     await installUpdateCommand(
-      new PackageItem('react', '^18.0.0', '18.0.1', 'minor', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '18.0.1', updateType: 'minor', packageFilePath: '/workspace/package.json', versionPrefix: '^' }),
       provider,
     );
 

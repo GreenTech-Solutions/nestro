@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { buildPackageItem } from './fixtures';
 import { PackageItem } from '../providers';
 
 interface ViewItemMenuEntry {
@@ -62,7 +63,7 @@ describe('package row action manifest', () => {
   it.each([
     [
       'outdated vulnerable pinnable',
-      new PackageItem('pkg', '^1.0.0', '1.1.0', 'minor', undefined, 'high'),
+      buildPackageItem({ name: 'pkg', currentVersion: '^1.0.0', latest: '1.1.0', updateType: 'minor', vulnerabilitySeverity: 'high', packageFilePath: '' }),
       [
         'nestro.installUpdate',
         'nestro.pickVersion',
@@ -76,7 +77,7 @@ describe('package row action manifest', () => {
     ],
     [
       'outdated vulnerable pin-unsupported',
-      new PackageItem('local-pkg', 'npm:real-pkg@^1.0.0', '2.0.0', 'breaking', undefined, 'critical'),
+      buildPackageItem({ name: 'local-pkg', currentVersion: 'npm:real-pkg@^1.0.0', latest: '2.0.0', updateType: 'breaking', vulnerabilitySeverity: 'critical', packageFilePath: '' }),
       [
         'nestro.installUpdate',
         'nestro.pickVersion',
@@ -89,7 +90,7 @@ describe('package row action manifest', () => {
     ],
     [
       'current pinnable',
-      new PackageItem('stable', '^1.0.0', undefined, 'none'),
+      buildPackageItem({ name: 'stable', currentVersion: '^1.0.0', updateType: 'none', vulnerabilitySeverity: undefined, packageFilePath: '' }),
       [
         'nestro.pickVersion',
         'nestro.openOnNpm',
@@ -102,7 +103,7 @@ describe('package row action manifest', () => {
     ],
     [
       'installing vulnerable',
-      new PackageItem('pending', '^1.0.0', '2.0.0', 'minor', { kind: 'update', target: '2.0.0' }, 'high'),
+      buildPackageItem({ name: 'pending', currentVersion: '^1.0.0', latest: '2.0.0', updateType: 'minor', operation: { kind: 'update', target: '2.0.0' }, vulnerabilitySeverity: 'high', packageFilePath: '' }),
       ['nestro.openOnNpm', 'nestro.copyPackageName'],
       0,
     ],

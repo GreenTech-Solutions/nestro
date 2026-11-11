@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { makeContext } from './fixtures';
+import { buildPackageItem, makeContext } from './fixtures';
 import { activate } from '../extension';
 import { PackageItem } from '../providers';
 
@@ -40,7 +40,7 @@ function getRegisteredCommand(command: string): (item: unknown) => void {
 }
 
 function makePackageItem(packageName: string): PackageItem {
-  return new PackageItem(packageName, '1.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+  return buildPackageItem({ name: packageName, currentVersion: '1.0.0', updateType: 'none', packageFilePath: '/workspace/package.json' });
 }
 
 describe('npm link commands', () => {

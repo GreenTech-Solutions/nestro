@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
@@ -90,17 +91,12 @@ describe('switchDepTypeCommand()', () => {
 
   it('moves the package between dependency buckets and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -114,7 +110,7 @@ describe('switchDepTypeCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -124,17 +120,13 @@ describe('switchDepTypeCommand()', () => {
 
   it('moves a devDependency back to dependencies', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      true,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: true,
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -146,7 +138,7 @@ describe('switchDepTypeCommand()', () => {
     const provider = makeProvider();
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -159,7 +151,7 @@ describe('switchDepTypeCommand()', () => {
     const provider = makeProvider();
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -173,17 +165,12 @@ describe('switchDepTypeCommand()', () => {
   ] as const)('shows an error without reloading when switching fails with %s', async (_label, rejection, expectedMessage) => {
     vi.mocked(switchDependencyType).mockRejectedValueOnce(rejection);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -195,17 +182,12 @@ describe('switchDepTypeCommand()', () => {
     const conflict = new DependencyTypeConflictError('react', '^18.0.0', '^18.0.0', '~17.0.0');
     vi.mocked(switchDependencyType).mockRejectedValueOnce(conflict);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -237,17 +219,12 @@ describe('pinVersionCommand()', () => {
 
   it('pins a caret-prefixed package and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -260,17 +237,11 @@ describe('pinVersionCommand()', () => {
 
   it('unpins a bare package and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '18.0.0',
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -279,17 +250,13 @@ describe('pinVersionCommand()', () => {
 
   it('pins a caret-prefixed devDependency using the devDependencies section explicitly', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'vitest',
-      '^2.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      true,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'vitest',
+      currentVersion: '^2.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: true,
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -300,17 +267,11 @@ describe('pinVersionCommand()', () => {
 
   it('pins a caret-prefixed workspace: range without corrupting the protocol', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'internal-lib',
-      'workspace:^1.2.3',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+    const item = buildPackageItem({
+      name: 'internal-lib',
+      currentVersion: 'workspace:^1.2.3',
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -325,17 +286,11 @@ describe('pinVersionCommand()', () => {
     ['>=1.2.3 <2.0.0', 'compound version range'],
   ] as const)('leaves the file untouched and reports why for unsupported spec %s', async (currentVersion, reason) => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'pkg',
+    const item = buildPackageItem({
+      name: 'pkg',
       currentVersion,
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -348,7 +303,7 @@ describe('pinVersionCommand()', () => {
   it('stops before pinning when identity or manifest validation fails', async () => {
     identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined);
     const provider = makeProvider();
-    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' });
 
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
@@ -363,7 +318,7 @@ describe('pinVersionCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await pinVersionCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -377,17 +332,12 @@ describe('pinVersionCommand()', () => {
   ] as const)('shows an error without reloading when pinning fails with %s', async (_label, rejection, expectedMessage) => {
     vi.mocked(setVersionPin).mockRejectedValueOnce(rejection);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -420,17 +370,13 @@ describe('removePackageCommand()', () => {
 
   it('runs the package manager remove command and reloads packages after success', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: false,
+      versionPrefix: '^',
+    });
     const execution = {} as vscode.TaskExecution;
     executeTaskMock.mockImplementationOnce(() => {
       setTimeout(() => {
@@ -463,7 +409,7 @@ describe('removePackageCommand()', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       makeProvider(),
     );
 
@@ -475,7 +421,7 @@ describe('removePackageCommand()', () => {
     mockNextTaskExit(1);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -494,7 +440,7 @@ describe('removePackageCommand()', () => {
     mockNextTaskExit(undefined);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -515,7 +461,7 @@ describe('removePackageCommand()', () => {
     executeTaskMock.mockResolvedValueOnce(execution);
 
     const removal = removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -537,7 +483,7 @@ describe('removePackageCommand()', () => {
 
   it('removes a devDependency and prompts with the matching confirmation wording', async () => {
     const provider = makeProvider();
-    const item = new PackageItem('eslint', '^8.0.0', undefined, 'none', false, undefined, '/workspace/package.json', true, '^');
+    const item = buildPackageItem({ name: 'eslint', currentVersion: '^8.0.0', packageFilePath: '/workspace/package.json', dev: true, versionPrefix: '^' });
     const execution = {} as vscode.TaskExecution;
     executeTaskMock.mockImplementationOnce(() => {
       setTimeout(() => {
@@ -561,7 +507,7 @@ describe('removePackageCommand()', () => {
   });
 
   it('rejects removal when the manifest entry is ambiguous or the final row is stale', async () => {
-    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' });
     const provider = makeProvider();
     identityMocks.resolveManifestEntry.mockResolvedValueOnce(undefined as never);
     identityMocks.resolveManifestEntry.mockImplementationOnce(capability => capability);
@@ -582,7 +528,7 @@ describe('removePackageCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -593,7 +539,7 @@ describe('removePackageCommand()', () => {
     const provider = makeProvider();
 
     await removePackageCommand(
-      new PackageItem('orphan', '^1.0.0', undefined, 'none', false, undefined, '', false, '^'),
+      buildPackageItem({ name: 'orphan', currentVersion: '^1.0.0', packageFilePath: '', versionPrefix: '^' }),
       provider,
     );
 
@@ -607,7 +553,7 @@ describe('removePackageCommand()', () => {
     executeTaskMock.mockRejectedValueOnce('remove boom');
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -637,7 +583,7 @@ describe('removePackageCommand()', () => {
     const provider = makeProvider();
 
     await removePackageCommand(
-      new PackageItem('--global', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: '--global', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false, versionPrefix: '^' }),
       provider,
     );
 
@@ -662,7 +608,7 @@ describe('cancelled update commands', () => {
   });
 
   it('clears update progress, reloads state, and skips the error when the task is cancelled', async () => {
-    const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '19.0.0', updateType: 'breaking', packageFilePath: '/workspace/package.json', dev: false, versionPrefix: '^' });
     const provider = makeProvider();
     const execution = { id: 'cancelled-update', terminate: vi.fn() } as unknown as vscode.TaskExecution;
     const cancellation = mockProgressCancellation();
@@ -716,11 +662,11 @@ describe('cancelled update commands', () => {
 
   it('stops Update All with a cancellation message and no error toast', async () => {
     const first = Object.assign(
-      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '19.0.0', updateType: 'breaking', packageFilePath: '/workspace/package.json', versionPrefix: '^', releaseAge: { kind: 'accepted' } }),
       { releaseAge: { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
     );
     const second = Object.assign(
-      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: 'vite', currentVersion: '^5.0.0', latest: '5.1.0', updateType: 'minor', packageFilePath: '/workspace/package.json', versionPrefix: '^', releaseAge: { kind: 'accepted' } }),
       { releaseAge: { kind: 'held-back', version: '5.1.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
     );
     const provider = makeProvider();

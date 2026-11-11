@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildPackageItem } from './fixtures';
 import {
   buildTree,
   findOwningWorkspaceFolder,
@@ -7,7 +8,6 @@ import {
   getFilteredEntries,
   GroupItem,
   MessageItem,
-  PackageItem,
   PackageTreeEntry,
   projectPackageTree,
   resolvePackageFileLabels,
@@ -889,7 +889,7 @@ function makeEntry(
   vulnerabilitySeverity: AuditSeverity | undefined = undefined,
 ): PackageTreeEntry {
   return {
-    item: new PackageItem(name, current, latest, updateType, operation, vulnerabilitySeverity, packageFilePath),
+    item: buildPackageItem({ name, currentVersion: current, latest, updateType, operation, vulnerabilitySeverity, packageFilePath, dev: false }),
     dev,
     packageFilePath,
   };

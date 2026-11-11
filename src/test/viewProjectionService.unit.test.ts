@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { buildPackageItem } from './fixtures';
 import {
   computeViewProjection,
   createAllFalseViewContexts,
   diffViewContexts,
-  PackageItem,
   resolvePublishedWorkspaceCapabilities,
   VIEW_CONTEXT_KEYS,
 } from '../providers';
@@ -48,7 +48,7 @@ function createEntry(
   const dev = overrides.dev ?? false;
   const latest = updateType === 'none' ? undefined : overrides.latest ?? '2.0.0';
   return {
-    item: new PackageItem(packageName, '1.0.0', latest, updateType, undefined, undefined, packageFilePath, dev),
+    item: buildPackageItem({ name: packageName, currentVersion: '1.0.0', latest, updateType, vulnerabilitySeverity: undefined, packageFilePath, dev }),
     dev,
     packageFilePath,
   };

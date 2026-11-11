@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import { mockNestroConfiguration } from './fixtures/config';
 import { setWorkspaceFolders } from './fixtures/workspaceFolders';
+import { buildPackageItem } from './fixtures/packageItem';
 import {
   FilterManager,
   GroupItem,
@@ -1116,16 +1117,13 @@ describe('PackagesProvider', () => {
       allEntries: [
         ...existingEntries,
         {
-          item: new PackageItem(
-            'typescript',
-            '5.0.0',
-            undefined,
-            'none',
-            false,
-            undefined,
-            '/workspace/tools/package.json',
-            true,
-          ),
+          item: buildPackageItem({
+            name: 'typescript',
+            currentVersion: '5.0.0',
+            latest: undefined,
+            packageFilePath: '/workspace/tools/package.json',
+            dev: true,
+          }),
           dev: true,
           packageFilePath: '/workspace/tools/package.json',
         },
@@ -1777,7 +1775,7 @@ describe('PackagesProvider', () => {
       auditState: 'done',
       lastAuditCount: 2,
       allEntries: [{
-        item: new PackageItem('react', '18.0.0', undefined, 'none'),
+        item: buildPackageItem({ name: 'react', currentVersion: '18.0.0', packageFilePath: '' }),
         dev: false,
         packageFilePath: '/workspace/package.json',
       }],
@@ -1797,7 +1795,7 @@ describe('PackagesProvider', () => {
     const provider = new PackagesProvider(new FilterManager('all'));
     setProviderState(provider, {
       allEntries: [{
-        item: new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', undefined, undefined, '/workspace/package.json', false, '^'),
+        item: buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '19.0.0', updateType: 'breaking', packageFilePath: '/workspace/package.json', dev: false, versionPrefix: '^' }),
         dev: false,
         packageFilePath: '/workspace/package.json',
       }],
@@ -1820,32 +1818,28 @@ describe('PackagesProvider', () => {
     setProviderState(provider, {
       allEntries: [
         {
-          item: new PackageItem(
-            'react',
-            '^18.0.0',
-            '19.0.0',
-            'breaking',
-            false,
-            undefined,
-            '/workspace/apps/web/package.json',
-            false,
-            '^',
-          ),
+          item: buildPackageItem({
+            name: 'react',
+            currentVersion: '^18.0.0',
+            latest: '19.0.0',
+            updateType: 'breaking',
+            packageFilePath: '/workspace/apps/web/package.json',
+            dev: false,
+            versionPrefix: '^',
+          }),
           dev: false,
           packageFilePath: '/workspace/apps/web/package.json',
         },
         {
-          item: new PackageItem(
-            'react',
-            '~18.0.0',
-            '18.3.1',
-            'minor',
-            false,
-            undefined,
-            '/workspace/packages/ui/package.json',
-            false,
-            '~',
-          ),
+          item: buildPackageItem({
+            name: 'react',
+            currentVersion: '~18.0.0',
+            latest: '18.3.1',
+            updateType: 'minor',
+            packageFilePath: '/workspace/packages/ui/package.json',
+            dev: false,
+            versionPrefix: '~',
+          }),
           dev: false,
           packageFilePath: '/workspace/packages/ui/package.json',
         },
@@ -2278,8 +2272,8 @@ describe('PackagesProvider', () => {
     releaseAudit(new Map());
     await audit;
 
-    const emptyPathItem = new PackageItem('empty', '1.0.0', undefined, 'none', undefined, undefined, '');
-    const outsidePathItem = new PackageItem('outside', '1.0.0', undefined, 'none', undefined, undefined, '/outside/package.json');
+    const emptyPathItem = buildPackageItem({ name: 'empty', currentVersion: '1.0.0', packageFilePath: '' });
+    const outsidePathItem = buildPackageItem({ name: 'outside', currentVersion: '1.0.0', packageFilePath: '/outside/package.json' });
     expect(provider.getChildren(emptyPathItem)).toHaveLength(2);
     expect(provider.getChildren(outsidePathItem)).toEqual([
       expect.objectContaining({ label: 'Dependency' }),
@@ -4012,7 +4006,7 @@ describe('package identity boundary', () => {
       });
 
       const current = getPackageItems(provider)[0];
-      const forged = new PackageItem('react', '^1.0.0', '9.9.9', 'breaking', false, undefined, manifest, false, '^');
+      const forged = buildPackageItem({ name: 'react', currentVersion: '^1.0.0', latest: '9.9.9', updateType: 'breaking', packageFilePath: manifest, versionPrefix: '^' });
       await expect(provider.resolvePackageItem(forged)).resolves.toEqual({
         ok: false,
         reason: 'not-current',
