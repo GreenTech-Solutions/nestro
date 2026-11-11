@@ -6,12 +6,12 @@ import typescriptEslint from 'typescript-eslint';
 // Files that predate the size limits, each at its current measured size; a ceiling only goes down.
 // maxLines caps the file, maxFunctionLines caps its longest function; delete a key once the file fits the default.
 const SIZE_LIMIT_EXCEPTIONS = {
-  'src/commands/installUpdate.ts': { maxLines: 538 },
-  'src/extension.ts': { maxFunctionLines: 64 },
+  'src/commands/installUpdate.ts': { maxLines: 435 },
+  'src/extension.ts': { maxFunctionLines: 63 },
   'src/providers/PackageItem.ts': { maxFunctionLines: 82 },
   'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
   'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },
-  'src/test/extension.test.ts': { maxLines: 1041 },
+  'src/test/extension.test.ts': { maxLines: 1037 },
   'src/test/installUpdate.unit.test.ts': { maxLines: 1555 },
   'src/test/packagesProvider.unit.test.ts': { maxLines: 4135 },
   'src/test/registryClient.unit.test.ts': { maxLines: 1360 },
@@ -20,7 +20,6 @@ const SIZE_LIMIT_EXCEPTIONS = {
   'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },
   'src/utils/auditClient.ts': { maxFunctionLines: 88 },
   'src/utils/bunConfig.ts': { maxFunctionLines: 61 },
-  'src/utils/shellTask.ts': { maxFunctionLines: 77 },
   'src/utils/yarnAuditClient.ts': { maxLines: 315 },
 };
 

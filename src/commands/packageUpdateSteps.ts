@@ -12,14 +12,21 @@ import {
   updateDependencyVersionsInFile,
   updateDependencyVersionsInFilesAtomically,
 } from '../utils';
+import type { ReleaseAgeState } from '../utils';
 
 export interface PackageVersionMutation {
   readonly capability: ResolvedPackageItem;
   readonly version: string;
 }
 
+export type PackageUpdate = PackageVersionMutation & {
+  readonly releaseAge?: ReleaseAgeState;
+  readonly source: 'latest' | 'selected';
+};
+
 export type PackageUpdateTaskOutcome
   = | { readonly kind: 'completed' }
+    | { readonly kind: 'cancelled' }
     | { readonly kind: 'unverified' }
     | { readonly kind: 'failed'; readonly message: string };
 
@@ -68,9 +75,13 @@ export async function runMarkedPackageUpdateTask<Update extends PackageVersionMu
   cwd?: string,
 ): Promise<PackageUpdateTaskOutcome> {
   logger.info(`Running update command: ${formatShellTaskCommandForLog(command)}`);
-  const exitCode = await runShellTaskAndWait(command, taskName, cwd);
-  if (exitCode !== 0) {
-    return { kind: 'failed', message: formatShellTaskFailureMessage(taskName, exitCode) };
+  const taskOutcome = await runShellTaskAndWait(command, taskName, cwd);
+  if (taskOutcome.kind === 'cancelled') {
+    logger.info(`Cancelled update task "${taskName}".`);
+    return { kind: 'cancelled' };
+  }
+  if (taskOutcome.exitCode !== 0) {
+    return { kind: 'failed', message: formatShellTaskFailureMessage(taskName, taskOutcome.exitCode) };
   }
   const refreshed = await refreshAndMarkPackageUpdates(updates, provider);
   if (refreshed === undefined) {
@@ -163,6 +174,19 @@ export function formatPartialUpdateFailure(
   labels: readonly string[],
   completedCount: number,
 ): string {
+  return vscode.l10n.t('failed to update packages — {0}', formatPartialUpdateDetails(reason, labels, completedCount));
+}
+
+/** Formats the roots completed and pending when a package update batch is cancelled. */
+export function formatPartialUpdateCancellation(
+  reason: string,
+  labels: readonly string[],
+  completedCount: number,
+): string {
+  return vscode.l10n.t('Package update was cancelled — {0}', formatPartialUpdateDetails(reason, labels, completedCount));
+}
+
+function formatPartialUpdateDetails(reason: string, labels: readonly string[], completedCount: number): string {
   const updated = labels.slice(0, completedCount);
   const notUpdated = labels.slice(completedCount);
   const reasonSentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
@@ -170,10 +194,5 @@ export function formatPartialUpdateFailure(
     ? vscode.l10n.t('Nothing was updated.')
     : vscode.l10n.t('Updated: {0}.', updated.join(', '));
   const notUpdatedSentence = vscode.l10n.t('Not updated: {0}.', notUpdated.join(', '));
-  return vscode.l10n.t(
-    'failed to update packages — {0} {1} {2}',
-    reasonSentence,
-    updatedSentence,
-    notUpdatedSentence,
-  );
+  return `${reasonSentence} ${updatedSentence} ${notUpdatedSentence}`;
 }

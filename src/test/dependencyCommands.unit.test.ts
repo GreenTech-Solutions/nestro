@@ -3,9 +3,12 @@ import * as vscode from 'vscode';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
+import { installUpdateCommand, updateAllVisibleCommand } from '../commands/installUpdate';
+import { runInstallCommand } from '../commands/runInstall';
 import { PackageItem, PackagesProvider } from '../providers';
 import {
   DependencyTypeConflictError,
+  logger,
   setVersionPin,
   showError,
   switchDependencyType,
@@ -504,6 +507,33 @@ describe('removePackageCommand()', () => {
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
+  it('clears remove progress and skips the error when the user cancels the task', async () => {
+    const provider = makeProvider();
+    const execution = { id: 'cancelled-remove', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const removal = removePackageCommand(
+      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      provider,
+    );
+
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await removal;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, undefined);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled remove task "Remove react".');
+  });
+
   it('removes a devDependency and prompts with the matching confirmation wording', async () => {
     const provider = makeProvider();
     const item = new PackageItem('eslint', '^8.0.0', undefined, 'none', false, undefined, '/workspace/package.json', true, '^');
@@ -623,6 +653,105 @@ describe('removePackageCommand()', () => {
   });
 });
 
+describe('cancelled update commands', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskListeners();
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
+  });
+
+  it('clears update progress, reloads state, and skips the error when the task is cancelled', async () => {
+    const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
+    const provider = makeProvider();
+    const execution = { id: 'cancelled-update', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const update = installUpdateCommand(item, provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await update;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, undefined);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled update task "Update react".');
+  });
+
+  it('clears install progress and skips the error when the task is cancelled', async () => {
+    const provider = makeProvider();
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+    const execution = { id: 'cancelled-install', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([
+      { fsPath: '/workspace/package.json', path: '/workspace/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const install = runInstallCommand(provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await install;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
+    expect(showError).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled install task "Install Dependencies".');
+  });
+
+  it('stops Update All with a cancellation message and no error toast', async () => {
+    const first = Object.assign(
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      { releaseAge: { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
+    );
+    const second = Object.assign(
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/package.json', false, '^'),
+      { releaseAge: { kind: 'held-back', version: '5.1.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
+    );
+    const provider = makeProvider();
+    provider.getVisibleOutdatedPackages = vi.fn(() => [first, second]);
+    provider.reissuePackageCapability = vi.fn(capability => Promise.resolve(capability));
+    const execution = { id: 'cancelled-update-all', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    vi.mocked(vscode.window.showWarningMessage)
+      .mockResolvedValueOnce('Update All' as never)
+      .mockResolvedValueOnce('Update Risky Packages' as never);
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const update = updateAllVisibleCommand(provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await update;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Package update was cancelled'),
+    );
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('The selected updates are inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+});
+
 function makeProvider(): PackagesProvider {
   const provider = {
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
@@ -669,4 +798,26 @@ function mockNextTaskExit(exitCode: number | undefined): void {
     }, 0);
     return Promise.resolve(execution);
   });
+}
+
+function mockProgressCancellation(): { cancel: () => void; dispose: ReturnType<typeof vi.fn> } {
+  let cancelListener: ((event: void) => unknown) | undefined;
+  const dispose = vi.fn();
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (listener: (event: void) => unknown) => {
+      cancelListener = listener;
+      return { dispose };
+    },
+  };
+  vi.mocked(vscode.window.withProgress).mockImplementationOnce((_options, task) => (
+    task({ report: vi.fn() }, token)
+  ));
+  return {
+    cancel: () => {
+      token.isCancellationRequested = true;
+      cancelListener?.(undefined);
+    },
+    dispose,
+  };
 }

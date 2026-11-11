@@ -637,18 +637,18 @@ suite('Shell Task Lifecycle', function () {
   }
 
   test('resolves with the process exit code on a successful task', async () => {
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
-    assert.strictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
+    assertTaskExitCode(outcome, 0);
   });
 
   test('resolves with the exact non-zero exit code on a failing task', async () => {
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
-    assertTaskExitCode(exitCode, 7);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 7), nextTaskName('Failure'));
+    assertTaskExitCode(outcome, 7);
   });
 
   test('listeners do not leak: a task run after a success resolves independently', async () => {
     const first = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Success'));
-    assert.strictEqual(first, 0);
+    assertTaskExitCode(first, 0);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 3), nextTaskName('Success-Rerun'));
     assertTaskExitCode(second, 3, 'A task started after a successful run must resolve on its own outcome');
@@ -659,7 +659,7 @@ suite('Shell Task Lifecycle', function () {
     assertTaskExitCode(first, 5);
 
     const second = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Failure-Rerun'));
-    assert.strictEqual(second, 0, 'A task started after a failing run must resolve on its own outcome');
+    assertTaskExitCode(second, 0, 'A task started after a failing run must resolve on its own outcome');
   });
 
   test('resolves with undefined and does not hang for a task that reports no exit code', async () => {
@@ -673,7 +673,7 @@ suite('Shell Task Lifecycle', function () {
     );
 
     const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('NoExitCode-Rerun'));
-    assert.strictEqual(rerun, 0, 'A task started afterwards must not be intercepted by the earlier run\'s listeners');
+    assertTaskExitCode(rerun, 0, 'A task started afterwards must not be intercepted by the earlier run\'s listeners');
   });
 
   test('resolves without hanging when the user terminates the task, and later tasks are unaffected', async () => {
@@ -687,14 +687,10 @@ suite('Shell Task Lifecycle', function () {
     execution.terminate();
 
     const outcome = await outcomePromise;
-    assert.strictEqual(
-      outcome,
-      undefined,
-      'A terminated task resolves through the same exit contract as a task with no reported exit code',
-    );
+    assert.deepStrictEqual(outcome, { kind: 'ended', exitCode: undefined });
 
     const rerun = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), nextTaskName('Terminate-Rerun'));
-    assert.strictEqual(rerun, 0, 'A task started after a termination must not be intercepted by the terminated run\'s listeners');
+    assertTaskExitCode(rerun, 0, 'A task started after a termination must not be intercepted by the terminated run\'s listeners');
   });
 });
 
@@ -746,8 +742,8 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     provider.markPackageUpdating(identity, { kind: 'update', target: '9.9.9' });
     assert.strictEqual(findPackageItem('left-pad')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
-    assert.strictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 0), 'Test Update left-pad');
+    assertTaskExitCode(outcome, 0);
 
     provider.invalidateUpdateCache();
     provider.markPackageUpdated(identity, '9.9.9');
@@ -767,8 +763,8 @@ suite('Shell Task Lifecycle: package update busy state', function () {
     provider.markPackageUpdating(identity, { kind: 'update', target: originalVersion });
     assert.strictEqual(findPackageItem('rimraf')?.operation?.kind, 'update', 'Item should be marked with an update operation while the task runs');
 
-    const exitCode = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
-    assert.notStrictEqual(exitCode, 0);
+    const outcome = await runShellTaskAndWait(buildExitWithCodeCommand(scripts, 1), 'Test Update rimraf');
+    assertTaskExitCode(outcome, 1);
 
     provider.markPackageUpdating(identity, undefined);
 

@@ -35,7 +35,7 @@ export type { ReleaseAgeState } from './releaseAge';
 export { runRootOperations, startRootOperations } from './rootOperation';
 export type { RootOperationResult } from './rootOperation';
 export { formatShellTaskCommandForLog, formatShellTaskFailureMessage, runShellTaskAndWait } from './shellTask';
-export type { ShellTaskCommand } from './shellTask';
+export type { ShellTaskCommand, ShellTaskOutcome } from './shellTask';
 export { formatStatusReport } from './statusReport';
 export type { StatusReportFailure, StatusReportFileLabel, StatusReportSnapshot } from './statusReport';
 export { compareRawVersions, getGreatestVersion, getUpdateType, isPreReleaseVersion, isVersionOutdated } from './versionUtils';

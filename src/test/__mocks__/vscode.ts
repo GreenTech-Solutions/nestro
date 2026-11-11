@@ -88,7 +88,7 @@ export const window = {
     _options: unknown,
     task: (progress: { report: () => void }, token: {
       isCancellationRequested: boolean;
-      onCancellationRequested: () => { dispose: () => void };
+      onCancellationRequested: (listener: (event: void) => unknown) => { dispose: () => void };
     }) => Promise<unknown>,
   ) => task(
     { report: vi.fn() },

@@ -1,5 +1,6 @@
 export { copyPackageNameCommand } from './copyPackageName';
-export { installUpdateCommand, runInstallCommand, runResolvedPackageVersion, updateAllVisibleCommand } from './installUpdate';
+export { installUpdateCommand, runResolvedPackageVersion, updateAllVisibleCommand } from './installUpdate';
+export { runInstallCommand } from './runInstall';
 export { openAuditReportCommand } from './openAuditReport';
 export { openOnNpmCommand } from './openOnNpm';
 export { openStatusReportCommand } from './openStatusReport';

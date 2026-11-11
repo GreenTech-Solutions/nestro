@@ -9,6 +9,7 @@ import {
   formatShellTaskFailureMessage,
   logger,
   runShellTaskAndWait,
+  type ShellTaskOutcome,
   showError,
 } from '../utils';
 import {
@@ -42,7 +43,7 @@ interface RemoveMarked {
 }
 
 interface RemoveOutcome {
-  readonly exitCode: number | undefined;
+  readonly taskOutcome: ShellTaskOutcome;
   readonly taskName: string;
 }
 
@@ -72,9 +73,9 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
       const command = client.buildRemoveCommand([checked.item.packageName]);
       logger.info(`Running remove command: ${formatShellTaskCommandForLog(command)}`);
       const taskName = vscode.l10n.t('Remove {0}', sanitizePackageText(checked.item.packageName));
-      const exitCode = await runShellTaskAndWait(command, taskName, checked.packageDirectory);
+      const taskOutcome = await runShellTaskAndWait(command, taskName, checked.packageDirectory);
       provider.invalidateUpdateCache();
-      return { exitCode, taskName };
+      return { taskOutcome, taskName };
     },
     reconcile: execution => reconcileRemove(execution, provider),
     reportError: error => showError(vscode.l10n.t('failed to remove package — {0}', describeError(error)), error),
@@ -115,10 +116,16 @@ async function reconcileRemove(execution: RemoveExecution, provider: PackagesPro
     clearMutationProgress(execution.marked.progress);
     return;
   }
-  const { exitCode, taskName } = execution.result;
-  if (exitCode !== 0) {
+  const { taskOutcome, taskName } = execution.result;
+  if (taskOutcome.kind === 'cancelled') {
+    logger.info(`Cancelled remove task "${taskName}".`);
     clearMutationProgress(execution.marked.progress);
-    showError(formatShellTaskFailureMessage(taskName, exitCode));
+    await provider.loadPackages();
+    return;
+  }
+  if (taskOutcome.exitCode !== 0) {
+    clearMutationProgress(execution.marked.progress);
+    showError(formatShellTaskFailureMessage(taskName, taskOutcome.exitCode));
   }
   await provider.loadPackages();
 }

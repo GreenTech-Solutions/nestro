@@ -275,7 +275,7 @@ describe('install command with a row rebuild in flight', () => {
     vi.mocked(runShellTaskAndWait).mockImplementation(async () => {
       await completeAuditDuringCommand();
       await writeFile(manifest, JSON.stringify({ dependencies: { react: '^2.0.0' } }));
-      return 0;
+      return { kind: 'ended', exitCode: 0 };
     });
 
     await installUpdateCommand(currentRow(provider), provider);
@@ -289,7 +289,7 @@ describe('install command with a row rebuild in flight', () => {
     const { provider } = fixture!;
     vi.mocked(runShellTaskAndWait).mockImplementation(async () => {
       await completeAuditDuringCommand();
-      return 1;
+      return { kind: 'ended', exitCode: 1 };
     });
 
     await installUpdateCommand(currentRow(provider), provider);

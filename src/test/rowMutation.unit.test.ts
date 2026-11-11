@@ -10,7 +10,7 @@ import { showError } from '../utils';
 const mutationMocks = vi.hoisted(() => {
   const lockError = new Error('Cannot lock /workspace/package.json: project root could not be resolved.');
   const resolveLockKey = vi.fn(() => Promise.resolve('/workspace'));
-  const runShellTask = vi.fn(() => Promise.resolve(0));
+  const runShellTask = vi.fn(() => Promise.resolve({ kind: 'ended' as const, exitCode: 0 }));
   const packageFilePaths = ['/workspace/a/package.json', '/workspace/b/package.json'];
   const pinAllResult = { count: 0, skippedFiles: packageFilePaths };
   const capability = {
@@ -85,7 +85,7 @@ describe('row mutation pipeline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mutationMocks.resolveLockKey.mockResolvedValue('/workspace');
-    mutationMocks.runShellTask.mockResolvedValue(0);
+    mutationMocks.runShellTask.mockResolvedValue({ kind: 'ended', exitCode: 0 });
     mutationMocks.resolvePackageItem.mockResolvedValue(mutationMocks.capability);
     mutationMocks.revalidatePackageItem.mockResolvedValue(mutationMocks.capability);
   });

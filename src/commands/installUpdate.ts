@@ -13,20 +13,16 @@ import type { ResolvedPackageItem } from '../providers';
 import { COMMAND_IDS, describeError } from '../shared';
 import {
   formatDependencySectionLabel,
-  formatHeldBackDate,
-  formatShellTaskCommandForLog,
-  formatShellTaskFailureMessage,
-  getPackageDirectory,
-  getWorkspacePackageFilePaths,
   logger,
-  runShellTaskAndWait,
   ShellTaskCommand,
   showError,
 } from '../utils';
 import type { ReleaseAgeState } from '../utils';
 import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
+import { confirmRiskyUpdates } from './updateRiskConfirmation';
 import {
   confirmBulkPackageUpdate,
+  formatPartialUpdateCancellation,
   formatPartialUpdateFailure,
   formatUnverifiedUpdateMessage,
   groupPackageMutationsByFile,
@@ -35,33 +31,22 @@ import {
   writeAndMarkPackageUpdates,
   writePackageUpdateBatch,
 } from './packageUpdateSteps';
-import type { PackageMutationGroup, PackageUpdateTaskOutcome, PackageVersionMutation } from './packageUpdateSteps';
-import { clearMutationProgress, markPackageCapabilities, markPackageIdentities, runRowMutation } from './rowMutation';
-import type { IdentityMutationProgress, RowMutationExecution, RowMutationProgress } from './rowMutation';
+import type { PackageMutationGroup, PackageUpdate, PackageUpdateTaskOutcome } from './packageUpdateSteps';
+import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
+import type { RowMutationExecution, RowMutationProgress } from './rowMutation';
 
 const clientManager = new ClientManager();
-
-type PackageUpdate = PackageVersionMutation & {
-  readonly releaseAge?: ReleaseAgeState;
-  readonly source: 'latest' | 'selected';
-};
 
 type ImmediateUpdateRun
   = | { readonly kind: 'completed' }
     | { readonly kind: 'cancelled' }
+    | { readonly kind: 'single-cancelled' }
     | { readonly kind: 'single-failed'; readonly message: string }
     | { readonly kind: 'single-unverified' }
+    | { readonly kind: 'group-cancelled'; readonly reason: string }
     | { readonly kind: 'group-failed'; readonly reason: string; readonly error?: unknown }
+    | { readonly kind: 'stopped-cancelled'; readonly message: string }
     | { readonly kind: 'stopped'; readonly message: string; readonly error?: unknown };
-
-interface InstallPackageSelection {
-  readonly kind: 'selected';
-  readonly packageFilePath: string;
-}
-
-interface CancelledInstallPackageSelection {
-  readonly kind: 'cancelled';
-}
 
 interface UpdateItemRequest {
   readonly kind: 'item';
@@ -104,15 +89,6 @@ type BulkUpdateApplied
     | { readonly kind: 'immediate'; readonly outcome: ImmediateUpdateRun };
 
 type BulkUpdateExecution = RowMutationExecution<BulkUpdateChecked, BulkUpdateMarked, BulkUpdateApplied>;
-
-interface InstallTaskChecked {
-  readonly command: ShellTaskCommand;
-  readonly taskName: string;
-  readonly cwd: string;
-  readonly packageFilePath: string;
-}
-
-type InstallTaskMarked = { readonly progress: IdentityMutationProgress | undefined };
 
 export async function installUpdateCommand(item: unknown, provider: PackagesProvider): Promise<void> {
   await runUpdateMutation({ kind: 'item', item, provider });
@@ -188,45 +164,6 @@ async function resolveUpdateBatch(request: UpdateRequest): Promise<UpdateBatchMu
     updates: [{ capability, version, source: 'latest' }],
     provider: request.provider,
   };
-}
-
-export async function runInstallCommand(provider?: PackagesProvider): Promise<void> {
-  await runRowMutation<PackagesProvider | undefined, InstallPackageSelection, InstallTaskChecked, InstallTaskMarked, number | undefined>(provider, {
-    guard: () => true,
-    resolve: async () => {
-      const selection = await resolveInstallPackageSelection();
-      if (selection === undefined) {
-        throw new Error(vscode.l10n.t('No workspace package.json found.'));
-      }
-      return selection.kind === 'cancelled' ? undefined : selection;
-    },
-    lockTargets: selection => [selection.packageFilePath],
-    revalidate: async (selection) => {
-      const cwd = getPackageDirectory(selection.packageFilePath);
-      const client = await clientManager.getClient(cwd);
-      const command = client.buildInstallCommand();
-      logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
-      return { command, taskName: vscode.l10n.t('Install Dependencies'), cwd, packageFilePath: selection.packageFilePath };
-    },
-    mark: checked => ({
-      progress: provider === undefined
-        ? undefined
-        : markPackageIdentities(provider, provider.getPackageIdentitiesForFile(checked.packageFilePath), { kind: 'install' }),
-    }),
-    apply: async ({ command, taskName, cwd }) => {
-      const exitCode = await runShellTaskAndWait(command, taskName, cwd);
-      if (exitCode !== 0) {
-        showError(formatShellTaskFailureMessage(taskName, exitCode));
-      }
-      return exitCode;
-    },
-    reconcile: (execution) => {
-      if (execution.marked.progress !== undefined) {
-        clearMutationProgress(execution.marked.progress);
-      }
-    },
-    reportError: error => showError(vscode.l10n.t('failed to run install — {0}', describeError(error)), error),
-  });
 }
 
 export async function updateAllVisibleCommand(provider: PackagesProvider): Promise<void> {
@@ -346,6 +283,14 @@ async function reconcileBulkUpdates(execution: BulkUpdateExecution, provider: Pa
     await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a failed Update All.');
     showError(execution.result.outcome.message, execution.result.outcome.error);
   }
+  else if (execution.result.outcome.kind === 'stopped-cancelled') {
+    await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a cancelled Update All.');
+    logger.info(execution.result.outcome.message);
+    void vscode.window.showInformationMessage(execution.result.outcome.message);
+  }
+  else if (execution.result.outcome.kind === 'single-cancelled') {
+    await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a cancelled update.');
+  }
   else if (execution.result.outcome.kind === 'single-failed') {
     showError(execution.result.outcome.message);
   }
@@ -366,23 +311,23 @@ async function runImmediateUpdateGroups(
     message: formatPartialUpdateFailure(reason, formatUpdateGroupLabels(groups), completedCount),
     error,
   });
+  const stoppedCancelled = (reason: string): ImmediateUpdateRun => ({
+    kind: 'stopped-cancelled',
+    message: formatPartialUpdateCancellation(reason, formatUpdateGroupLabels(groups), completedCount),
+  });
   try {
     for (const group of groups) {
       const groupUpdates = checked.kind === 'bulk'
         ? await revalidateUpdates(group.updates, provider, true)
         : group.updates;
       if (groupUpdates === undefined) {
-        return checked.kind === 'single'
-          ? { kind: 'cancelled' }
-          : stopped(vscode.l10n.t('the package list changed while updating.'));
+        return stopWhenPackageListChanges(checked.kind, stopped);
       }
       const cwd = groupUpdates[0].capability.packageDirectory;
       const client = await clientManager.getClient(cwd);
       const beforeTask = await revalidateUpdates(groupUpdates, provider, checked.kind === 'bulk');
       if (beforeTask === undefined) {
-        return checked.kind === 'single'
-          ? { kind: 'cancelled' }
-          : stopped(vscode.l10n.t('the package list changed while updating.'));
+        return stopWhenPackageListChanges(checked.kind, stopped);
       }
       if (!await confirmRiskyUpdates(beforeTask, new Set(checked.confirmedRiskyUpdates))) {
         return { kind: 'cancelled' };
@@ -397,7 +342,11 @@ async function runImmediateUpdateGroups(
         completedCount += 1;
         continue;
       }
-      return outcome.kind === 'group-failed' ? stopped(outcome.reason, outcome.error) : outcome;
+      return outcome.kind === 'group-failed'
+        ? stopped(outcome.reason, outcome.error)
+        : outcome.kind === 'group-cancelled'
+          ? stoppedCancelled(outcome.reason)
+          : outcome;
     }
   }
   catch (error) {
@@ -407,6 +356,15 @@ async function runImmediateUpdateGroups(
     return stopped(describeError(error), error);
   }
   return { kind: 'completed' };
+}
+
+function stopWhenPackageListChanges(
+  kind: BulkUpdateChecked['kind'],
+  stopBulk: (reason: string) => ImmediateUpdateRun,
+): ImmediateUpdateRun {
+  return kind === 'single'
+    ? { kind: 'cancelled' }
+    : stopBulk(vscode.l10n.t('the package list changed while updating.'));
 }
 
 async function runMarkedUpdateGroup(
@@ -447,6 +405,14 @@ async function runMarkedUpdateGroup(
     return { kind: 'completed' };
   }
   clearMutationProgress(progress);
+  if (outcome.kind === 'cancelled') {
+    return checked.kind === 'single'
+      ? { kind: 'single-cancelled' }
+      : {
+          kind: 'group-cancelled',
+          reason: vscode.l10n.t('task "{0}" was cancelled.', taskName),
+        };
+  }
   if (outcome.kind === 'unverified') {
     return checked.kind === 'single'
       ? { kind: 'single-unverified' }
@@ -458,60 +424,6 @@ async function runMarkedUpdateGroup(
   return checked.kind === 'single'
     ? { kind: 'single-failed', message: outcome.message }
     : { kind: 'group-failed', reason: outcome.message };
-}
-
-async function confirmRiskyUpdates(
-  updates: readonly PackageUpdate[],
-  confirmedRiskyUpdates: Set<string>,
-): Promise<boolean> {
-  const updateKey = (capability: ResolvedPackageItem, version: string): string => [
-    capability.packageFilePath,
-    capability.identity.section,
-    capability.item.packageName,
-    version,
-  ].join('\u0000');
-  const riskyUpdates = updates.filter(({ capability, version, releaseAge: selectedReleaseAge }) => {
-    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
-    return releaseAge?.kind === 'held-back'
-      && releaseAge.version === version
-      && !confirmedRiskyUpdates.has(updateKey(capability, version));
-  });
-  if (riskyUpdates.length === 0) {
-    return true;
-  }
-
-  const labels = riskyUpdates.map(({ capability, version, releaseAge: selectedReleaseAge }) => {
-    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
-    const eligibleAt = releaseAge?.kind === 'held-back' ? formatHeldBackDate(releaseAge.eligibleAt) : '';
-    return vscode.l10n.t(
-      '{0}@{1} (held back until {2})',
-      sanitizePackageText(capability.item.packageName),
-      sanitizePackageText(version),
-      sanitizePackageText(eligibleAt),
-    );
-  });
-  const updateRiskyAction = vscode.l10n.t('Update Risky Packages');
-  const riskyPrompt = riskyUpdates.length === 1
-    ? vscode.l10n.t(
-        'The selected update is inside the minimum release-age window:\n{0}\nUpdate anyway?',
-        labels.join('\n'),
-      )
-    : vscode.l10n.t(
-        'The selected updates are inside the minimum release-age window:\n{0}\nUpdate anyway?',
-        labels.join('\n'),
-      );
-  const answer = await vscode.window.showWarningMessage(
-    riskyPrompt,
-    { modal: true },
-    updateRiskyAction,
-  );
-  if (answer !== updateRiskyAction) {
-    return false;
-  }
-  riskyUpdates.forEach(({ capability, version }) => {
-    confirmedRiskyUpdates.add(updateKey(capability, version));
-  });
-  return true;
 }
 
 function formatUpdateGroupLabels(groups: readonly PackageMutationGroup<PackageUpdate>[]): string[] {
@@ -553,29 +465,4 @@ async function revalidateUpdates(
     checked.push({ ...update, capability, version });
   }
   return checked;
-}
-
-async function resolveInstallPackageSelection(): Promise<InstallPackageSelection | CancelledInstallPackageSelection | undefined> {
-  const packageFilePaths = await getWorkspacePackageFilePaths();
-  if (packageFilePaths.length === 0) {
-    return undefined;
-  }
-  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-  const labels = resolvePackageFileLabels(packageFilePaths, folders, getLocalizedPackageLabelFormatting());
-  if (labels.length === 1) {
-    return { kind: 'selected', packageFilePath: labels[0].packageFilePath };
-  }
-
-  const selected = await vscode.window.showQuickPick(
-    labels.map(({ packageFilePath, owner }) => ({
-      label: owner.label,
-      packageFilePath,
-    })),
-    { placeHolder: vscode.l10n.t('Select the package.json to install dependencies for') },
-  );
-  if (selected === undefined) {
-    return { kind: 'cancelled' };
-  }
-
-  return { kind: 'selected', packageFilePath: selected.packageFilePath };
 }
