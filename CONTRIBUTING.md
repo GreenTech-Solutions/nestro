@@ -116,9 +116,10 @@ and breakpoints resolve against the actual entry point. Press **F5** to build an
 VS Code Extension Host.
 
 `pnpm run test:unit:coverage` uses the V8 provider. Coverage includes `src/**/*.ts` and excludes
-`src/test/**`. The thresholds use `perFile: true`: the global floor is checked independently
-for every included file (statements 80%, branches 70%, functions 86%, lines 84%), and the
-module-specific entries in [vitest.config.ts](vitest.config.ts) can impose stricter floors.
+`src/test/**`. With `perFile: true`, the global floor and each source-area floor come from the
+weakest measured file per metric, rounded down to an integer; the listed tool gates stay at 100%
+on all four metrics. A floor moves up only when its weakest file improves, and each new measured
+file must meet its area's floor.
 
 ### Extension Host integration tests
 
