@@ -1,0 +1,36 @@
+{
+  "actionlint": {
+    "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
+    "version": "1.7.12"
+  },
+  "actions": {
+    "HaaLeo/publish-vscode-extension": {
+      "sha": "1b8df468b849f76a143b8c18bf0ffa2075398d12",
+      "tag": "v2.1.0"
+    },
+    "actions/attest-build-provenance": {
+      "sha": "4d101475d8b20a2381f78447822ac1eab6504dd8",
+      "tag": "v4.2.2"
+    },
+    "actions/checkout": {
+      "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "tag": "v7.0.1"
+    },
+    "actions/download-artifact": {
+      "sha": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "tag": "v8.0.1"
+    },
+    "actions/setup-node": {
+      "sha": "820762786026740c76f36085b0efc47a31fe5020",
+      "tag": "v7.0.0"
+    },
+    "actions/upload-artifact": {
+      "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "tag": "v7.0.1"
+    },
+    "pnpm/setup": {
+      "sha": "fbda4c85fc2e1e08721cd8763afea8f48d60f024",
+      "tag": "v3.0.0"
+    }
+  }
+}

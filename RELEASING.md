@@ -82,6 +82,10 @@ ref name alone:
   creating (or verifying an existing) tag `v<version>` pointing at that exact `source_sha`.
 - `release.yml` (`publish` job) re-derives the candidate from `candidate.json` and checks
   `GITHUB_REF = refs/tags/v<version>` plus the tag's target commit against `sourceSha`.
+- The candidate check is one script, `.github/scripts/release/verify-candidate.sh`, shared by the
+  dispatch (`dispatch` mode) and publish (`publish` mode) jobs; the `finalize` job reuses its bundle
+  checks through `candidate-lib.sh`. All values (bundle file names, key list, schema versions,
+  workflow names, signer path) come from `.github/release-contract.json`.
 
 ### Artifacts and where they come from
 
@@ -89,7 +93,7 @@ ref name alone:
 |---|---|---|---|
 | Verify evidence | `ci.yml` job `package`, into `$CI_ARTIFACT_DIR` (`dist/ci`) | `*.vsix`, `*.vsix.manifest.txt`, `*.vsix.sha256` (from `pnpm run check:vsce`), `evidence.json` (from `pnpm run ci:evidence`), `sbom.json` + `provenance.json` (from `pnpm run release:provenance`) | `verify-evidence-<run_id>-<run_attempt>`, retained 7 days |
 | GitHub attestation | `ci.yml` job `package`, step "Attest the exact VSIX subject" (`actions/attest-build-provenance`), only on `push` to `master` | a signed provenance attestation on the VSIX subject digest | attached to the workflow run, verified later with `gh attestation verify` |
-| Release candidate | `release-candidate.yml`, `pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version 2: `sourceSha`, `ciRunId`, `ciRunAttempt`, `version`, `vsixFile`, `digest`, `manifestSha256`, `sbomSha256`, `provenanceSha256`, `notes`, …) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
+| Release candidate | `release-candidate.yml`, `pnpm run release:candidate --artifact-dir dist/ci --out-dir dist/release-candidate` | the same VSIX/manifest/sha256/sbom/provenance plus `candidate.json` (schema version and key list: `candidateKeys` and `schemaVersions` in `.github/release-contract.json`) | `release-candidate-<version>-<sourceSha>`, retained 90 days, only when `v<version>` has no tag yet |
 | GitHub Release | `release.yml` job `finalize` | `<name>.vsix`, `.manifest.txt`, `.sha256`, `sbom.json`, `provenance.json`, `candidate.json` | attached to the `v<version>` GitHub Release |
 
 Recompute and compare digests by hand instead of trusting the number in a JSON file:
@@ -108,14 +112,14 @@ it independently.
 ### Size and file-count budget
 
 `pnpm run check:vsce` (backed by `src/tools/vsixPolicy.ts`) rejects a package that exceeds the
-measured baseline plus headroom: compressed size budget `1126757` bytes (baseline `901406` bytes
-+ 25%), packaged file count budget `26` files (baseline `16` files + 10). It also runs the
+measured baseline plus headroom: the compressed size budget and the packaged file count budget are
+derived from `vsixBudget` in `.github/release-contract.json` (baseline plus headroom). It also runs the
 allowlist/forbidden-class/secret-pattern checks described in `src/tools/vsixPolicy.ts` over the
 exact package `vsce` produced. The post-publish comparison in §6 applies these same two budgets
 the same way: the file count is the entries under `extension/` (the two `vsce` metadata entries do
-not count) and the byte budget is the size of the `.vsix` file itself. Changing either budget
-number is a separate, reviewed commit that updates `src/tools/vsixPolicy.ts`, the `release.yml`
-comparison step and its copy in `src/tools/releaseWorkflowPolicy.ts` together, not something to
+not count) and the byte budget is the size of the `.vsix` file itself. Changing a budget is a
+separate, reviewed commit that edits `.github/release-contract.json` and the matching literals in
+the `release.yml` comparison step (`pnpm run ci:policy` fails until they agree), not something to
 adjust ad hoc during a release.
 
 ## 3. Audits and signatures
@@ -130,7 +134,7 @@ the working tree — do not run them by hand on a release commit.
 |---|---|---|---|
 | `pnpm run audit:dependencies` | no arguments (an extra argument is a hard error) | Runs `pnpm audit --prod --json` and `pnpm audit --json`: no advisory at Moderate or above in a production (bundled) dependency and no Critical advisory anywhere; every other advisory is printed as a warning (`::warning` in GitHub Actions). A registry error, empty, malformed, or inconsistent report is rejected rather than read as a pass. | CLI stdout/stderr |
 | `pnpm run audit:signatures` | no arguments (an extra argument is a hard error) | `pnpm audit signatures --json` and validates the report shape itself: every audited package carried a verified registry signature; an empty, malformed, mismatched-count, or plain-advisory report is rejected rather than read as a pass. | CLI stdout/stderr |
-| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against a reviewed allowlist, `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
+| `pnpm run ci:policy` | no arguments | The pinned action SHAs in every `.github/workflows/*.yml` file against the reviewed-actions registry (`.github/reviewed-actions.json`), `CODEOWNERS`, the Dependabot config, `.releaserc.json`, and the structural policy of all five workflow files (secret boundaries, environment scoping, permission scoping, exact publish-step shape). | CLI stdout/stderr |
 | `pnpm run ci:evidence --out-dir <relative-directory>` | exactly `--out-dir <dir>` | Well-formed CI identity for the current run (full 40-char commit SHA, positive-integer run id/attempt, an `eventName`, the VSIX file name and digest) and writes `evidence.json` (`releaseEligible: false` always — this file is never itself release authority). | `<out-dir>/evidence.json` |
 | `pnpm run release:provenance --artifact-dir <relative-directory>` | exactly `--artifact-dir <dir>` | Builds the SBOM (`sbom.json`, runtime dependency list) and the provenance evidence file (`provenance.json`: source SHA, CI run id/attempt, event name, artifact digest, attestation subject/digest, signer workflow) for the artifact already in that directory. | `<artifact-dir>/sbom.json`, `<artifact-dir>/provenance.json` |
 | `pnpm run release:prepare --out-dir <relative-directory>` | exactly `--out-dir <dir>`; requires `RELEASE_REPOSITORY_URL` | Computes the next semantic-release version and changelog entry from commit history. **Mutating:** when a release is needed it rewrites `package.json` and `CHANGELOG.md` in the working tree; only `release-prepare.yml` runs it, to draft the version PR. | `<out-dir>/notes.md` and the tool's own release-needed/version outputs |
@@ -165,16 +169,28 @@ mid-publish and cannot cancel one in flight.
 
 What the `publish` job does today, once approved:
 
-1. Re-verifies the candidate run, artifact and `candidate.json` (§2), then runs
-   `gh attestation verify` against the GitHub attestation created in `ci.yml`.
-2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension@1b8df46...`
-   (pinned `v2.1.0`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
+1. Checks out only `.github/scripts` and `.github/release-contract.json` (sparse, non-cone) into
+   `reviewed-source/` at `github.sha` — the commit of the tag the workflow was dispatched on, the
+   same commit that defines the workflow file itself — with `persist-credentials: false`. It is the
+   only checkout in the job and its first step, so it precedes every credential step. The shell steps
+   then run as `bash reviewed-source/.github/scripts/release/<script>.sh`: `verify-run.sh` re-verifies
+   the candidate run, `verify-candidate.sh publish` re-verifies the artifact and `candidate.json` (§2;
+   it also asserts that `github.sha` equals the manifest's `sourceSha`, i.e. the scripts that ran are
+   the released commit), and `verify-attestation.sh` runs `gh attestation verify` against the GitHub
+   attestation created in `ci.yml`. None of these steps receives `VSCE_PAT` or `OVSX_PAT`.
+2. Publishes to the Visual Studio Marketplace via `HaaLeo/publish-vscode-extension`
+   (SHA and tag pinned in `.github/reviewed-actions.json`) with the token passed through a step-level `env:` block — `env: VSCE_PAT: ${{
    secrets.VSCE_PAT }}` and `with: pat: ${{ env.VSCE_PAT }}` — plus `registryUrl:
    https://marketplace.visualstudio.com`, `skipDuplicate: true`.
 3. Publishes to Open VSX with the same pinned action and the same shape (`env: OVSX_PAT: ${{
    secrets.OVSX_PAT }}`, `with: pat: ${{ env.OVSX_PAT }}`), `registryUrl: https://open-vsx.org`,
    `skipDuplicate: true`.
 4. Downloads both freshly published copies and compares them against the candidate (§6).
+
+`release-dispatch.yml` and the `finalize` job take the same first-step sparse checkout at `github.sha`
+(`persist-credentials: false`). The scripts therefore come from the commit that defines the running workflow
+file, which is no less trusted than the workflow itself, and never from a commit that is still being
+validated. The checkout is the only place a release job fetches repository content.
 
 Dated facts about the credentials in use, current as of 2026-09-18:
 
@@ -222,12 +238,10 @@ that nothing changed afterward:
 
 1. Re-download both URLs above (`curl -L --compressed -o marketplace.vsix ...`, `curl -L --compressed -o openvsx.vsix ...`)
    and `shasum -a 256` them against the GitHub Release asset.
-2. `src/tools/publishedArtifact.ts` exports `comparePublishedVsix()`, which implements exactly
-   the identity/normalized-manifest comparison above in code — **it has no CLI or `package.json`
-   script yet**. Until one exists, replicate it by hand rather than inventing a command that does
-   not exist: `unzip -l` both files, diff the member lists, `shasum -a 256` each member, and
-   compare `extension/package.json`'s `name`/`version`/`publisher` and
-   `extension.vsixmanifest`'s `Identity` attributes between the two archives and the candidate.
+2. `.github/scripts/release/compare-published.py` implements exactly the identity/normalized-manifest
+   comparison above (stdlib only). Run it against the files from step 1:
+   `python3 -I .github/scripts/release/compare-published.py compare <candidate.vsix> marketplace.vsix openvsx.vsix`
+   — it exits non-zero with the reason on any mismatch.
 3. Open both listing pages and check: the published version number, the rendered README, all
    four screenshots, and the repository/issues/homepage links.
 4. Check the README `Verify` badge (`https://img.shields.io/github/actions/workflow/status/GreenTech-Solutions/nestro/ci.yml?branch=master&label=verify`)

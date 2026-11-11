@@ -7,11 +7,14 @@ import {
   CODEOWNERS_PATH,
   createNodeCiPolicyCliDependencies,
   DEPENDABOT_CONFIG_PATH,
+  loadReviewedActionsRegistry,
   RELEASE_CANDIDATE_WORKFLOW_PATH,
   RELEASE_CONFIG_PATH,
   RELEASE_DISPATCH_WORKFLOW_PATH,
   RELEASE_PREPARE_WORKFLOW_PATH,
   RELEASE_WORKFLOW_PATH,
+  REVIEWED_ACTIONS_PATH,
+  reviewedActionReference,
   runCiPolicyCli,
 } from '../tools';
 import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
@@ -19,10 +22,11 @@ import type { CiPolicyCliDependencies, WorkflowPolicySource } from '../tools';
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const releaseWorkflowPath = RELEASE_WORKFLOW_PATH;
 const canonicalReleaseSource = readFile(resolve(repositoryRoot, releaseWorkflowPath), 'utf8');
+const downloadArtifactSha = loadReviewedActionsRegistry(repositoryRoot).actions['actions/download-artifact'].sha;
 
 const canonicalPolicyReaders: Pick<
   CiPolicyCliDependencies,
-  'readCodeowners' | 'readDependabotConfigs' | 'readReleaseConfig'
+  'readCodeowners' | 'readDependabotConfigs' | 'readReleaseConfig' | 'readReviewedActions'
 > = {
   readCodeowners: () => readFile(resolve(repositoryRoot, CODEOWNERS_PATH), 'utf8'),
   readDependabotConfigs: async () => [{
@@ -30,6 +34,7 @@ const canonicalPolicyReaders: Pick<
     source: await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH), 'utf8'),
   }],
   readReleaseConfig: () => readFile(resolve(repositoryRoot, RELEASE_CONFIG_PATH), 'utf8'),
+  readReviewedActions: () => readFile(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH), 'utf8'),
 };
 
 async function readCanonicalWorkflows(): Promise<WorkflowPolicySource[]> {
@@ -73,7 +78,7 @@ describe('CI policy CLI', () => {
     })).resolves.toBe(1);
     expect(writeOut).not.toHaveBeenCalled();
     expect(writeError).toHaveBeenCalled();
-    expect(writeError.mock.calls.some(([message]) => String(message).includes('[least-permissions]'))).toBe(true);
+    expect(writeError.mock.calls.some(([message]) => String(message).includes('[permissions-contract]'))).toBe(true);
   });
 
   it.each([
@@ -81,6 +86,7 @@ describe('CI policy CLI', () => {
     ['the CODEOWNERS reader', 'readCodeowners'],
     ['the Dependabot reader', 'readDependabotConfigs'],
     ['the release config reader', 'readReleaseConfig'],
+    ['the reviewed registry reader', 'readReviewedActions'],
   ] as const)('reports a failure from %s', async (_label, rejectedReader) => {
     const writeError = vi.fn();
     const rejected = () => Promise.reject(new Error('read denied'));
@@ -95,6 +101,9 @@ describe('CI policy CLI', () => {
       readReleaseConfig: rejectedReader === 'readReleaseConfig'
         ? rejected
         : canonicalPolicyReaders.readReleaseConfig,
+      readReviewedActions: rejectedReader === 'readReviewedActions'
+        ? rejected
+        : canonicalPolicyReaders.readReviewedActions,
       readWorkflows: rejectedReader === 'readWorkflows' ? rejected : readCanonicalWorkflows,
       writeOut: vi.fn(),
       writeError,
@@ -135,6 +144,7 @@ describe('CI policy CLI', () => {
       expect(dependabotConfigs.map(config => config.path)).toEqual([DEPENDABOT_CONFIG_PATH]);
       expect(dependabotConfigs[0].source).toContain('package-ecosystem: github-actions');
       await expect(dependencies.readReleaseConfig?.()).resolves.toContain('@semantic-release/commit-analyzer');
+      await expect(dependencies.readReviewedActions()).resolves.toContain('"actionlint"');
       dependencies.writeOut('accepted');
       dependencies.writeError('rejected');
       expect(output).toHaveBeenCalledWith('accepted\n');
@@ -220,7 +230,7 @@ describe('CI policy CLI', () => {
   it.each([
     ['mutable tag', 'actions/download-artifact@v8', 'immutable-action'],
     ['arbitrary SHA', `actions/download-artifact@${'f'.repeat(40)}`, 'reviewed-action'],
-    ['substituted locator', 'attacker/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c', 'reviewed-action'],
+    ['substituted locator', `attacker/download-artifact@${downloadArtifactSha}`, 'reviewed-action'],
   ])('rejects a %s in release.yml with a path-qualified error', async (_label, replacement, rule) => {
     const workflows = await readCanonicalWorkflows();
     const release = workflows.find(workflow => workflow.path === releaseWorkflowPath);
@@ -234,7 +244,7 @@ describe('CI policy CLI', () => {
         ? {
             ...workflow,
             source: workflow.source.replace(
-              'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+              reviewedActionReference('actions/download-artifact'),
               replacement,
             ),
           }
@@ -288,6 +298,7 @@ describe('CI policy CLI', () => {
           await readFile(resolve(repositoryRoot, DEPENDABOT_CONFIG_PATH)),
         ),
         writeFile(resolve(temporaryRoot, RELEASE_CONFIG_PATH), await readFile(resolve(repositoryRoot, RELEASE_CONFIG_PATH))),
+        writeFile(resolve(temporaryRoot, REVIEWED_ACTIONS_PATH), await readFile(resolve(repositoryRoot, REVIEWED_ACTIONS_PATH))),
         writeFile(resolve(workflowsDirectory, 'release.yml'), await canonicalReleaseSource),
         writeFile(resolve(workflowsDirectory, 'release-candidate.yml'), await readFile(resolve(repositoryRoot, RELEASE_CANDIDATE_WORKFLOW_PATH))),
         writeFile(resolve(workflowsDirectory, 'release-dispatch.yml'), await readFile(resolve(repositoryRoot, RELEASE_DISPATCH_WORKFLOW_PATH))),
@@ -337,7 +348,49 @@ describe('CI policy CLI', () => {
       writeError,
     })).resolves.toBe(1);
     expect(writeError).toHaveBeenCalledWith(expect.stringContaining(
-      `[quality-gate] ${CI_WORKFLOW_PATH}:`,
+      `[step-contract] ${CI_WORKFLOW_PATH}:`,
     ));
+  });
+
+  it('reports a malformed registry as a path-qualified violation', async () => {
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readReviewedActions: () => Promise.resolve('{ "actions": '),
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledWith(expect.stringContaining(`[reviewed-registry] ${REVIEWED_ACTIONS_PATH}: invalid JSON`));
+  });
+
+  it('rejects a registry entry that no workflow uses', async () => {
+    const registrySource = JSON.parse(await canonicalPolicyReaders.readReviewedActions()) as { actions: Record<string, unknown> };
+    registrySource.actions['owner/unused'] = { sha: 'f'.repeat(40), tag: 'v1.0.0' };
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readReviewedActions: () => Promise.resolve(JSON.stringify(registrySource)),
+      readWorkflows: readCanonicalWorkflows,
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledExactlyOnceWith(
+      `[unused-registry-entry] ${REVIEWED_ACTIONS_PATH}: owner/unused is in the reviewed registry but no workflow uses it`,
+    );
+  });
+
+  it('rejects YAML anchors in ci.yml through the shared strict loader', async () => {
+    const workflows = await readCanonicalWorkflows();
+    const writeError = vi.fn();
+    await expect(runCiPolicyCli({
+      ...canonicalPolicyReaders,
+      readWorkflows: () => Promise.resolve(workflows.map(workflow => workflow.path === CI_WORKFLOW_PATH
+        ? { ...workflow, source: workflow.source.replace('contents: read', 'contents: &level read') }
+        : workflow)),
+      writeOut: vi.fn(),
+      writeError,
+    })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledWith(expect.stringContaining(`[yaml] ${CI_WORKFLOW_PATH}: Workflow must not use YAML anchors or aliases`));
   });
 });

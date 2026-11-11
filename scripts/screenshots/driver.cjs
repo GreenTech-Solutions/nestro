@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const MARKERS_DIR = process.env.NESTRO_CAPTURE_MARKERS_DIR;
 const STATES = (process.env.NESTRO_CAPTURE_STATES || '').split(',').filter(Boolean);
-const PARAMS = JSON.parse(process.env.NESTRO_CAPTURE_PARAMS || '{}');
+const PARAMS = require('./config.json').params;
 const LOG_FILE = path.join(MARKERS_DIR, 'driver.log');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -69,7 +69,7 @@ exports.run = async function run() {
 
   if (STATES.some(state => state !== 'audit')) {
     fireCommand('nestro.checkUpdates');
-    await sleep(PARAMS.updateWaitMs ?? 30000);
+    await sleep(PARAMS.updateWaitMs);
     await runCommand('notifications.clearAll');
   }
 
@@ -79,7 +79,7 @@ exports.run = async function run() {
   }
 
   if (STATES.includes('filters')) {
-    await runCommand('nestro.setFilter', PARAMS.filter ?? 'patch');
+    await runCommand('nestro.setFilter', PARAMS.filter);
     await sleep(800);
     fireCommand('nestro.showFilterPicker');
     await sleep(1500);
@@ -93,7 +93,7 @@ exports.run = async function run() {
 
   if (STATES.includes('pickVersion')) {
     // The tree's own PackageItem instances are the only argument nestro.pickVersion
-    // accepts; the devext hook records them as they are constructed (see capture.mjs).
+    // accepts; hook.cjs records them as they are constructed (see capture.mjs).
     // A missing or empty registry means the hook did not install, and a missing row means
     // the fixture/target drifted — both would otherwise fire pickVersion with `undefined`
     // and silently capture a frame with no QuickPick open, so both are hard failures.
@@ -111,14 +111,14 @@ exports.run = async function run() {
       }
     }
     await sleep(500);
-    const targetName = PARAMS.pickName ?? 'express';
+    const targetName = PARAMS.pickName;
     const item = registry.items.filter(candidate => candidate.packageName === targetName).pop();
     log(`registry items: ${registry.items.length}; picked ${targetName}: ${!!item}`);
     if (!item) {
       throw new Error(`no PackageItem named "${targetName}" was recorded by the hook (registry has ${registry.items.length} item(s)); check the fixture dependencies and --states.`);
     }
     fireCommand('nestro.pickVersion', item);
-    await sleep(PARAMS.pickWaitMs ?? 8000);
+    await sleep(PARAMS.pickWaitMs);
     markReady('pickVersion');
     await waitForDone('pickVersion');
     await runCommand('workbench.action.closeQuickOpen');
@@ -132,7 +132,7 @@ exports.run = async function run() {
 
   if (STATES.includes('audit')) {
     fireCommand('nestro.runAudit');
-    await sleep(PARAMS.auditWaitMs ?? 30000);
+    await sleep(PARAMS.auditWaitMs);
     await runCommand('notifications.clearAll');
     await sleep(300);
     markReady('audit');

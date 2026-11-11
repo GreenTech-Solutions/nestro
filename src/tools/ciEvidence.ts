@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import { bundleFileName, RELEASE_CONTRACT } from './releaseContract';
 
 const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\r?\n?$/u;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -15,7 +16,7 @@ export interface CiEvidenceEnvironment {
 }
 
 export interface CiEvidence {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: number;
   readonly sourceSha: string;
   readonly runId: string;
   readonly runAttempt: string;
@@ -60,17 +61,17 @@ export async function createCiEvidence(
   environment: CiEvidenceEnvironment,
 ): Promise<CiEvidence> {
   const entries = await readdir(artifactDir);
-  const vsixFiles = entries.filter(entry => entry.endsWith('.vsix'));
+  const vsixFiles = entries.filter(entry => entry.endsWith(RELEASE_CONTRACT.bundle.vsixExtension));
   if (vsixFiles.length !== 1) {
     throw new Error(`artifact directory must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = basename(vsixFiles[0]);
-  const expectedEntries = [vsixFile, `${vsixFile}.manifest.txt`, `${vsixFile}.sha256`].sort((left, right) => left.localeCompare(right));
+  const expectedEntries = [vsixFile, bundleFileName('manifest', vsixFile), bundleFileName('digest', vsixFile)].sort((left, right) => left.localeCompare(right));
   if (entries.slice().sort((left, right) => left.localeCompare(right)).join('\n') !== expectedEntries.join('\n')) {
     throw new Error('artifact directory must contain exactly the VSIX, normalized manifest and SHA-256 sidecar');
   }
   const vsixBytes = await readFile(join(artifactDir, vsixFile));
-  const sidecarDigest = parseDigestFile(await readFile(join(artifactDir, `${vsixFile}.sha256`), 'utf8'), vsixFile);
+  const sidecarDigest = parseDigestFile(await readFile(join(artifactDir, bundleFileName('digest', vsixFile)), 'utf8'), vsixFile);
   const actualDigest = createHash('sha256').update(vsixBytes).digest('hex');
   if (sidecarDigest !== actualDigest) {
     throw new Error(`VSIX digest mismatch: sidecar ${sidecarDigest}, actual ${actualDigest}`);
@@ -81,7 +82,7 @@ export async function createCiEvidence(
     ? requireCommitSha(environment.pullRequestHeadSha, 'CI_PR_HEAD_SHA')
     : null;
   return {
-    schemaVersion: 1,
+    schemaVersion: RELEASE_CONTRACT.schemaVersions.evidence,
     sourceSha,
     runId: requirePositiveInteger(environment.runId, 'CI_RUN_ID'),
     runAttempt: requirePositiveInteger(environment.runAttempt, 'CI_RUN_ATTEMPT'),
@@ -100,6 +101,6 @@ export async function writeCiEvidence(
 ): Promise<CiEvidence> {
   const artifactDir = resolve(cwd, outDir);
   const evidence = await createCiEvidence(artifactDir, environment);
-  await writeFile(join(artifactDir, 'evidence.json'), `${JSON.stringify(evidence, undefined, 2)}\n`, 'utf8');
+  await writeFile(join(artifactDir, RELEASE_CONTRACT.bundle.evidence), `${JSON.stringify(evidence, undefined, 2)}\n`, 'utf8');
   return evidence;
 }
