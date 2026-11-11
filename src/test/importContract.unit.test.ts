@@ -79,6 +79,11 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',
   },
   {
+    file: 'src/clients/operandValidation.ts',
+    target: '../utils/packageNameValidation',
+    reason: 'same barrel-cycle avoidance as ClientManager.ts; the metadata clients in utils share the one package-name validator.',
+  },
+  {
     file: 'src/clients/Client.ts',
     target: '../utils/auditClient',
     reason: 'same barrel-cycle avoidance as ClientManager.ts.',

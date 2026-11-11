@@ -3,7 +3,7 @@ import {
   evaluateSignatureAudit,
   MINIMUM_SIGNATURE_AUDIT_PNPM_VERSION,
   parseSignatureAuditArgs,
-  resolvePnpmExecutable,
+  resolvePnpmLauncher,
   runSignatureAuditCli,
   SIGNATURE_AUDIT_ARGS,
 } from '../tools';
@@ -59,13 +59,13 @@ function signatureReport(report: Record<string, unknown>): string {
   return JSON.stringify(report);
 }
 
-describe('resolvePnpmExecutable()', () => {
+describe('resolvePnpmLauncher()', () => {
   it.each([
-    ['win32', 'pnpm.cmd'],
-    ['darwin', 'pnpm'],
-    ['linux', 'pnpm'],
-  ])('resolves the launcher for %s', (platform, expected) => {
-    expect(resolvePnpmExecutable(platform)).toBe(expected);
+    ['win32', true],
+    ['darwin', false],
+    ['linux', false],
+  ])('starts the bare pnpm command, through a shell only where it is a .cmd shim (%s)', (platform, shell) => {
+    expect(resolvePnpmLauncher(platform)).toStrictEqual({ executable: 'pnpm', shell });
   });
 });
 

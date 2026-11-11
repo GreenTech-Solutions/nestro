@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolvePnpmExecutable, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
+import { resolvePnpmLauncher, runSignatureAuditCli, SIGNATURE_AUDIT_ARGS } from './auditSignatures';
 import type { SignatureAuditCliDependencies, SignatureAuditExecution } from './auditSignatures';
 import { createStreamLineWriter } from './verifyVsixCli';
 
@@ -28,7 +28,7 @@ export function createNodePnpmRunner(
   cwd: string,
   platform: string,
 ): (args: readonly string[]) => Promise<SignatureAuditExecution> {
-  const executable = resolvePnpmExecutable(platform);
+  const { executable, shell } = resolvePnpmLauncher(platform);
 
   return async (args: readonly string[]): Promise<SignatureAuditExecution> => {
     const command = `${executable} ${args.join(' ')}`;
@@ -36,6 +36,7 @@ export function createNodePnpmRunner(
       const { stderr, stdout } = await execFileAsync(executable, [...args], {
         cwd,
         maxBuffer: MAX_CHILD_OUTPUT_BYTES,
+        shell,
       });
       return { command, stdout, stderr, exitCode: 0 };
     }

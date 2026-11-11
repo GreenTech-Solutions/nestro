@@ -164,6 +164,53 @@ src/utils/
 
 ---
 
+## Module Size & Responsibility
+
+Nestro has no "Swiss-army" files. A module that grows a second job is split before the job lands.
+
+### One module, one reason to change
+- A file owns one responsibility. If its one-line description needs "and", it is two files.
+- Name a file after what it does: `npmrc.ts`, `capabilityService.ts`, `packageManagers.ts`.
+  `utils.ts`, `helpers.ts`, `common.ts`, `misc.ts` and other catch-all names are not allowed — not in a
+  subsystem and not in `src/shared/`.
+- A class that drives several lifecycles or state machines delegates each one to its own service;
+  the class itself stays a thin facade (for example, the `TreeDataProvider` delegates to services).
+
+### Size limits
+- Product code: at most 300 lines per file and 60 lines per function. Tests: at most 800 lines per file.
+  Blank lines and comments are not counted.
+- ESLint enforces this with `max-lines` and `max-lines-per-function`. Files that predate the rule sit in
+  the `SIZE_LIMIT_EXCEPTIONS` list in `eslint.config.mjs`, one entry per file, each with its current size as the ceiling
+  (`maxLines` for the file, `maxFunctionLines` for its longest function). A ceiling only goes
+  down; a new exception needs the owner's approval; `eslint-disable` for these rules is not allowed.
+- Adding code to a file near its limit, or to a file that does something else: put the code in a new
+  focused module instead.
+
+### Split by responsibility, not by line count
+- A good split leaves each part with a small interface that hides real work and can be tested alone.
+- Do not create shallow modules: one-function files that only forward a call, wrappers that rename
+  parameters, or classes that exist only to hold one method. They add interfaces without hiding anything.
+
+### Shared code
+- The same code or the same knowledge — a type guard, regex, constant, format, parser, argv shape — is
+  extracted on its second copy.
+- Similar but not identical logic is extracted on its third occurrence, once the common shape is clear.
+- If a shared function needs a mode flag or boolean to serve its callers, it is the wrong abstraction:
+  keep the callers separate.
+- Code shared across subsystems lives in `src/shared/`, grouped by meaning (`guards.ts`, `text.ts`,
+  `packageManagers.ts`, `ids.ts`). `src/shared/` imports only Node built-ins — never `vscode` and never
+  another subsystem. Code shared inside one subsystem stays in that subsystem.
+
+### Data and scripts are not code
+- Commit SHAs, VSIX budgets, release file lists, command and context ids, setting defaults, timeouts and
+  limits live in one registry each — JSON under `.github/` for CI and release, `src/shared/` or
+  `src/config/` for the extension. Code reads the registry; tests import it instead of copying values.
+- Shell, Python and JavaScript programs live in their own files (`.github/scripts/**`,
+  `src/test/fixtures/scripts/**`, `scripts/**`). Workflows and tests run those files; a program is never
+  stored in a TS or YAML string, and policy never compares a script body word for word.
+
+---
+
 ## Code Comments
 
 A comment says **what this is**, not the story of how it got here. One line is the
@@ -210,6 +257,8 @@ default, three is the ceiling.
 | `@stylistic/semi` | warn | Semicolons required |
 | `no-throw-literal` | warn | Throw `Error` instances, not literals |
 | `@typescript-eslint/naming-convention` | warn | Import names in camelCase or PascalCase |
+| `max-lines` | error | Product files ≤ 300 lines, test files ≤ 800 (blank lines and comments not counted); files over the limit sit in `SIZE_LIMIT_EXCEPTIONS` in `eslint.config.mjs` with their current size as a ceiling that only goes down |
+| `max-lines-per-function` | error | Product functions ≤ 60 lines (no limit in `src/test/**`); long functions are capped per file in the same `SIZE_LIMIT_EXCEPTIONS` list |
 
 `eslint-plugin-sonarjs` recommended config is enabled on top of these, with a documented set of rules disabled in `eslint.config.mjs`. Its remaining rules — notably `sonarjs/parameterized-tests` — are errors, not warnings, and will fail a strict lint run.
 

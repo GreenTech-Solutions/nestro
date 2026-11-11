@@ -99,6 +99,34 @@ describe('logger', () => {
     expect(sanitized).not.toContain(npmToken);
   });
 
+  it('redacts password and passwd values in plain, quoted, and JSON forms', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const input = [
+      'npm ERR! password=hunter2',
+      'passwd: s3cret',
+      'PASSWORD = "quoted secret"',
+      ['passwd', '=', `'single-quoted'`].join(''),
+      'config={"password":"json-pass","passwd":"json-passwd"}',
+    ].join('\n');
+
+    const sanitized = sanitizeLogText(input);
+
+    expect(sanitized).toContain('password=[REDACTED]');
+    expect(sanitized).toContain('passwd: [REDACTED]');
+    expect(sanitized).toContain('PASSWORD = "[REDACTED]"');
+    expect(sanitized).toContain(['passwd', '=', `'[REDACTED]'`].join(''));
+    expect(sanitized).toContain('"password":"[REDACTED]"');
+    expect(sanitized).toContain('"passwd":"[REDACTED]"');
+    expect(sanitized).not.toMatch(/hunter2|s3cret|quoted secret|single-quoted|json-pass/);
+  });
+
+  it('keeps ordinary words that merely contain password intact', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const ordinary = 'Resolving my-password-utils and passwords-list without assignment';
+
+    expect(sanitizeLogText(ordinary)).toBe(ordinary);
+  });
+
   it('preserves git SSH users and redacts only password-bearing URLs across multiple URLs', async () => {
     const { sanitizeLogText } = await import('../utils/logger');
     const input = 'first https://registry.internal/npm then git+ssh://git@github.com/acme/lib.git#v1.2.3 and second https://ci:s3cr3t@registry.internal/npm';

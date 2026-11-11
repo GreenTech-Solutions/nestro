@@ -41,8 +41,44 @@ describe('native metadata client', () => {
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'pnpm',
-      ['view', 'react', '--json'],
+      ['view', '--json', '--', 'react'],
       expect.objectContaining({ cwd: '/workspace/apps/web', signal: undefined }),
+    );
+  });
+
+  it.each([
+    ['npm', '--registry=https://evil.test'],
+    ['pnpm', '--userconfig=/tmp/evil.npmrc'],
+    ['npm', '-g'],
+    ['pnpm', ''],
+    ['npm', 'left pad'],
+    ['npm', '@scope/name/extra'],
+  ] as const)('does not run %s for the invalid package name %j', async (packageManager, packageName) => {
+    await expect(fetchPackageMetadataFromNativeCli({
+      packageName,
+      packageFilePath: '/workspace/package.json',
+      packageManager,
+    })).resolves.toEqual({ kind: 'unrecognized' });
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('puts a scoped package name after the option terminator', async () => {
+    runBoundedProcessMock.mockResolvedValueOnce({
+      kind: 'exit',
+      stdout: JSON.stringify({ 'dist-tags': {}, versions: [] }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(fetchPackageMetadataFromNativeCli({
+      packageName: '@scope/name',
+      packageFilePath: '/workspace/package.json',
+      packageManager: 'npm',
+    })).resolves.toMatchObject({ kind: 'success' });
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'npm',
+      ['view', '--json', '--', '@scope/name'],
+      expect.objectContaining({ cwd: '/workspace' }),
     );
   });
 

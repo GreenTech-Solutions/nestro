@@ -9,6 +9,8 @@ const REPORT_CONTROL = new RegExp(
   'g',
 );
 
+const SEVERITY_ORDER: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
+
 export type AuditAttribution = 'direct' | 'transitive' | 'unknown';
 
 export interface AuditFix {
@@ -150,9 +152,9 @@ export function mergeAuditAdvisories(advisories: readonly AuditAdvisory[]): Audi
 }
 
 export function compareAdvisories(left: AuditAdvisory, right: AuditAdvisory): number {
-  return left.packageName.localeCompare(right.packageName)
-    || left.identity.localeCompare(right.identity)
-    || right.severity.localeCompare(left.severity);
+  return SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity)
+    || left.packageName.localeCompare(right.packageName)
+    || left.identity.localeCompare(right.identity);
 }
 
 export function cloneAuditAdvisory(advisory: AuditAdvisory): AuditAdvisory {
@@ -245,8 +247,7 @@ function getAdvisoryIdentityStability(input: AuditAdvisoryInput): AuditIdentityS
 }
 
 function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
-  const order: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
-  return order.indexOf(left) <= order.indexOf(right) ? left : right;
+  return SEVERITY_ORDER.indexOf(left) <= SEVERITY_ORDER.indexOf(right) ? left : right;
 }
 
 function mergeFixAvailability(

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { logger } from './logger';
+import { resolveSpawnTarget } from './processRunner';
 
 const execFileAsync = promisify(execFile);
 
@@ -108,11 +109,18 @@ function hasClassicLockMarker(lockfile: string | undefined): boolean {
 }
 
 async function probeYarnVersion(projectRoot: string): Promise<YarnFamilyResolution> {
+  const target = resolveSpawnTarget('yarn', ['--version']);
+  if (target.kind === 'unresolved') {
+    logger.warn(`Unable to identify Yarn family: ${target.message}`);
+    return { family: 'unknown', source: 'version-probe' };
+  }
+
   try {
-    const result = await execFileAsync('yarn', ['--version'], {
+    const result = await execFileAsync(target.command, target.args, {
       cwd: projectRoot,
       maxBuffer: yarnVersionProbeMaxBufferBytes,
       timeout: yarnVersionProbeTimeoutMs,
+      ...(target.windowsVerbatimArguments === true ? { windowsVerbatimArguments: true } : {}),
     }) as { stdout: string } | string;
     const stdout = typeof result === 'string' ? result : result.stdout;
     const match = /^(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.exec(stdout.trim());

@@ -77,6 +77,11 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 `lint` is the safe check to use in normal validation. Use `lint:fix` only when you explicitly
 intend to accept automated source edits.
 
+`lint` also enforces file and function length (`max-lines`, `max-lines-per-function`). Files that predate
+the limits are listed in `SIZE_LIMIT_EXCEPTIONS` in `eslint.config.mjs`, each capped at its current size;
+a ceiling is only lowered, never raised, and `eslint-disable` for these rules is not allowed. See
+[CODESTYLE.md](CODESTYLE.md) → Module Size & Responsibility.
+
 The `audit:*`, `ci:*`, `check:vsce` and `release:*` scripts above back the end-to-end release
 process — verified SHA and artifact identity, audits, packaged smoke, environment approval,
 publish, and post-publish verification. See [RELEASING.md](RELEASING.md) for the full checklist;

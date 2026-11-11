@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isValidPackageName } from './packageNameValidation';
 import { runBoundedProcess } from './processRunner';
 import type { BoundedProcessOutcome } from './processRunner';
 import {
@@ -25,8 +26,11 @@ export async function fetchPackageMetadataFromNativeCli(
     || request.packageFilePath === '') {
     return { kind: 'transport-error', reason: 'process-failed' };
   }
+  if (!isValidPackageName(request.packageName)) {
+    return { kind: 'unrecognized' };
+  }
 
-  const outcome = await runBoundedProcess(packageManager, ['view', request.packageName, '--json'], {
+  const outcome = await runBoundedProcess(packageManager, ['view', '--json', '--', request.packageName], {
     cwd: path.resolve(path.dirname(request.packageFilePath)),
     timeoutMs: METADATA_REQUEST_TIMEOUT_MS,
     maxBufferBytes: METADATA_RESPONSE_MAX_BYTES,

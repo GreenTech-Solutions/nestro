@@ -1084,6 +1084,8 @@ describe('updateAllVisibleCommand()', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: failed to update packages — second write failed',
     );
+    expect(provider.invalidateUpdateCache).toHaveBeenCalled();
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces rollback failures after a deferred bulk write failure', async () => {
@@ -1385,6 +1387,124 @@ describe('updateAllVisibleCommand()', () => {
     );
   });
 
+  it('reports updated and failed roots and reloads when a later root fails', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    mockTaskExitSequence([0, 1]);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(2);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
+      + 'Updated: workspace — (root). Not updated: workspace — apps/web.',
+    );
+    expect(provider.invalidateUpdateCache).toHaveBeenCalled();
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('names every root as not updated when the first root fails', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    mockTaskExitSequence([1]);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
+      + 'Nothing was updated. Not updated: workspace — (root), workspace — apps/web.',
+    );
+    expect(provider.invalidateUpdateCache).toHaveBeenCalled();
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('separates the sections of one root in the partial-failure message', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    mockTaskExitSequence([0, 1]);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+      new PackageItem('vitest', '^4.0.0', '4.1.0', 'minor', false, undefined, '/workspace/package.json', true, '^'),
+    ]);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
+      + 'Updated: workspace — (root) (dependencies). Not updated: workspace — (root) (dev dependencies).',
+    );
+  });
+
+  it('reports a later root that goes stale mid-run and reloads', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    const first = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
+    const second = new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^');
+    const provider = makeProvider([first, second]);
+    const secondCapability = identityMocks.makeCapability(second);
+    vi.mocked(provider.reissuePackageCapability).mockImplementation(capability => (
+      Promise.resolve(capability.item.packageName === 'vite' && taskExecutionCount > 0 ? undefined : capability)
+    ));
+    identityMocks.revalidateCommandPackageItem.mockImplementation(capability => (
+      capability.item.packageName === 'vite' && taskExecutionCount > 0 ? undefined : secondCapability
+    ) as never);
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      'Nestro: failed to update packages — the package list changed while updating. '
+      + 'Updated: workspace — (root). Not updated: workspace — apps/web.',
+    );
+    expect(provider.invalidateUpdateCache).toHaveBeenCalled();
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('still shows the update failure when the reconciling reload fails', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    mockTaskExitSequence([1]);
+    const provider = makeProvider([
+      new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^'),
+    ]);
+    vi.mocked(provider.loadPackages).mockRejectedValue(new Error('reload boom'));
+
+    await updateAllVisibleCommand(provider);
+
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('failed to update packages — task "Update All Packages" failed with exit code 1.'),
+    );
+  });
+
+  it('treats a declined mid-run risky confirmation as a cancel, not a failure', async () => {
+    mockNestroConfiguration({ confirmBulkUpdate: false });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined as never);
+    const first = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
+    const second = new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^');
+    const heldBack = { kind: 'held-back', version: '5.1.0', eligibleAt: '2026-06-02T00:00:00.000Z' } as const;
+    const risky = identityMocks.makeCapability(Object.assign(
+      new PackageItem('vite', '^5.0.0', '5.1.0', 'minor', false, undefined, '/workspace/apps/web/package.json', false, '^'),
+      { releaseAge: heldBack },
+    ));
+    const provider = makeProvider([first, second]);
+    vi.mocked(provider.reissuePackageCapability).mockImplementation(capability => (
+      Promise.resolve(capability.item.packageName === 'vite' && taskExecutionCount > 0 ? risky : capability)
+    ));
+
+    await updateAllVisibleCommand(provider);
+
+    expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(provider.loadPackages).not.toHaveBeenCalled();
+  });
+
   it('stops an immediate group when its group revalidation rejects', async () => {
     mockNestroConfiguration({ confirmBulkUpdate: false });
     const item = new PackageItem('react', '^18.0.0', '19.0.0', 'breaking', false, undefined, '/workspace/package.json', false, '^');
@@ -1507,7 +1627,8 @@ describe('updateAllVisibleCommand()', () => {
 
     expect(vscode.tasks.executeTask).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: task "Update All Packages" failed with exit code 1.',
+      'Nestro: failed to update packages — task "Update All Packages" failed with exit code 1. '
+      + 'Nothing was updated. Not updated: workspace — (root).',
     );
   });
 
@@ -1553,7 +1674,7 @@ describe('updateAllVisibleCommand()', () => {
     await updateAllVisibleCommand(provider);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      'Nestro: failed to update packages — bulk boom',
+      'Nestro: failed to update packages — bulk boom. Nothing was updated. Not updated: workspace — (root).',
     );
   });
 
@@ -1602,6 +1723,18 @@ function mockNextTaskExit(exitCode: number | undefined): void {
         taskEndListener?.({ execution } as vscode.TaskEndEvent);
         return;
       }
+      taskProcessEndListener?.({ execution, exitCode } as vscode.TaskProcessEndEvent);
+    }, 0);
+    return Promise.resolve(execution);
+  });
+}
+
+function mockTaskExitSequence(exitCodes: readonly number[]): void {
+  vi.mocked(vscode.tasks.executeTask).mockImplementation(() => {
+    const exitCode = exitCodes[Math.min(taskExecutionCount, exitCodes.length - 1)];
+    taskExecutionCount += 1;
+    const execution = { id: `task-execution-${taskExecutionCount}` } as unknown as vscode.TaskExecution;
+    setTimeout(() => {
       taskProcessEndListener?.({ execution, exitCode } as vscode.TaskProcessEndEvent);
     }, 0);
     return Promise.resolve(execution);
