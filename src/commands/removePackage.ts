@@ -13,7 +13,7 @@ import {
 } from '../utils';
 import {
   resolveCommandPackageItem,
-  resolveUnambiguousManifestEntry,
+  resolveManifestEntry,
   revalidateCommandPackageItem,
 } from './packageIdentity';
 import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
@@ -59,7 +59,7 @@ export async function removePackageCommand(item: unknown, provider: PackagesProv
     },
     lockTargets: ({ capability }) => [capability.packageFilePath],
     revalidate: async ({ capability, provider: currentProvider }) => {
-      const checked = await resolveUnambiguousManifestEntry(capability, currentProvider);
+      const checked = await resolveManifestEntry(capability, currentProvider, 'reject');
       if (checked === undefined) {
         return undefined;
       }

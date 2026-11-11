@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import {
   resolveCommandPackageItem,
-  resolvePinManifestEntry,
-  resolveUnambiguousManifestEntry,
+  resolveManifestEntry,
   revalidateCommandPackageItem,
 } from '../commands/packageIdentity';
 import {
@@ -14,6 +13,7 @@ import {
   readCanonicalDependencySpecs,
   resolveCanonicalPackageLocation,
 } from '../providers/packageIdentity';
+import * as utils from '../utils';
 import type { CanonicalPackageLocation, PackagesProvider, ResolvedPackageItem } from '../providers';
 
 function makeCapability(section: 'dependencies' | 'devDependencies' = 'dependencies'): ResolvedPackageItem {
@@ -98,13 +98,15 @@ describe('package identity command helpers', () => {
   it('accepts one exact dependency entry and revalidates after reading it', async () => {
     const capability = makeCapability();
     const { provider, revalidate } = makeProvider();
+    const readPackageFile = vi.spyOn(utils, 'readPackageFile');
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
       dependencies: { react: '^1.0.0' },
       devDependencies: {},
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBe(capability);
+    expect(readPackageFile).toHaveBeenCalledWith(capability.packageFilePath);
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
@@ -114,7 +116,7 @@ describe('package identity command helpers', () => {
     const { provider, revalidate } = makeProvider();
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'path-replaced' });
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
@@ -130,7 +132,7 @@ describe('package identity command helpers', () => {
       devDependencies: { react: '~1.1.0' },
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBe(capability);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
@@ -143,7 +145,7 @@ describe('package identity command helpers', () => {
       devDependencies: { react: '~1.1.0' },
     })));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBe(capability);
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBe(capability);
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
@@ -157,7 +159,7 @@ describe('package identity command helpers', () => {
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
@@ -169,7 +171,7 @@ describe('package identity command helpers', () => {
     const { provider, revalidate } = makeProvider();
     revalidate.mockResolvedValueOnce({ ok: false, reason: 'not-current' });
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
   });
 
@@ -179,7 +181,7 @@ describe('package identity command helpers', () => {
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(new Error('read failed'));
 
-    await expect(resolvePinManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'allow')).resolves.toBeUndefined();
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
@@ -200,7 +202,7 @@ describe('package identity command helpers', () => {
     revalidate.mockResolvedValue({ ok: true, value: capability });
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
     );
@@ -221,7 +223,7 @@ describe('package identity command helpers', () => {
       vi.mocked(vscode.workspace.fs.readFile).mockRejectedValueOnce(failure);
     }
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
     );
@@ -237,7 +239,7 @@ describe('package identity command helpers', () => {
       dependencies: { react: '^1.0.0' },
     })));
 
-    await expect(resolveUnambiguousManifestEntry(capability, provider)).resolves.toBeUndefined();
+    await expect(resolveManifestEntry(capability, provider, 'reject')).resolves.toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Nestro: Package action is no longer available. Refresh the package list and try again.',
     );

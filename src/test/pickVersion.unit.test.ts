@@ -310,6 +310,27 @@ describe('pickVersionCommand()', () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
+  it('does not update the picker when revalidation resolves after it was hidden', async () => {
+    const quickPick = makeQuickPick();
+    let finishRevalidation: () => void = () => {};
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    identityMocks.revalidateCommandPackageItem.mockImplementationOnce(capability => new Promise((resolve) => {
+      finishRevalidation = () => resolve(capability);
+    }) as never);
+
+    const command = pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await vi.waitFor(() => expect(identityMocks.revalidateCommandPackageItem).toHaveBeenCalledTimes(1));
+    quickPick.onDidHide.mock.calls[0][0]();
+    finishRevalidation();
+    await command;
+
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.items).toEqual([]);
+    expect(quickPick.busy).toBe(true);
+    expect(quickPick.placeholder).toBe('Loading versions...');
+    expect(quickPick.onDidAccept).not.toHaveBeenCalled();
+  });
+
   it('does not create a picker when the provider rejects the rendered row', async () => {
     identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined as never);
 

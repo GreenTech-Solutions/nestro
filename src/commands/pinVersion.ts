@@ -9,7 +9,7 @@ import {
   showError,
   VersionPinConflictError,
 } from '../utils';
-import { resolveCommandPackageItem, resolvePinManifestEntry } from './packageIdentity';
+import { resolveCommandPackageItem, resolveManifestEntry } from './packageIdentity';
 import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
 import type { RowMutationExecution, RowMutationProgress } from './rowMutation';
 
@@ -43,7 +43,7 @@ export async function pinVersionCommand(item: unknown, provider: PackagesProvide
     },
     lockTargets: ({ capability }) => [capability.packageFilePath],
     revalidate: async ({ capability, provider: currentProvider }) => {
-      const checked = await resolvePinManifestEntry(capability, currentProvider);
+      const checked = await resolveManifestEntry(capability, currentProvider, 'allow');
       if (checked === undefined) {
         return undefined;
       }

@@ -38,8 +38,7 @@ const identityMocks = vi.hoisted(() => {
       dev: boolean;
       versionPrefix?: string;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
-    resolvePinManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
-    resolveUnambiguousManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
+    resolveManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
 });
@@ -248,8 +247,8 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledTimes(1);
-    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'allow');
+    expect(identityMocks.resolveManifestEntry).not.toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '^18.0.0', true);
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
@@ -290,8 +289,8 @@ describe('pinVersionCommand()', () => {
 
     await pinVersionCommand(item, provider);
 
-    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider);
-    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'allow');
+    expect(identityMocks.resolveManifestEntry).not.toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'vitest', 'devDependencies', '^2.0.0', true);
   });
 
@@ -350,7 +349,7 @@ describe('pinVersionCommand()', () => {
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
 
-    identityMocks.resolvePinManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockResolvedValueOnce(undefined as never);
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
   });
@@ -533,13 +532,14 @@ describe('removePackageCommand()', () => {
   it('rejects removal when the manifest entry is ambiguous or the final row is stale', async () => {
     const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
     const provider = makeProvider();
-    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockImplementationOnce(capability => capability);
 
     await removePackageCommand(item, provider);
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(executeTaskMock).not.toHaveBeenCalled();
     expect(provider.markPackageUpdating).not.toHaveBeenCalled();
 
-    identityMocks.resolveUnambiguousManifestEntry.mockImplementationOnce(capability => capability);
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
     await removePackageCommand(item, provider);
     expect(executeTaskMock).not.toHaveBeenCalled();

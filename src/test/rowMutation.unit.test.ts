@@ -66,7 +66,7 @@ vi.mock('../clients', async () => {
 
 vi.mock('../commands/packageIdentity', () => ({
   resolveCommandPackageItem: mutationMocks.resolvePackageItem,
-  resolvePinManifestEntry: vi.fn(),
+  resolveManifestEntry: vi.fn(),
   revalidateCommandPackageItem: mutationMocks.revalidatePackageItem,
 }));
 
