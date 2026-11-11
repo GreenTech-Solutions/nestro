@@ -1,9 +1,5 @@
-import {
-  packageIdentityKey,
-  readCanonicalDependencySpec,
-  resolveCanonicalPackageLocation,
-  samePackageFileStamp,
-} from './packageIdentity';
+import { packageIdentityKey, readCanonicalDependencySpec } from './packageIdentity';
+import { resolveCanonicalPackageLocation, samePackageFileStamp } from './packageLocationResolution';
 import type {
   CanonicalPackageLocation,
   PackageIdentityResolution,

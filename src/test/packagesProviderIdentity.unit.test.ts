@@ -21,7 +21,7 @@ import {
   StatusItem,
   WorkspaceFolderItem,
 } from '../providers';
-import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 import { LoadingItem } from '../providers/LoadingItem';
 import {
   fetchAllLatestVersions,

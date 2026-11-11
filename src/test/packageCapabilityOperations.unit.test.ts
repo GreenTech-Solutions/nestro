@@ -6,7 +6,7 @@ import { setWorkspaceFolders } from './fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PackageCapabilityOperations } from '../providers/packageCapabilityOperations';
 import { PackageProviderState } from '../providers/packageProviderState';
-import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 
 const temporaryRoots: string[] = [];
 

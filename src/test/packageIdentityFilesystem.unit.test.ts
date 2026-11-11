@@ -11,7 +11,7 @@ const fsMock = vi.hoisted(() => ({
 
 vi.mock('node:fs/promises', () => fsMock);
 
-import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 
 const WORKSPACE_PATH = '/workspace';
 const REQUESTED_ALIAS_PATH = '/WORKSPACE/package.json';

@@ -33,6 +33,29 @@ export function activate(context: vscode.ExtensionContext): void {
   const checkUpdatesOnStartup = getCheckUpdatesOnStartup();
   const runAuditOnStartup = getRunAuditOnStartup();
 
+  registerExtensionCommands(context, filterManager, provider, treeView, auditReportOutput, statusReportOutput);
+
+  const packageJsonWatcher = registerPackageJsonWatcher(context, provider);
+  registerConfigurationWatcher(context, provider, () => packageJsonWatcher.refresh());
+  registerWorkspaceFoldersWatcher(context, provider, () => packageJsonWatcher.refresh());
+
+  void provider.loadPackages();
+  if (checkUpdatesOnStartup) {
+    void provider.checkUpdates();
+  }
+  if (runAuditOnStartup) {
+    void provider.runAudit();
+  }
+}
+
+function registerExtensionCommands(
+  context: vscode.ExtensionContext,
+  filterManager: FilterManager,
+  provider: PackagesProvider,
+  treeView: vscode.Disposable,
+  auditReportOutput: vscode.OutputChannel,
+  statusReportOutput: vscode.OutputChannel,
+): void {
   context.subscriptions.push(
     treeView,
     vscode.commands.registerCommand(COMMAND_IDS.refresh, () => { void provider.loadPackages(); }),
@@ -72,18 +95,6 @@ export function activate(context: vscode.ExtensionContext): void {
     filterManager,
     provider,
   );
-
-  const packageJsonWatcher = registerPackageJsonWatcher(context, provider);
-  registerConfigurationWatcher(context, provider, () => packageJsonWatcher.refresh());
-  registerWorkspaceFoldersWatcher(context, provider, () => packageJsonWatcher.refresh());
-
-  void provider.loadPackages();
-  if (checkUpdatesOnStartup) {
-    void provider.checkUpdates();
-  }
-  if (runAuditOnStartup) {
-    void provider.runAudit();
-  }
 }
 
 export function deactivate(): void {}

@@ -3,7 +3,7 @@ import { getFilterLabel } from './FilterManager';
 import type { StatusRowProjection, ViewProjectionSnapshot } from './viewProjectionService';
 import { projectPackageTree, truncateSearchQuery } from './treeBuilder';
 import type { PackageTreeProjection } from './treeBuilder';
-import { sanitizePackageText } from './PackageItem';
+import { sanitizePackageText } from './packageItemPresentation';
 import { COMMAND_IDS, uniqueStrings } from '../shared';
 import {
   formatFailedPackageFileCount,

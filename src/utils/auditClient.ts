@@ -125,98 +125,124 @@ function recognizeAuditPayload(json: unknown, manager: AuditPackageManager): Rec
 
 function collectAdvisories(payload: RecognizedAuditPayload): AuditAdvisory[] {
   const advisories = new Map<string, AuditAdvisory>();
-
   for (const [key, info] of Object.entries(payload.entries)) {
-    if (!isRecord(info)) {
-      continue;
-    }
-    const packageName = payload.schema === 'npm-v2-vulnerabilities'
-      ? readString(info.name) ?? (isLikelyPackageName(key) ? readString(key) : undefined)
-      : readString(info.module_name);
-    const severity = parseSeverity(readString(info.severity));
-    if (packageName === undefined || severity === undefined) {
-      continue;
-    }
-
-    const paths = readStringArray(info.nodes)
-      .concat(readStringArray(info.paths))
-      .concat(readSingleString(info.resolvedPath));
-    const versions = readStringArray(info.versions)
-      .concat(readSingleString(info.version))
-      .concat(readSingleString(info.resolvedVersion))
-      .concat(readSingleString(info.installedVersion));
-    const direct = typeof info.isDirect === 'boolean' ? info.isDirect : undefined;
-    const baseAttribution = direct === true
-      ? 'direct'
-      : direct === false
-        ? 'transitive'
-        : inferPathAttribution(packageName, paths);
-    const via = parseVia(info.via);
-    const fixAvailable = parseFixAvailable(info.fixAvailable ?? info.fix_available);
-    const base = {
-      packageName,
-      severity,
-      manager: payload.manager,
-      schema: payload.schema,
-      source: readString(info.source),
-      title: readString(info.title),
-      url: readString(info.url),
-      affectedRange: readString(info.range) ?? readString(info.vulnerableVersions) ?? readString(info.vulnerable_versions),
-      resolvedPaths: paths,
-      resolvedVersions: versions,
-      attribution: baseAttribution as AuditAttribution,
-      via,
-      fixAvailable,
-    };
-
-    const viaAdvisories = via.filter(entry => entry.url !== undefined || entry.id !== undefined || entry.source !== undefined);
-    const findings = payload.schema === 'npm-v1-advisories' && Array.isArray(info.findings)
-      ? info.findings.filter(isRecord)
-      : [];
-    if (payload.schema === 'npm-v2-vulnerabilities' && viaAdvisories.length > 0) {
-      for (const detail of viaAdvisories) {
-        mergeAuditAdvisory(advisories, createAuditAdvisory({
-          ...base,
-          advisoryId: detail.id,
-          source: detail.source ?? base.source,
-          title: detail.title ?? base.title,
-          url: detail.url ?? base.url,
-          severity: detail.severity ?? base.severity,
-          affectedRange: detail.range ?? base.affectedRange,
-        }));
-      }
-    }
-    else if (findings.length === 0) {
-      mergeAuditAdvisory(advisories, createAuditAdvisory({
-        ...base,
-        advisoryId: readIdentity(info.id),
-      }));
-    }
-
-    if (payload.schema === 'npm-v1-advisories') {
-      if (findings.length > 0) {
-        // npm v1 puts the resolved path/version/directness only on each finding;
-        // only findings become advisories so no graph evidence is invented.
-        for (const finding of findings) {
-          const findingPaths = readStringArray(finding.paths);
-          const findingVersion = readString(finding.version);
-          const findingAttribution = typeof finding.isDirect === 'boolean'
-            ? finding.isDirect ? 'direct' : 'transitive'
-            : inferPathAttribution(packageName, findingPaths);
-          mergeAuditAdvisory(advisories, createAuditAdvisory({
-            ...base,
-            identity: undefined,
-            advisoryId: readIdentity(info.id) ?? key,
-            resolvedPaths: findingPaths,
-            resolvedVersions: findingVersion === undefined ? [] : [findingVersion],
-            attribution: findingAttribution,
-          }));
-        }
-      }
+    if (isRecord(info)) {
+      collectAdvisoryEntry(advisories, payload, key, info);
     }
   }
-
   return [...advisories.values()];
+}
+
+function collectAdvisoryEntry(
+  advisories: Map<string, AuditAdvisory>,
+  payload: RecognizedAuditPayload,
+  key: string,
+  info: Record<string, unknown>,
+): void {
+  const packageName = payload.schema === 'npm-v2-vulnerabilities'
+    ? readString(info.name) ?? (isLikelyPackageName(key) ? readString(key) : undefined)
+    : readString(info.module_name);
+  const severity = parseSeverity(readString(info.severity));
+  if (packageName === undefined || severity === undefined) {
+    return;
+  }
+
+  const base = createBaseAdvisory(payload, info, packageName, severity);
+  const findings = payload.schema === 'npm-v1-advisories' && Array.isArray(info.findings)
+    ? info.findings.filter(isRecord)
+    : [];
+  appendSummaryAdvisories(advisories, payload, info, base, findings);
+  appendNpmV1Findings(advisories, payload, key, info, base, findings);
+}
+
+function createBaseAdvisory(
+  payload: RecognizedAuditPayload,
+  info: Record<string, unknown>,
+  packageName: string,
+  severity: NonNullable<ReturnType<typeof parseSeverity>>,
+) {
+  const paths = readStringArray(info.nodes)
+    .concat(readStringArray(info.paths))
+    .concat(readSingleString(info.resolvedPath));
+  const versions = readStringArray(info.versions)
+    .concat(readSingleString(info.version))
+    .concat(readSingleString(info.resolvedVersion))
+    .concat(readSingleString(info.installedVersion));
+  const direct = typeof info.isDirect === 'boolean' ? info.isDirect : undefined;
+  const attribution = direct === true
+    ? 'direct'
+    : direct === false
+      ? 'transitive'
+      : inferPathAttribution(packageName, paths);
+  return {
+    packageName,
+    severity,
+    manager: payload.manager,
+    schema: payload.schema,
+    source: readString(info.source),
+    title: readString(info.title),
+    url: readString(info.url),
+    affectedRange: readString(info.range) ?? readString(info.vulnerableVersions) ?? readString(info.vulnerable_versions),
+    resolvedPaths: paths,
+    resolvedVersions: versions,
+    attribution: attribution as AuditAttribution,
+    via: parseVia(info.via),
+    fixAvailable: parseFixAvailable(info.fixAvailable ?? info.fix_available),
+  };
+}
+
+function appendSummaryAdvisories(
+  advisories: Map<string, AuditAdvisory>,
+  payload: RecognizedAuditPayload,
+  info: Record<string, unknown>,
+  base: ReturnType<typeof createBaseAdvisory>,
+  findings: Record<string, unknown>[],
+): void {
+  const viaAdvisories = base.via.filter(entry => entry.url !== undefined || entry.id !== undefined || entry.source !== undefined);
+  if (payload.schema === 'npm-v2-vulnerabilities' && viaAdvisories.length > 0) {
+    for (const detail of viaAdvisories) {
+      mergeAuditAdvisory(advisories, createAuditAdvisory({
+        ...base,
+        advisoryId: detail.id,
+        source: detail.source ?? base.source,
+        title: detail.title ?? base.title,
+        url: detail.url ?? base.url,
+        severity: detail.severity ?? base.severity,
+        affectedRange: detail.range ?? base.affectedRange,
+      }));
+    }
+  }
+  else if (findings.length === 0) {
+    mergeAuditAdvisory(advisories, createAuditAdvisory({ ...base, advisoryId: readIdentity(info.id) }));
+  }
+}
+
+function appendNpmV1Findings(
+  advisories: Map<string, AuditAdvisory>,
+  payload: RecognizedAuditPayload,
+  key: string,
+  info: Record<string, unknown>,
+  base: ReturnType<typeof createBaseAdvisory>,
+  findings: Record<string, unknown>[],
+): void {
+  if (payload.schema !== 'npm-v1-advisories' || findings.length === 0) {
+    return;
+  }
+  for (const finding of findings) {
+    const findingPaths = readStringArray(finding.paths);
+    const findingVersion = readString(finding.version);
+    const findingAttribution = typeof finding.isDirect === 'boolean'
+      ? finding.isDirect ? 'direct' : 'transitive'
+      : inferPathAttribution(base.packageName, findingPaths);
+    mergeAuditAdvisory(advisories, createAuditAdvisory({
+      ...base,
+      identity: undefined,
+      advisoryId: readIdentity(info.id) ?? key,
+      resolvedPaths: findingPaths,
+      resolvedVersions: findingVersion === undefined ? [] : [findingVersion],
+      attribution: findingAttribution,
+    }));
+  }
 }
 
 function readSummaryTotal(metadata: unknown): number | undefined {

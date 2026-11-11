@@ -1,15 +1,7 @@
 import * as vscode from 'vscode';
-import { CONTEXT_VALUE_TOKENS, PACKAGE_PRESENTATION, sanitizeInlineText } from '../shared';
-import {
-  AuditSeverity,
-  formatAuditSeverityLabel,
-  formatHeldBackDate,
-  formatUpdateTypeLabel,
-  parseDependencySpec,
-  ReleaseAgeState,
-  UpdateType,
-} from '../utils';
-import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from './packageLabels';
+import { parseDependencySpec } from '../utils';
+import type { AuditSeverity, ReleaseAgeState, UpdateType } from '../utils';
+import { configurePackageItemPresentation, resolveWorkspaceOwner, sanitizePackageText } from './packageItemPresentation';
 
 export type PackageOperation
   = | { readonly kind: 'update'; readonly target: string }
@@ -46,65 +38,18 @@ export class PackageItem extends vscode.TreeItem {
       ? undefined
       : sanitizePackageText(resolvedWorkspaceOwner);
     this.operation = normalizeOperation(operation, latest ?? currentVersion);
-    const hasUpdate = updateType !== 'none';
     const parsedSpec = parseDependencySpec(currentVersion);
-    const baseDescription = this.operation === undefined
-      ? hasUpdate
-        ? vscode.l10n.t('{0} → {1}', safeCurrentVersion, safeLatest ?? vscode.l10n.t('unavailable'))
-        : safeCurrentVersion
-      : this.operation.kind === 'update'
-        ? vscode.l10n.t('{0} → {1}', safeCurrentVersion, sanitizePackageText(this.operation.target))
-        : safeCurrentVersion;
-    this.description = hasUpdate
-      ? vscode.l10n.t('{0} ({1})', baseDescription, getUpdateTypeLabel(updateType))
-      : baseDescription;
-    this.tooltip = this.operation === undefined
-      ? hasUpdate
-        ? vscode.l10n.t(
-            '{0}@{1} (latest: {2})',
-            safePackageName,
-            safeCurrentVersion,
-            safeLatest ?? vscode.l10n.t('unavailable'),
-          )
-        : vscode.l10n.t('{0}@{1}', safePackageName, safeCurrentVersion)
-      : getOperationTooltip(safePackageName, this.operation);
-    if (this.operation === undefined && !parsedSpec.supported) {
-      this.tooltip = vscode.l10n.t(
-        '{0}\nPin unavailable: {1}',
-        this.tooltip,
-        sanitizePackageText(parsedSpec.reason),
-      );
-    }
-    this.contextValue = buildRowContextValue(this.operation, hasUpdate, parsedSpec.supported);
-    if (vulnerabilitySeverity !== undefined) {
-      const severityLabel = formatAuditSeverityLabel(vulnerabilitySeverity);
-      this.description = vscode.l10n.t('{0} vulnerability: {1}', this.description, severityLabel);
-      this.tooltip = vscode.l10n.t('{0}\nVulnerability: {1}', this.tooltip, severityLabel);
-      this.contextValue = `${this.contextValue}-${CONTEXT_VALUE_TOKENS.vulnerable}-${vulnerabilitySeverity}`;
-    }
-    const releaseAgeText = getReleaseAgeText(releaseAge);
-    if (releaseAgeText !== undefined) {
-      this.description = vscode.l10n.t('{0} {1}', this.description, releaseAgeText);
-      this.tooltip = vscode.l10n.t('{0}\n{1}', this.tooltip, releaseAgeText);
-    }
-    this.iconPath = this.operation === undefined
-      ? vulnerabilitySeverity === undefined
-        ? getUpdateTypeIcon(updateType)
-        : getVulnerabilityIcon(vulnerabilitySeverity)
-      : getOperationIcon(this.operation);
-    this.accessibilityInformation = {
-      label: getAccessibilityLabel(
-        safePackageName,
-        safeCurrentVersion,
-        safeLatest,
-        updateType,
-        vulnerabilitySeverity,
-        this.operation,
-        this.workspaceOwner,
-        parsedSpec,
-        releaseAgeText,
-      ),
-    };
+    configurePackageItemPresentation(this, {
+      packageName: safePackageName,
+      currentVersion: safeCurrentVersion,
+      latest: safeLatest,
+      updateType,
+      vulnerabilitySeverity,
+      operation: this.operation,
+      workspaceOwner: this.workspaceOwner,
+      parsedSpec,
+      releaseAge,
+    });
   }
 
   get installing(): boolean {
@@ -119,144 +64,6 @@ export function normalizeOperation(operation: PackageOperationInput, defaultTarg
   return operation ? { kind: 'update', target: defaultTarget } : undefined;
 }
 
-function buildRowContextValue(operation: PackageOperation | undefined, hasUpdate: boolean, pinSupported: boolean): string {
-  if (operation !== undefined) {
-    return `${CONTEXT_VALUE_TOKENS.installing}-${operation.kind}`;
-  }
-  const base = hasUpdate ? CONTEXT_VALUE_TOKENS.outdated : CONTEXT_VALUE_TOKENS.package;
-  return `${base}-${pinSupported ? CONTEXT_VALUE_TOKENS.pinnable : CONTEXT_VALUE_TOKENS.pinUnsupported}`;
-}
-
-function resolveWorkspaceOwner(packageFilePath: string): string | undefined {
-  if (packageFilePath === '') {
-    return undefined;
-  }
-
-  try {
-    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(packageFilePath));
-    if (folder === undefined) {
-      return undefined;
-    }
-    const workspaceFolders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-    return resolvePackageFileLabels(
-      [packageFilePath],
-      workspaceFolders,
-      getLocalizedPackageLabelFormatting(),
-    ).find(label => label.packageFilePath === packageFilePath)?.owner.label;
-  }
-  catch {
-    return undefined;
-  }
-}
-
-function getUpdateTypeLabel(updateType: UpdateType): string {
-  return vscode.l10n.t('{0} update', formatUpdateTypeLabel(updateType));
-}
-
-function getUpdateTypeIcon(updateType: UpdateType): vscode.ThemeIcon {
-  const presentation = PACKAGE_PRESENTATION.updateTypes[updateType];
-  return new vscode.ThemeIcon(presentation.icon, new vscode.ThemeColor(presentation.color));
-}
-
-function getAccessibilityLabel(
-  packageName: string,
-  currentVersion: string,
-  latest: string | undefined,
-  updateType: UpdateType,
-  vulnerabilitySeverity: AuditSeverity | undefined,
-  operation: PackageOperation | undefined,
-  workspaceOwner: string | undefined,
-  parsedSpec: ReturnType<typeof parseDependencySpec>,
-  releaseAgeText: string | undefined,
-): string {
-  const details = [
-    vscode.l10n.t('Package name: {0}', packageName),
-    vscode.l10n.t('Current version: {0}', currentVersion),
-    vscode.l10n.t('Latest version: {0}', latest ?? vscode.l10n.t('unavailable')),
-    vscode.l10n.t('Update type: {0}', formatUpdateTypeLabel(updateType)),
-    vulnerabilitySeverity === undefined
-      ? vscode.l10n.t('Vulnerability: none detected')
-      : vscode.l10n.t('Vulnerability: {0}', formatAuditSeverityLabel(vulnerabilitySeverity)),
-    operation === undefined
-      ? vscode.l10n.t('Active operation: none')
-      : vscode.l10n.t('Active operation: {0}', getOperationAccessibilityText(operation)),
-    vscode.l10n.t('Workspace owner: {0}', workspaceOwner ?? vscode.l10n.t('unavailable')),
-    operation === undefined
-      ? parsedSpec.supported
-        ? vscode.l10n.t('Pin capability: available')
-        : vscode.l10n.t('Pin capability: unavailable — {0}', sanitizePackageText(parsedSpec.reason))
-      : vscode.l10n.t('Pin capability: unavailable while busy'),
-    ...(releaseAgeText === undefined ? [] : [releaseAgeText]),
-  ];
-  return details.join('. ');
-}
-
-function getOperationAccessibilityText(operation: PackageOperation): string {
-  switch (operation.kind) {
-    case 'update':
-      return vscode.l10n.t('update in progress to {0}', sanitizePackageText(operation.target));
-    case 'remove':
-      return vscode.l10n.t('remove in progress');
-    case 'install':
-      return vscode.l10n.t('install in progress');
-    case 'pin':
-      return vscode.l10n.t('pin in progress');
-    case 'switch':
-      return vscode.l10n.t('dependency type switch in progress');
-  }
-}
-
-function getOperationTooltip(packageName: string, operation: PackageOperation): string {
-  switch (operation.kind) {
-    case 'update':
-      return vscode.l10n.t('Updating {0} to {1}', packageName, sanitizePackageText(operation.target));
-    case 'remove':
-      return vscode.l10n.t('Removing {0}', packageName);
-    case 'install':
-      return vscode.l10n.t('Installing {0}', packageName);
-    case 'pin':
-      return vscode.l10n.t('Pinning {0} version', packageName);
-    case 'switch':
-      return vscode.l10n.t('Switching {0} dependency type', packageName);
-  }
-}
-
-function getOperationIcon(operation: PackageOperation): vscode.ThemeIcon {
-  const icons: Record<PackageOperation['kind'], string> = {
-    update: 'arrow-up',
-    remove: 'trash',
-    install: 'cloud-download',
-    pin: 'lock',
-    switch: 'arrow-swap',
-  };
-  return new vscode.ThemeIcon(icons[operation.kind]);
-}
-
-function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
-  if (state.kind === 'held-back') {
-    return vscode.l10n.t(
-      'Held back {0} until {1}',
-      sanitizePackageText(state.version),
-      sanitizePackageText(formatHeldBackDate(state.eligibleAt)),
-    );
-  }
-  if (state.kind === 'unknown') {
-    return sanitizePackageText(
-      state.version === undefined
-        ? vscode.l10n.t('Release age unknown; update is not blocked.')
-        : vscode.l10n.t(
-            'Release age unknown for {0}; update is not blocked.',
-            sanitizePackageText(state.version),
-          ),
-    );
-  }
-  return undefined;
-}
-
-export function sanitizePackageText(value: string): string {
-  return sanitizeInlineText(value);
-}
-
 /**
  * Narrows an unknown command argument to `PackageItem`: the Command Palette can invoke a
  * command with no argument, and `executeCommand()` accepts any value regardless of the
@@ -269,14 +76,4 @@ export function isPackageItem(value: unknown): value is PackageItem {
   catch {
     return false;
   }
-}
-
-function getVulnerabilityIcon(severity: AuditSeverity): vscode.ThemeIcon {
-  const color = severity === 'critical' || severity === 'high'
-    ? 'errorForeground'
-    : severity === 'moderate'
-      ? 'warningForeground'
-      : 'notificationsInfoIcon.foreground';
-  const icon = severity === 'low' || severity === 'info' ? 'info' : 'warning';
-  return new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
 }

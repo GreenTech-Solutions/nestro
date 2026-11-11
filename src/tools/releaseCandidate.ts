@@ -73,6 +73,49 @@ function isValidArtifact(artifact: ReleaseCandidateArtifact, evidence: ReleaseCa
     && DIGEST_PATTERN.test(artifact.provenanceSha256);
 }
 
+function findCandidateInputViolation(
+  evidence: ReleaseCandidateEvidence,
+  packageVersion: string,
+  existingTags: readonly string[],
+  context: ReleaseCandidateContext,
+): string | undefined {
+  if (!VERSION_PATTERN.test(packageVersion)) {
+    return `package version "${packageVersion}" is not a plain major.minor.patch semver`;
+  }
+  const tag = `v${packageVersion}`;
+  if (existingTags.includes(tag)) {
+    return `${tag} is already released`;
+  }
+  if (evidence.eventName !== 'push') {
+    return 'candidate evidence must come from a push run';
+  }
+  if (evidence.pullRequestHeadSha !== null) {
+    return 'candidate evidence must not carry a pull request head';
+  }
+  if (evidence.releaseEligible !== false) {
+    return 'candidate evidence must be marked releaseEligible=false';
+  }
+  if (!COMMIT_SHA_PATTERN.test(evidence.sourceSha)) {
+    return 'candidate source SHA must be a full lowercase 40-character commit SHA';
+  }
+  if (!RUN_ID_PATTERN.test(evidence.runId) || !RUN_ID_PATTERN.test(evidence.runAttempt)) {
+    return 'candidate CI run ID and attempt must be positive integers';
+  }
+  if (!VSIX_FILE_PATTERN.test(evidence.vsixFile)) {
+    return 'candidate VSIX filename must be a safe .vsix filename';
+  }
+  if (!DIGEST_PATTERN.test(evidence.vsixSha256)) {
+    return 'candidate VSIX digest must be a lowercase SHA-256 digest';
+  }
+  if (context.expectedSourceSha !== undefined && evidence.sourceSha !== context.expectedSourceSha) {
+    return 'candidate source SHA does not match the verified workflow run';
+  }
+  if (context.expectedCiRunId !== undefined && evidence.runId !== context.expectedCiRunId) {
+    return 'candidate CI run ID does not match the verified workflow run';
+  }
+  return undefined;
+}
+
 export function buildReleaseCandidate(
   evidence: ReleaseCandidateEvidence,
   packageVersion: string,
@@ -80,41 +123,12 @@ export function buildReleaseCandidate(
   notes: string,
   context: ReleaseCandidateContext,
 ): ReleaseCandidateOutcome {
-  if (!VERSION_PATTERN.test(packageVersion)) {
-    return { isCandidate: false, reason: `package version "${packageVersion}" is not a plain major.minor.patch semver` };
+  const inputViolation = findCandidateInputViolation(evidence, packageVersion, existingTags, context);
+  if (inputViolation !== undefined) {
+    return { isCandidate: false, reason: inputViolation };
   }
-  const tag = `v${packageVersion}`;
-  if (existingTags.includes(tag)) {
-    return { isCandidate: false, reason: `${tag} is already released` };
-  }
-  if (evidence.eventName !== 'push') {
-    return { isCandidate: false, reason: 'candidate evidence must come from a push run' };
-  }
-  if (evidence.pullRequestHeadSha !== null) {
-    return { isCandidate: false, reason: 'candidate evidence must not carry a pull request head' };
-  }
-  if (evidence.releaseEligible !== false) {
-    return { isCandidate: false, reason: 'candidate evidence must be marked releaseEligible=false' };
-  }
-  if (!COMMIT_SHA_PATTERN.test(evidence.sourceSha)) {
-    return { isCandidate: false, reason: 'candidate source SHA must be a full lowercase 40-character commit SHA' };
-  }
-  if (!RUN_ID_PATTERN.test(evidence.runId) || !RUN_ID_PATTERN.test(evidence.runAttempt)) {
-    return { isCandidate: false, reason: 'candidate CI run ID and attempt must be positive integers' };
-  }
-  if (!VSIX_FILE_PATTERN.test(evidence.vsixFile)) {
-    return { isCandidate: false, reason: 'candidate VSIX filename must be a safe .vsix filename' };
-  }
-  if (!DIGEST_PATTERN.test(evidence.vsixSha256)) {
-    return { isCandidate: false, reason: 'candidate VSIX digest must be a lowercase SHA-256 digest' };
-  }
-  if (context.expectedSourceSha !== undefined && evidence.sourceSha !== context.expectedSourceSha) {
-    return { isCandidate: false, reason: 'candidate source SHA does not match the verified workflow run' };
-  }
-  if (context.expectedCiRunId !== undefined && evidence.runId !== context.expectedCiRunId) {
-    return { isCandidate: false, reason: 'candidate CI run ID does not match the verified workflow run' };
-  }
-  if (context.candidateRunId === undefined || !RUN_ID_PATTERN.test(context.candidateRunId)) {
+  const { candidateRunId } = context;
+  if (candidateRunId === undefined || !RUN_ID_PATTERN.test(candidateRunId)) {
     return { isCandidate: false, reason: 'candidateRunId must be a positive integer' };
   }
   const { artifact } = context;
@@ -127,7 +141,7 @@ export function buildReleaseCandidate(
     sourceSha: evidence.sourceSha,
     ciRunId: evidence.runId,
     ciRunAttempt: evidence.runAttempt,
-    candidateRunId: context.candidateRunId,
+    candidateRunId,
     ...artifact,
     notes,
   };

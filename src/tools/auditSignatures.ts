@@ -125,37 +125,79 @@ function reject(reason: SignatureAuditRejectionReason, detail: string): Signatur
   return { kind: 'rejected', reason, detail };
 }
 
+type SignatureAuditDocument
+  = | { kind: 'json'; exitCode: number; json: unknown }
+    | { kind: 'rejected'; outcome: SignatureAuditRejectedOutcome };
+
+function parseSignatureAuditDocument(execution: SignatureAuditExecution): SignatureAuditDocument {
+  const { command, exitCode, stderr, stdout } = execution;
+  if (exitCode === undefined) {
+    return {
+      kind: 'rejected',
+      outcome: reject('process-failed', `${command} never reported an exit code${describeStderr(stderr)}`),
+    };
+  }
+
+  const output = stdout.trim();
+  if (output === '') {
+    return {
+      kind: 'rejected',
+      outcome: reject(
+        'empty-output',
+        `${command} wrote no report to stdout (exit code ${exitCode})${describeStderr(stderr)}`,
+      ),
+    };
+  }
+
+  try {
+    return { kind: 'json', exitCode, json: JSON.parse(output) as unknown };
+  }
+  catch (error) {
+    return {
+      kind: 'rejected',
+      outcome: reject(
+        'malformed-json',
+        `${command} wrote ${output.length} byte(s) to stdout that are not JSON `
+        + `(exit code ${exitCode}): ${describeError(error)}`,
+      ),
+    };
+  }
+}
+
+function rejectSignatureFindings(
+  command: string,
+  exitCode: number,
+  report: SignatureAuditReport,
+): SignatureAuditRejectedOutcome | undefined {
+  if (report.invalid.length > 0) {
+    return reject(
+      'invalid-signatures',
+      `${command} reported ${report.invalid.length} package(s) with an invalid registry signature `
+      + `(exit code ${exitCode}): ${describeFindings(report.invalid)}`,
+    );
+  }
+  if (report.missing.length > 0) {
+    return reject(
+      'missing-signatures',
+      `${command} reported ${report.missing.length} package(s) with no registry signature `
+      + `(exit code ${exitCode}): ${describeFindings(report.missing)}`,
+    );
+  }
+  return undefined;
+}
+
 /**
  * Classifies one signature audit run. Every branch but the last is a rejection,
  * so an unexpected report shape or an unexpected exit code can never be read as
  * "verified".
  */
 export function evaluateSignatureAudit(execution: SignatureAuditExecution): SignatureAuditOutcome {
-  const { command, exitCode, stderr, stdout } = execution;
-
-  if (exitCode === undefined) {
-    return reject('process-failed', `${command} never reported an exit code${describeStderr(stderr)}`);
+  const document = parseSignatureAuditDocument(execution);
+  if (document.kind === 'rejected') {
+    return document.outcome;
   }
-
-  const output = stdout.trim();
-  if (output === '') {
-    return reject(
-      'empty-output',
-      `${command} wrote no report to stdout (exit code ${exitCode})${describeStderr(stderr)}`,
-    );
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(output);
-  }
-  catch (error) {
-    return reject(
-      'malformed-json',
-      `${command} wrote ${output.length} byte(s) to stdout that are not JSON `
-      + `(exit code ${exitCode}): ${describeError(error)}`,
-    );
-  }
+  const { command } = execution;
+  const { exitCode, json } = document;
 
   if (isAdvisoryReport(json)) {
     return reject(
@@ -176,25 +218,12 @@ export function evaluateSignatureAudit(execution: SignatureAuditExecution): Sign
     );
   }
 
-  if (report.invalid.length > 0) {
-    return reject(
-      'invalid-signatures',
-      `${command} reported ${report.invalid.length} package(s) with an invalid registry signature `
-      + `(exit code ${exitCode}): ${describeFindings(report.invalid)}`,
-    );
+  // Findings precede count checks so failed packument reads retain package identities.
+  const findingRejection = rejectSignatureFindings(command, exitCode, report);
+  if (findingRejection !== undefined) {
+    return findingRejection;
   }
 
-  if (report.missing.length > 0) {
-    return reject(
-      'missing-signatures',
-      `${command} reported ${report.missing.length} package(s) with no registry signature `
-      + `(exit code ${exitCode}): ${describeFindings(report.missing)}`,
-    );
-  }
-
-  // Placed after the invalid/missing checks on purpose: a failed packument request can push an
-  // entry onto `invalid` without incrementing `audited`, so checking the sum first would mask a
-  // real signature failure behind a generic arithmetic mismatch.
   const classified = report.verified + report.missing.length + report.invalid.length;
   if (classified !== report.audited) {
     return reject(

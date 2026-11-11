@@ -13,7 +13,7 @@ import type {
   PackageLoadingServiceContract,
   ResolvedPackageItem,
 } from '../providers';
-import { resolveCanonicalPackageLocation } from '../providers/packageIdentity';
+import { resolveCanonicalPackageLocation } from '../providers/packageLocationResolution';
 import type { UpdateOrchestrationServiceContract } from '../providers/updateOrchestrationService';
 import { runShellTaskAndWait, updateDependencyVersionsInFile } from '../utils';
 

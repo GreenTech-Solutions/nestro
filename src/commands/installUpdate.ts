@@ -1,52 +1,27 @@
 import * as vscode from 'vscode';
 import { getDeferInstallAfterUpdate } from '../config';
 import { ClientManager } from '../clients';
-import {
-  getLocalizedPackageLabelFormatting,
-  isPackageItem,
-  PackagesProvider,
-  resolvePackageFileLabels,
-  sanitizePackageText,
-  toWorkspaceFolderDescriptors,
-} from '../providers';
+import { isPackageItem, PackagesProvider } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 import { COMMAND_IDS, describeError } from '../shared';
-import {
-  formatDependencySectionLabel,
-  logger,
-  ShellTaskCommand,
-  showError,
-} from '../utils';
+import { logger, showError } from '../utils';
 import type { ReleaseAgeState } from '../utils';
-import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
+import { resolveCommandPackageItem } from './packageIdentity';
+import { revalidateUpdates, runImmediateUpdateGroups } from './packageUpdateExecution';
+import type { BulkUpdateChecked, ImmediateUpdateRun } from './packageUpdateExecution';
 import { confirmRiskyUpdates } from './updateRiskConfirmation';
 import {
   confirmBulkPackageUpdate,
-  formatPartialUpdateCancellation,
-  formatPartialUpdateFailure,
   formatUnverifiedUpdateMessage,
-  groupPackageMutationsByFile,
   reconcileFailedPackageMutation,
-  runMarkedPackageUpdateTask,
   writeAndMarkPackageUpdates,
   writePackageUpdateBatch,
 } from './packageUpdateSteps';
-import type { PackageMutationGroup, PackageUpdate, PackageUpdateTaskOutcome } from './packageUpdateSteps';
+import type { PackageUpdate } from './packageUpdateSteps';
 import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
 import type { RowMutationExecution, RowMutationProgress } from './rowMutation';
 
 const clientManager = new ClientManager();
-
-type ImmediateUpdateRun
-  = | { readonly kind: 'completed' }
-    | { readonly kind: 'cancelled' }
-    | { readonly kind: 'single-cancelled' }
-    | { readonly kind: 'single-failed'; readonly message: string }
-    | { readonly kind: 'single-unverified' }
-    | { readonly kind: 'group-cancelled'; readonly reason: string }
-    | { readonly kind: 'group-failed'; readonly reason: string; readonly error?: unknown }
-    | { readonly kind: 'stopped-cancelled'; readonly message: string }
-    | { readonly kind: 'stopped'; readonly message: string; readonly error?: unknown };
 
 interface UpdateItemRequest {
   readonly kind: 'item';
@@ -70,13 +45,6 @@ interface UpdateBatchMutation {
   readonly kind: 'single' | 'bulk';
   readonly updates: readonly PackageUpdate[];
   readonly provider: PackagesProvider;
-}
-
-interface BulkUpdateChecked {
-  readonly kind: 'single' | 'bulk';
-  readonly strategy: 'immediate' | 'deferred';
-  readonly updates: readonly PackageUpdate[];
-  readonly confirmedRiskyUpdates: ReadonlySet<string>;
 }
 
 type BulkUpdateMarked
@@ -245,7 +213,7 @@ async function applyBulkUpdates(
   if (marked.kind === 'immediate') {
     return {
       kind: 'immediate',
-      outcome: await runImmediateUpdateGroups(checked, provider),
+      outcome: await runImmediateUpdateGroups(checked, provider, clientManager),
     };
   }
   const refreshed = await writeAndMarkPackageUpdates(marked.updates, provider, () => (
@@ -298,171 +266,4 @@ async function reconcileBulkUpdates(execution: BulkUpdateExecution, provider: Pa
     await provider.loadPackages();
     throw new Error(formatUnverifiedUpdateMessage());
   }
-}
-
-async function runImmediateUpdateGroups(
-  checked: BulkUpdateChecked,
-  provider: PackagesProvider,
-): Promise<ImmediateUpdateRun> {
-  const groups = groupPackageMutationsByFile(checked.updates, true);
-  let completedCount = 0;
-  const stopped = (reason: string, error?: unknown): ImmediateUpdateRun => ({
-    kind: 'stopped',
-    message: formatPartialUpdateFailure(reason, formatUpdateGroupLabels(groups), completedCount),
-    error,
-  });
-  const stoppedCancelled = (reason: string): ImmediateUpdateRun => ({
-    kind: 'stopped-cancelled',
-    message: formatPartialUpdateCancellation(reason, formatUpdateGroupLabels(groups), completedCount),
-  });
-  try {
-    for (const group of groups) {
-      const groupUpdates = checked.kind === 'bulk'
-        ? await revalidateUpdates(group.updates, provider, true)
-        : group.updates;
-      if (groupUpdates === undefined) {
-        return stopWhenPackageListChanges(checked.kind, stopped);
-      }
-      const cwd = groupUpdates[0].capability.packageDirectory;
-      const client = await clientManager.getClient(cwd);
-      const beforeTask = await revalidateUpdates(groupUpdates, provider, checked.kind === 'bulk');
-      if (beforeTask === undefined) {
-        return stopWhenPackageListChanges(checked.kind, stopped);
-      }
-      if (!await confirmRiskyUpdates(beforeTask, new Set(checked.confirmedRiskyUpdates))) {
-        return { kind: 'cancelled' };
-      }
-      const command = client.buildUpdateCommand(beforeTask.map(update => ({
-        name: update.capability.item.packageName,
-        version: update.version,
-        section: update.capability.identity.section,
-      })));
-      const outcome = await runMarkedUpdateGroup(checked, beforeTask, provider, command, cwd);
-      if (outcome.kind === 'completed') {
-        completedCount += 1;
-        continue;
-      }
-      return outcome.kind === 'group-failed'
-        ? stopped(outcome.reason, outcome.error)
-        : outcome.kind === 'group-cancelled'
-          ? stoppedCancelled(outcome.reason)
-          : outcome;
-    }
-  }
-  catch (error) {
-    if (checked.kind === 'single') {
-      throw error;
-    }
-    return stopped(describeError(error), error);
-  }
-  return { kind: 'completed' };
-}
-
-function stopWhenPackageListChanges(
-  kind: BulkUpdateChecked['kind'],
-  stopBulk: (reason: string) => ImmediateUpdateRun,
-): ImmediateUpdateRun {
-  return kind === 'single'
-    ? { kind: 'cancelled' }
-    : stopBulk(vscode.l10n.t('the package list changed while updating.'));
-}
-
-async function runMarkedUpdateGroup(
-  checked: BulkUpdateChecked,
-  updates: readonly PackageUpdate[],
-  provider: PackagesProvider,
-  command: ShellTaskCommand,
-  cwd: string,
-): Promise<ImmediateUpdateRun> {
-  const progress = markPackageCapabilities(provider, updates.map(update => ({
-    capability: update.capability,
-    operation: { kind: 'update' as const, target: update.version },
-  })));
-  if (progress === undefined) {
-    return checked.kind === 'single'
-      ? { kind: 'cancelled' }
-      : { kind: 'group-failed', reason: vscode.l10n.t('the package list changed while updating.') };
-  }
-  const activeUpdates = updates.map((update, index) => ({
-    ...update,
-    capability: progress.capabilities[index],
-  }));
-  const taskName = checked.kind === 'single'
-    ? vscode.l10n.t('Update {0}', sanitizePackageText(updates[0].capability.item.packageName))
-    : vscode.l10n.t('Update All Packages');
-  let outcome: PackageUpdateTaskOutcome;
-  try {
-    outcome = await runMarkedPackageUpdateTask(activeUpdates, command, taskName, provider, cwd);
-  }
-  catch (error) {
-    clearMutationProgress(progress);
-    if (checked.kind === 'single') {
-      throw error;
-    }
-    return { kind: 'group-failed', reason: describeError(error), error };
-  }
-  if (outcome.kind === 'completed') {
-    return { kind: 'completed' };
-  }
-  clearMutationProgress(progress);
-  if (outcome.kind === 'cancelled') {
-    return checked.kind === 'single'
-      ? { kind: 'single-cancelled' }
-      : {
-          kind: 'group-cancelled',
-          reason: vscode.l10n.t('task "{0}" was cancelled.', taskName),
-        };
-  }
-  if (outcome.kind === 'unverified') {
-    return checked.kind === 'single'
-      ? { kind: 'single-unverified' }
-      : {
-          kind: 'stopped',
-          message: vscode.l10n.t('failed to update packages — {0}', formatUnverifiedUpdateMessage()),
-        };
-  }
-  return checked.kind === 'single'
-    ? { kind: 'single-failed', message: outcome.message }
-    : { kind: 'group-failed', reason: outcome.message };
-}
-
-function formatUpdateGroupLabels(groups: readonly PackageMutationGroup<PackageUpdate>[]): string[] {
-  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-  const labelByPath = new Map(
-    resolvePackageFileLabels(
-      groups.map(group => group.packageFilePath),
-      folders,
-      getLocalizedPackageLabelFormatting(),
-    ).map(({ packageFilePath, owner }) => [packageFilePath, owner.label]),
-  );
-  return groups.map((group) => {
-    const label = labelByPath.get(group.packageFilePath) ?? group.packageFilePath;
-    const hasSiblingGroup = groups.some(other => other !== group && other.packageFilePath === group.packageFilePath);
-    return hasSiblingGroup
-      ? `${label} (${formatDependencySectionLabel(group.updates[0].capability.identity.section)})`
-      : label;
-  });
-}
-
-async function revalidateUpdates(
-  updates: readonly PackageUpdate[],
-  provider: PackagesProvider,
-  reissueCapabilities: boolean,
-): Promise<PackageUpdate[] | undefined> {
-  const checked: PackageUpdate[] = [];
-  for (const update of updates) {
-    const capability = reissueCapabilities
-      ? await provider.reissuePackageCapability(update.capability)
-      ?? await revalidateCommandPackageItem(update.capability, provider)
-      : await revalidateCommandPackageItem(update.capability, provider);
-    if (capability === undefined) {
-      return undefined;
-    }
-    const version = update.source === 'selected' ? update.version : capability.item.latest;
-    if (version === undefined || capability.item.operation !== undefined) {
-      return undefined;
-    }
-    checked.push({ ...update, capability, version });
-  }
-  return checked;
 }

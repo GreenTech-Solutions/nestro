@@ -3,21 +3,6 @@ import gitignore from 'eslint-config-flat-gitignore';
 import sonarjs from 'eslint-plugin-sonarjs';
 import typescriptEslint from 'typescript-eslint';
 
-// Files that predate the size limits, each at its current measured size; a ceiling only goes down.
-// maxLines caps the file, maxFunctionLines caps its longest function; delete a key once the file fits the default.
-const SIZE_LIMIT_EXCEPTIONS = {
-  'src/commands/installUpdate.ts': { maxLines: 435 },
-  'src/extension.ts': { maxFunctionLines: 63 },
-  'src/providers/PackageItem.ts': { maxFunctionLines: 82 },
-  'src/providers/packageIdentity.ts': { maxFunctionLines: 80 },
-  'src/providers/packageLoadingService.ts': { maxFunctionLines: 77 },
-  'src/tools/auditSignatures.ts': { maxFunctionLines: 77 },
-  'src/tools/releaseCandidate.ts': { maxFunctionLines: 64 },
-  'src/utils/auditClient.ts': { maxFunctionLines: 88 },
-  'src/utils/bunConfig.ts': { maxFunctionLines: 61 },
-  'src/utils/yarnAuditClient.ts': { maxLines: 315 },
-};
-
 const PRODUCT_LIMITS = { maxLines: 300, maxFunctionLines: 60 };
 const TEST_LIMITS = { maxLines: 800 };
 
@@ -44,14 +29,6 @@ function sizeLimitConfigs() {
         'max-lines-per-function': 'off',
       },
     },
-    ...Object.entries(SIZE_LIMIT_EXCEPTIONS).map(([file, ceilings]) => ({
-      name: `app/size-limit-exception/${file}`,
-      files: [file],
-      rules: {
-        ...(ceilings.maxLines === undefined ? {} : { 'max-lines': maxLinesRule(ceilings.maxLines) }),
-        ...(ceilings.maxFunctionLines === undefined ? {} : { 'max-lines-per-function': maxLinesRule(ceilings.maxFunctionLines) }),
-      },
-    })),
   ];
 }
 

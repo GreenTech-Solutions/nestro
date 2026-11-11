@@ -1,4 +1,4 @@
-import { BUN_ENV_SYNTAX, expandEnvironmentReferences } from './envExpansion';
+import { parseInlineTable, parseTomlString } from './bunTomlValues';
 
 export interface BunRegistryConfiguration {
   registryUrl: string;
@@ -13,73 +13,84 @@ export interface ParsedBunConfig {
 
 type BunSection = 'install' | 'install.scopes' | 'other';
 
+interface BunConfigState {
+  section: BunSection | undefined;
+  registry: BunRegistryConfiguration | undefined;
+  scopes: Map<string, BunRegistryConfiguration>;
+  seenSections: Set<string>;
+}
+
 const BUN_REGISTRY_KEYS = new Set(['registry']);
-const BUN_REGISTRY_ENTRY_KEYS = new Set(['password', 'token', 'url', 'username']);
 
 export function parseBunConfig(contents: string): ParsedBunConfig | undefined {
   if (contents.startsWith('\uFEFF')) {
     return undefined;
   }
 
-  let section: BunSection | undefined;
-  let registry: BunRegistryConfiguration | undefined;
-  const scopes = new Map<string, BunRegistryConfiguration>();
-  const seenSections = new Set<string>();
-
+  const state: BunConfigState = {
+    section: undefined,
+    registry: undefined,
+    scopes: new Map(),
+    seenSections: new Set(),
+  };
   for (const rawLine of contents.split(/\r?\n/)) {
-    const line = stripTomlComment(rawLine).trim();
-    if (line === '') {
-      continue;
-    }
-    if (line.startsWith('[')) {
-      const nextSection = parseBunSection(line);
-      if (nextSection === undefined) {
-        return undefined;
-      }
-      if (nextSection !== 'other') {
-        if (seenSections.has(nextSection)) {
-          return undefined;
-        }
-        seenSections.add(nextSection);
-      }
-      section = nextSection;
-      continue;
-    }
-    if (section !== 'install' && section !== 'install.scopes') {
-      continue;
-    }
-
-    const assignment = parseBunAssignment(line, section === 'install.scopes');
-    if (assignment === undefined) {
+    if (!processBunConfigLine(rawLine, state)) {
       return undefined;
-    }
-    if (section === 'install') {
-      if (!BUN_REGISTRY_KEYS.has(assignment.key)) {
-        continue;
-      }
-      if (registry !== undefined) {
-        return undefined;
-      }
-      const parsed = parseRegistryValue(assignment.value);
-      if (parsed === undefined) {
-        return undefined;
-      }
-      registry = parsed;
-    }
-    else {
-      const scope = assignment.key.slice(1);
-      if (!isValidScope(assignment.key) || scopes.has(scope)) {
-        return undefined;
-      }
-      const parsed = parseRegistryValue(assignment.value);
-      if (parsed === undefined) {
-        return undefined;
-      }
-      scopes.set(scope, parsed);
     }
   }
 
-  return { registry, scopes };
+  return { registry: state.registry, scopes: state.scopes };
+}
+
+function processBunConfigLine(rawLine: string, state: BunConfigState): boolean {
+  const line = stripTomlComment(rawLine).trim();
+  if (line === '') {
+    return true;
+  }
+  if (line.startsWith('[')) {
+    const nextSection = parseBunSection(line);
+    if (nextSection === undefined || (nextSection !== 'other' && state.seenSections.has(nextSection))) {
+      return false;
+    }
+    if (nextSection !== 'other') {
+      state.seenSections.add(nextSection);
+    }
+    state.section = nextSection;
+    return true;
+  }
+  if (state.section !== 'install' && state.section !== 'install.scopes') {
+    return true;
+  }
+
+  const assignment = parseBunAssignment(line, state.section === 'install.scopes');
+  if (assignment === undefined) {
+    return false;
+  }
+  if (state.section === 'install') {
+    if (!BUN_REGISTRY_KEYS.has(assignment.key)) {
+      return true;
+    }
+    if (state.registry !== undefined) {
+      return false;
+    }
+    const parsed = parseRegistryValue(assignment.value);
+    if (parsed === undefined) {
+      return false;
+    }
+    state.registry = parsed;
+    return true;
+  }
+
+  const scope = assignment.key.slice(1);
+  if (!isValidScope(assignment.key) || state.scopes.has(scope)) {
+    return false;
+  }
+  const parsed = parseRegistryValue(assignment.value);
+  if (parsed === undefined) {
+    return false;
+  }
+  state.scopes.set(scope, parsed);
+  return true;
 }
 
 function parseBunSection(line: string): BunSection | undefined {
@@ -142,99 +153,6 @@ function parseRegistryValue(value: string): BunRegistryConfiguration | undefined
     : normalizeRegistryConfiguration(parsed.value);
 }
 
-function parseInlineTable(value: string): Map<string, string> | undefined {
-  if (!value.endsWith('}') || value.length < 2) {
-    return undefined;
-  }
-
-  const fields = new Map<string, string>();
-  let index = skipWhitespace(value, 1);
-  if (value[index] === '}') {
-    return undefined;
-  }
-  while (index < value.length - 1) {
-    const keyStart = index;
-    while (index < value.length && /[A-Za-z]/.test(value[index] ?? '')) {
-      index += 1;
-    }
-    const key = value.slice(keyStart, index);
-    if (!BUN_REGISTRY_ENTRY_KEYS.has(key) || fields.has(key)) {
-      return undefined;
-    }
-    index = skipWhitespace(value, index);
-    if (value[index] !== '=') {
-      return undefined;
-    }
-    const parsed = parseTomlString(value.slice(index + 1).trimStart());
-    if (parsed === undefined) {
-      return undefined;
-    }
-    fields.set(key, parsed.value);
-    index += 1 + value.slice(index + 1).length - value.slice(index + 1).trimStart().length + parsed.nextIndex;
-    index = skipWhitespace(value, index);
-    if (value[index] === '}') {
-      return index === value.length - 1 ? fields : undefined;
-    }
-    if (value[index] !== ',') {
-      return undefined;
-    }
-    index = skipWhitespace(value, index + 1);
-  }
-  return undefined;
-}
-
-function parseTomlString(value: string): { value: string; nextIndex: number } | undefined {
-  if (!value.startsWith('"')) {
-    return undefined;
-  }
-
-  let result = '';
-  for (let index = 1; index < value.length; index += 1) {
-    const character = value[index];
-    if (character === '"') {
-      const expanded = expandEnvironmentReferences(result, BUN_ENV_SYNTAX);
-      return expanded === undefined ? undefined : { value: expanded, nextIndex: index + 1 };
-    }
-    if (character === '\\') {
-      const escaped = value[index + 1];
-      const replacement = getTomlEscape(escaped);
-      if (replacement === undefined) {
-        return undefined;
-      }
-      result += replacement;
-      index += 1;
-    }
-    else if (character === '\n' || character === '\r' || character.charCodeAt(0) < 0x20) {
-      return undefined;
-    }
-    else {
-      result += character;
-    }
-  }
-  return undefined;
-}
-
-function getTomlEscape(value: string | undefined): string | undefined {
-  switch (value) {
-    case '"':
-      return '"';
-    case '\\':
-      return '\\';
-    case 'b':
-      return '\b';
-    case 'f':
-      return '\f';
-    case 'n':
-      return '\n';
-    case 'r':
-      return '\r';
-    case 't':
-      return '\t';
-    default:
-      return undefined;
-  }
-}
-
 function normalizeRegistryConfiguration(
   rawUrl: string,
   authToken?: string,
@@ -295,14 +213,6 @@ function stripTomlComment(value: string): string {
     }
   }
   return value;
-}
-
-function skipWhitespace(value: string, startIndex: number): number {
-  let index = startIndex;
-  while (index < value.length && /\s/.test(value[index] ?? '')) {
-    index += 1;
-  }
-  return index;
 }
 
 function isValidScope(value: string): boolean {
