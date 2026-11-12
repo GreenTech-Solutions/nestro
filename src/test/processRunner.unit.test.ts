@@ -5,7 +5,7 @@ import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getWindowsTaskkillPath, runBoundedProcess } from '../utils/processRunner';
 
 // Pass-through wrappers: every real-process test below still reaches the real functions, while
@@ -86,6 +86,10 @@ afterEach(() => {
       rmSync(file);
     }
   }
+});
+
+beforeEach(() => {
+  vi.mocked(spawn).mockClear();
 });
 
 describe('runBoundedProcess() — real child process', () => {
