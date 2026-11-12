@@ -1,42 +1,30 @@
 import * as vscode from 'vscode';
+import { classifyPackageName, isVersionOperand } from '../shared';
 
-// `@scope/name` (scope optional) with exactly one separating slash.
-const SCOPED_NAME_PATTERN = /^(?:@([^/]+)\/)?([^/]+)$/;
 const CONTROL_CHARACTER_PATTERN = /[\x00-\x1f\x7f]/;
 
-/**
- * Rejects only what makes an operand option-like or unresolvable — leading hyphen,
- * empty name, malformed scope, or URL-unsafe characters. Mixed case and length past
- * 214 pass as real legacy names; leading `.`/`_` pass only as inert, not real, ones.
- */
+/** Throws a localized error when the name is empty, option-like, malformed or not URL-safe. */
 export function validatePackageName(name: string): void {
-  if (name.length === 0) {
-    throw new Error(vscode.l10n.t('Package name cannot be empty.'));
-  }
-  if (name.startsWith('-')) {
-    throw new Error(vscode.l10n.t('Package name "{0}" cannot start with a hyphen.', name));
-  }
-
-  const match = SCOPED_NAME_PATTERN.exec(name);
-  if (match === null) {
-    throw new Error(vscode.l10n.t('Package name "{0}" is not a valid package or scoped package name.', name));
-  }
-
-  const [, scope, unscopedName] = match;
-  if (scope !== undefined && !isUrlSafeSegment(scope)) {
-    throw new Error(vscode.l10n.t('Package scope "{0}" contains characters a registry URL can\'t carry.', scope));
-  }
-  if (!isUrlSafeSegment(unscopedName)) {
-    throw new Error(vscode.l10n.t(
-      'Package name "{0}" contains characters a registry URL can\'t carry.',
-      unscopedName,
-    ));
+  const problem = classifyPackageName(name);
+  switch (problem?.kind) {
+    case undefined:
+      return;
+    case 'empty':
+      throw new Error(vscode.l10n.t('Package name cannot be empty.'));
+    case 'leading-hyphen':
+      throw new Error(vscode.l10n.t('Package name "{0}" cannot start with a hyphen.', name));
+    case 'malformed':
+      throw new Error(vscode.l10n.t('Package name "{0}" is not a valid package or scoped package name.', name));
+    case 'unsafe-scope':
+      throw new Error(vscode.l10n.t('Package scope "{0}" contains characters a registry URL can\'t carry.', problem.segment));
+    case 'unsafe-name':
+      throw new Error(vscode.l10n.t('Package name "{0}" contains characters a registry URL can\'t carry.', problem.segment));
   }
 }
 
 /**
- * Rejects only a leading hyphen or control characters: no semver, prerelease,
- * dist-tag, or `workspace:` spec ever starts with either.
+ * Accepts a concrete semver with an optional `^`/`~`, a dist-tag, or a `workspace:` form;
+ * everything else, including every shell metacharacter, is rejected before a task is built.
  */
 export function validatePackageVersionSpec(version: string): void {
   if (version.length === 0) {
@@ -48,14 +36,10 @@ export function validatePackageVersionSpec(version: string): void {
   if (CONTROL_CHARACTER_PATTERN.test(version)) {
     throw new Error(vscode.l10n.t('Package version "{0}" contains control characters.', version));
   }
-}
-
-function isUrlSafeSegment(segment: string): boolean {
-  try {
-    return encodeURIComponent(segment) === segment;
-  }
-  catch {
-    // An unpaired surrogate makes encodeURIComponent() throw instead of encoding.
-    return false;
+  if (!isVersionOperand(version)) {
+    throw new Error(vscode.l10n.t(
+      'Package version "{0}" is not a version, version range, dist-tag, or workspace spec.',
+      version,
+    ));
   }
 }

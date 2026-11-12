@@ -11,13 +11,12 @@ import {
 import type { DependencySection, PackageFileDependencyUpdates, PackageVersionUpdate } from './packageTransforms';
 import {
   findWorkspacePackageJsonFiles,
-  getWorkspacePackageFilePath,
   readPackageFile,
-  toWorkspaceRelativePackageFilePath,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
 } from './packageRepository';
 import type { PreparedPackageFile } from './packageRepository';
+import { describeError } from '../shared';
 
 export interface PackageEntry {
   name: string;
@@ -44,15 +43,6 @@ export interface PackageReadFailure {
 export type PackageFileEntries = PackageFileEntry[] & {
   readonly skippedFiles?: readonly SkippedPackageFile[];
 };
-
-export async function updateWorkspaceDependencyVersions(updates: readonly PackageVersionUpdate[]): Promise<void> {
-  const packageFilePath = getWorkspacePackageFilePath();
-  if (packageFilePath === undefined) {
-    throw new Error('No workspace folder found.');
-  }
-
-  await updateDependencyVersionsInFile(packageFilePath, updates);
-}
 
 export async function updateDependencyVersionsInFile(
   packageFilePath: string,
@@ -133,7 +123,7 @@ export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersion
       result = preparePinAllVersions(rawFile.raw);
     }
     catch (err) {
-      skippedFiles.push(toWorkspaceRelativePackageFilePath(uri.fsPath));
+      skippedFiles.push(uri.fsPath);
       logger.error(`Failed to read package.json at ${uri.toString()} for Pin All; skipping it.`, err);
       continue;
     }
@@ -148,11 +138,6 @@ export async function pinAllWorkspaceDependencyVersions(): Promise<PinAllVersion
   }
   await writeManyPreparedPackageFilesAtomically(prepared);
   return { count, skippedFiles };
-}
-
-export async function readWorkspaceDependencies(): Promise<PackageEntry[]> {
-  const entries = await readAllWorkspaceDependencies();
-  return entries.map(({ name, current, dev, versionPrefix }) => ({ name, current, dev, versionPrefix }));
 }
 
 export async function readAllWorkspaceDependencies(glob?: string): Promise<PackageFileEntries> {
@@ -190,7 +175,7 @@ export async function readAllWorkspaceDependencies(glob?: string): Promise<Packa
     catch (err) {
       skippedFiles.push({
         packageFilePath: uri.fsPath,
-        error: err instanceof Error ? err.message : String(err),
+        error: describeError(err),
       });
       logger.error(`Failed to read workspace package.json at ${uri.toString()}; skipping.`, err);
     }

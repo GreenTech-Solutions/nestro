@@ -85,10 +85,12 @@ over time.
 `nestro.pickVersion` only accepts the tree's own `PackageItem` instances —
 `resolvePackageItem()` rejects any duck-typed or reconstructed argument as not current — so
 the driver needs a live reference to a row the provider actually built. `capture.mjs` copies
-the built `out/extension.cjs` into its temporary extension directory and appends a small hook
-that intercepts every `PackageItem` construction and records it on `globalThis.__nestroShots`,
-so `driver.cjs` can look one up by package name and pass it straight back into the command.
-This only ever touches the temporary copy — the repository's own `out/` is never modified.
+the built `out/extension.cjs` into its temporary extension directory and appends the contents
+of `hook.cjs`, a small hook that intercepts every `PackageItem` construction and records it on
+`globalThis.__nestroShots`, so `driver.cjs` can look one up by package name and pass it straight
+back into the command. This only ever touches the temporary copy — the repository's own `out/` is
+never modified. `hook.cjs` is appended verbatim and is not run on its own: it refers to the
+bundle's `PackageItem` binding.
 
 ## The driver
 
@@ -96,9 +98,16 @@ This only ever touches the temporary copy — the repository's own `out/` is nev
 (hence CommonJS, unlike the ESM `capture.mjs`). It steps through the requested states, writing
 a `state-<name>.ready` marker file when a frame is ready to capture and waiting for
 `capture.mjs` to write back `state-<name>.done` before moving on — the same ready/done marker
-handshake used to build the original, untracked version of this pipeline. Parameters (update
-and audit wait times, active filter, pick-version target and row) travel through the
-`NESTRO_CAPTURE_PARAMS` environment variable as JSON.
+handshake used to build the original, untracked version of this pipeline. The requested states and
+the markers directory travel through the `NESTRO_CAPTURE_STATES` and
+`NESTRO_CAPTURE_MARKERS_DIR` environment variables.
+
+## Shared configuration
+
+`config.json` holds the settings both scripts read: `params` (update and audit wait times,
+active filter, pick-version target and row), which `driver.cjs` requires, and `userSettings`,
+which `capture.mjs` writes into the throwaway VS Code profile's `settings.json`. Change a
+wait time or the pick-version target there, not in the scripts.
 
 ## Cropping and downscaling
 

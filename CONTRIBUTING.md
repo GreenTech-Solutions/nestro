@@ -50,12 +50,12 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `dev` | `tsdown --watch` | Rebuild the extension bundle while source files change. | No |
 | `vscode:prepublish` | `pnpm run build` | Build the bundle for publishing. | No |
 | `test:compile` | `tsc -p tsconfig.test.json` | Compile Extension Host tests into `out/test/`. | No |
-| `pretest` | `pnpm run test:compile && pnpm run lint` | Compile integration tests and lint before the default host suite. | No |
+| `pretest` | `pnpm run build && pnpm run test:compile && pnpm run lint` | Rebuild the bundle, compile integration tests, and lint before the default host suite. `build` runs first because it wipes `out/`, including `out/test/`. | No |
 | `check:vsce` | `pnpm run test:compile && node out/tools/verifyVsixCli.js` | Compile the verifier and validate the VSIX package boundary. | No |
 | `audit:dependencies` | `pnpm run test:compile && node out/tools/auditDependenciesCli.js` | Compile and run pnpm's dependency vulnerability audit: production dependencies fail at moderate, any dependency fails at critical, the rest are warnings. | No |
 | `audit:signatures` | `pnpm run test:compile && node out/tools/auditSignaturesCli.js` | Compile and verify pnpm package signatures. | No |
 | `ci:evidence` | `pnpm run test:compile && node out/tools/ciEvidenceCli.js` | Record CI evidence into the directory given as `--out-dir <relative-directory>` (required). | No |
-| `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration, CODEOWNERS, and Dependabot policy. | No |
+| `ci:policy` | `pnpm run test:compile && node out/tools/ciPolicyCli.js` | Validate the repository's GitHub Actions configuration (against `.github/reviewed-actions.json`), CODEOWNERS, and Dependabot policy. | No |
 | `release:provenance` | `pnpm run test:compile && node out/tools/artifactProvenanceCli.js` | Build SBOM and provenance evidence for a release artifact. | No |
 | `release:prepare` | `pnpm run test:compile && node out/tools/releasePrepareCli.js` | Build and validate release preparation evidence. | No |
 | `release:candidate` | `pnpm run test:compile && node out/tools/releaseCandidateCli.js` | Build and validate release-candidate evidence. | No |
@@ -64,9 +64,9 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 | `lint` | `pnpm run lint:eslint` | The non-mutating lint gate. | Yes |
 | `lint:fix` | `eslint --fix src` | Apply ESLint fixes to `src`; this is the mutating lint command and is never run automatically. | No |
 | `test` | `vscode-test` | Run the configured Extension Host channels; its lifecycle also runs `pretest`. | No |
-| `pretest:minimum` | `pnpm run pretest` | Compile and lint before the minimum-version channel. | No |
+| `pretest:minimum` | `pnpm run pretest` | Rebuild, compile and lint before the minimum-version channel. | No |
 | `test:minimum` | `vscode-test --label minimum` | Run Extension Host tests on VS Code `1.125.0`. | No |
-| `pretest:stable` | `pnpm run pretest` | Compile and lint before the stable channel. | No |
+| `pretest:stable` | `pnpm run pretest` | Rebuild, compile and lint before the stable channel. | No |
 | `test:stable` | `vscode-test --label stable` | Run Extension Host tests on the stable VS Code channel. | No |
 | `test:packaged` | `pnpm run test:compile && node out/test/packagedSmokeCli.js` | Run the packaged VSIX smoke test; pass `--artifact-dir <directory> --expected-sha <40-char-sha> --channel <minimum\|stable>`. | No |
 | `test:unit` | `vitest run` | Run the Vitest unit-test suite. | Yes |
@@ -77,10 +77,32 @@ bundle, watch, create coverage, or write evidence are not non-mutating gates.
 `lint` is the safe check to use in normal validation. Use `lint:fix` only when you explicitly
 intend to accept automated source edits.
 
+`lint` also enforces file and function length (`max-lines`, `max-lines-per-function`) for every file,
+with no per-file exceptions, and `eslint-disable` for these rules is not allowed. See
+[CODESTYLE.md](CODESTYLE.md) → Module Size & Responsibility.
+
 The `audit:*`, `ci:*`, `check:vsce` and `release:*` scripts above back the end-to-end release
 process — verified SHA and artifact identity, audits, packaged smoke, environment approval,
 publish, and post-publish verification. See [RELEASING.md](RELEASING.md) for the full checklist;
 a green CI run is not sufficient on its own to call a release done.
+
+### Bumping a GitHub Action
+
+Every external action SHA lives in [.github/reviewed-actions.json](.github/reviewed-actions.json)
+(`<owner>/<repo>` → `{ "sha", "tag" }`, plus the pinned `actionlint` version and SHA-256). The
+policies behind `ci:policy` read it, so a bump is two edits and no TypeScript: change that action's
+entry, and change its `uses: <action>@<sha> # <tag>` lines in `.github/workflows/`. The registry holds
+only pins in use; a rollback is the same reviewed edit. `.github/` is under CODEOWNERS.
+
+### Bumping the Marketplace publishing tool
+
+The Marketplace publish step runs `@vscode/vsce` from [.github/publish-tool/](.github/publish-tool/), not from
+the root dependencies, and authenticates through GitHub OIDC (trusted publishing) with no stored secret. A
+bump of `@vscode/vsce` is the root `devDependencies` edit plus the same exact version in
+`.github/publish-tool/package.json` and a regenerated `package-lock.json`
+(`npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org/` in that
+directory); `ci:policy` fails while the two versions differ or a locked package lacks an npmjs
+`resolved` URL or a `sha512` integrity. See [RELEASING.md](RELEASING.md) §5.
 
 ## Run and debug the extension
 
@@ -103,15 +125,18 @@ and breakpoints resolve against the actual entry point. Press **F5** to build an
 VS Code Extension Host.
 
 `pnpm run test:unit:coverage` uses the V8 provider. Coverage includes `src/**/*.ts` and excludes
-`src/test/**`. The thresholds use `perFile: true`: the global floor is checked independently
-for every included file (statements 80%, branches 70%, functions 86%, lines 84%), and the
-module-specific entries in [vitest.config.ts](vitest.config.ts) can impose stricter floors.
+`src/test/**`. With `perFile: true`, the global floor and each source-area floor come from the
+weakest measured file per metric, rounded down to an integer; the listed tool gates stay at 100%
+on all four metrics. A floor moves up only when its weakest file improves, and each new measured
+file must meet its area's floor.
 
 ### Extension Host integration tests
 
 The non-unit `*.test.ts` files are compiled by `pnpm run test:compile` using
 [tsconfig.test.json](tsconfig.test.json); unit tests and the VS Code mock are excluded. The
-Extension Host runner then executes `out/test/**/*.test.js` with Mocha's TDD interface:
+Extension Host runner then executes `out/test/**/*.test.js` with Mocha's TDD interface; a run that
+matches no test fails (`failZero`). `pnpm run test`, `test:minimum` and `test:stable` first rebuild the
+bundle through `pretest`, so a host run always loads the current `out/extension.cjs`:
 
 - `pnpm run test:minimum` runs the minimum supported VS Code version, `1.125.0`.
 - `pnpm run test:stable` runs the stable VS Code channel.

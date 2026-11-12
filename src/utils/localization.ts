@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { AuditSeverity } from './auditClient';
+import type { AuditSeverity } from './audit/types';
 import type { UpdateType } from './versionUtils';
 
 export function formatDependencySectionLabel(section: 'dependencies' | 'devDependencies'): string {

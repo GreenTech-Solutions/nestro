@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
+import { COMMAND_IDS, CONTEXT_VALUE_TOKENS } from '../shared';
 
-export const OPEN_STATUS_REPORT_COMMAND = 'nestro.openStatusReport';
+export const OPEN_STATUS_REPORT_COMMAND = COMMAND_IDS.openStatusReport;
 
 /** An explicit command a status row opens on click, in place of the diagnostics report. */
 export interface StatusItemCommand {
@@ -19,7 +20,7 @@ export class StatusItem extends vscode.TreeItem {
   ) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.description = description;
-    this.contextValue = 'status';
+    this.contextValue = CONTEXT_VALUE_TOKENS.status;
     this.iconPath = color === undefined
       ? new vscode.ThemeIcon(icon)
       : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));

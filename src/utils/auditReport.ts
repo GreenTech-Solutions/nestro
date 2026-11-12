@@ -1,13 +1,6 @@
-import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './auditClient';
-
-const REPORT_ANSI_ESCAPE = new RegExp(
-  `${String.fromCharCode(27)}(?:\\][^${String.fromCharCode(7)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|\\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const REPORT_CONTROL = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
-  'g',
-);
+import { compareCodeUnits, sanitizeInlineText, WORKSPACE_PROTOCOL } from '../shared';
+import { compareSeverity, mergeSeverity } from './audit/types';
+import type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 
 export type AuditAttribution = 'direct' | 'transitive' | 'unknown';
 
@@ -20,12 +13,8 @@ export interface AuditFix {
 export type AuditFixAvailability = boolean | AuditFix;
 export type AuditIdentityStability = 'stable' | 'unstable';
 
-export function sanitizeAuditText(value: string, maxLength = 240): string {
-  return value
-    .replace(REPORT_ANSI_ESCAPE, '')
-    .replace(REPORT_CONTROL, '')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .slice(0, maxLength);
+export function sanitizeAuditText(value: string, maxLength?: number): string {
+  return sanitizeInlineText(value, maxLength);
 }
 
 /** A safe, normalized dependency that caused or explains an advisory. */
@@ -150,9 +139,9 @@ export function mergeAuditAdvisories(advisories: readonly AuditAdvisory[]): Audi
 }
 
 export function compareAdvisories(left: AuditAdvisory, right: AuditAdvisory): number {
-  return left.packageName.localeCompare(right.packageName)
-    || left.identity.localeCompare(right.identity)
-    || right.severity.localeCompare(left.severity);
+  return compareSeverity(left.severity, right.severity)
+    || left.packageName.localeCompare(right.packageName)
+    || compareCodeUnits(left.identity, right.identity);
 }
 
 export function cloneAuditAdvisory(advisory: AuditAdvisory): AuditAdvisory {
@@ -184,19 +173,6 @@ export function inferPathAttribution(packageName: string, paths: readonly string
   }
   const attributions = new Set(paths.map(path => inferSinglePathAttribution(packageName, path)));
   return attributions.size === 1 ? [...attributions][0] : 'unknown';
-}
-
-export function mergePathAttributions(
-  values: readonly AuditAttribution[],
-): AuditAttribution {
-  const known = values.filter(value => value !== 'unknown');
-  if (known.length === 0) {
-    return 'unknown';
-  }
-  const unique = new Set(known);
-  return unique.size === 1 && values.every(value => value === known[0] || value === 'unknown')
-    ? known[0]
-    : 'unknown';
 }
 
 function mergeAdvisory(left: AuditAdvisory, right: AuditAdvisory): AuditAdvisory {
@@ -244,11 +220,6 @@ function getAdvisoryIdentityStability(input: AuditAdvisoryInput): AuditIdentityS
     : 'unstable';
 }
 
-function mergeSeverity(left: AuditSeverity, right: AuditSeverity): AuditSeverity {
-  const order: readonly AuditSeverity[] = ['critical', 'high', 'moderate', 'low', 'info'];
-  return order.indexOf(left) <= order.indexOf(right) ? left : right;
-}
-
 function mergeFixAvailability(
   left: AuditFixAvailability | undefined,
   right: AuditFixAvailability | undefined,
@@ -270,7 +241,7 @@ function uniqueVia(via: readonly AuditVia[]): AuditVia[] {
     const previous = byIdentity.get(entry.identity);
     byIdentity.set(entry.identity, previous === undefined ? { ...entry } : mergeViaEntry(previous, entry));
   }
-  return [...byIdentity.values()].sort((left, right) => left.identity.localeCompare(right.identity));
+  return [...byIdentity.values()].sort((left, right) => compareCodeUnits(left.identity, right.identity));
 }
 
 function mergeViaEntry(left: AuditVia, right: AuditVia): AuditVia {
@@ -298,12 +269,12 @@ function chooseStableString(left: string | undefined, right: string | undefined)
   if (right === undefined || left === right) {
     return left;
   }
-  return [left, right].sort((a, b) => a.localeCompare(b))[0];
+  return [left, right].sort(compareCodeUnits)[0];
 }
 
 function inferSinglePathAttribution(packageName: string, value: string): AuditAttribution {
   const path = value.trim().replace(/\\/g, '/');
-  if (path === '' || path === 'workspace:.' || path === 'workspace:root') {
+  if (path === '' || path === `${WORKSPACE_PROTOCOL}.` || path === `${WORKSPACE_PROTOCOL}root`) {
     return 'direct';
   }
   const nodeModuleCount = path.split('/').filter(segment => segment === 'node_modules').length;

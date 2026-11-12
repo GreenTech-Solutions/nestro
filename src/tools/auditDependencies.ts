@@ -3,6 +3,7 @@
  * advisories anywhere block at critical, and every other advisory is reported as a warning.
  */
 import type { SignatureAuditExecution } from './auditSignatures';
+import { compareCodeUnits, describeError, describeStderr, isRecord } from '../shared';
 
 /** Production-only audit: the dependencies bundled into the shipped extension. */
 export const PRODUCTION_AUDIT_ARGS = ['audit', '--prod', '--json'] as const;
@@ -91,21 +92,8 @@ export function parseDependencyAuditArgs(argv: readonly string[]): void {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isSeverity(value: unknown): value is AuditSeverity {
   return typeof value === 'string' && Object.hasOwn(SEVERITY_RANK, value);
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function describeStderr(stderr: string): string {
-  const trimmed = stderr.trim();
-  return trimmed === '' ? '' : `; stderr: ${trimmed}`;
 }
 
 /** Registry text is untrusted: control characters must not forge log lines or workflow commands. */
@@ -118,12 +106,12 @@ function reject(reason: DependencyAuditRejectionReason, detail: string): Depende
 }
 
 function parseAdvisory(key: string, value: unknown): DependencyAdvisory | undefined {
-  if (!isPlainObject(value) || !isSeverity(value.severity) || typeof value.module_name !== 'string') {
+  if (!isRecord(value) || !isSeverity(value.severity) || typeof value.module_name !== 'string') {
     return undefined;
   }
   const findings = Array.isArray(value.findings) ? value.findings : [];
   const installedVersions = [...new Set(findings.flatMap(finding =>
-    isPlainObject(finding) && typeof finding.version === 'string' ? [sanitize(finding.version)] : []))];
+    isRecord(finding) && typeof finding.version === 'string' ? [sanitize(finding.version)] : []))];
   return {
     key: sanitize(key),
     id: sanitize(value.github_advisory_id) || sanitize(key),
@@ -158,12 +146,12 @@ export function parseDependencyAuditReport(
     return reject('malformed-json', `${command} wrote stdout that is not JSON (exit code ${exitCode}): ${describeError(error)}`);
   }
 
-  if (isPlainObject(json) && isPlainObject(json.error)) {
+  if (isRecord(json) && isRecord(json.error)) {
     return reject('audit-error', `${command} failed (exit code ${exitCode}): ${sanitize(json.error.message) || '<no message>'}`);
   }
 
-  if (!isPlainObject(json) || !isPlainObject(json.advisories) || !isPlainObject(json.metadata)
-    || !isPlainObject(json.metadata.vulnerabilities)) {
+  if (!isRecord(json) || !isRecord(json.advisories) || !isRecord(json.metadata)
+    || !isRecord(json.metadata.vulnerabilities)) {
     return reject('unrecognized-schema', `${command} returned JSON that is not a pnpm advisory report (exit code ${exitCode})`);
   }
 
@@ -194,9 +182,9 @@ function isAtLeast(severity: AuditSeverity, floor: AuditSeverity): boolean {
 
 function bySeverityThenName(left: ScopedDependencyAdvisory, right: ScopedDependencyAdvisory): number {
   return SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity]
-    || left.moduleName.localeCompare(right.moduleName)
-    || left.id.localeCompare(right.id)
-    || left.key.localeCompare(right.key);
+    || compareCodeUnits(left.moduleName, right.moduleName)
+    || compareCodeUnits(left.id, right.id)
+    || compareCodeUnits(left.key, right.key);
 }
 
 /** Splits both audits into blocking advisories and warnings; an entry seen in production is scoped there. */

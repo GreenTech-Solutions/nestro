@@ -2,17 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AuditOrchestrationService } from '../providers';
+import { AuditOrchestrationService } from '../providers/auditOrchestrationService';
 import type {
   AuditableClient,
   AuditableRow,
   AuditOrchestrationDependencies,
   AuditOrchestrationRequest,
   AuditOrchestrationResult,
-} from '../providers';
+} from '../providers/auditOrchestrationService';
 // Not part of the providers barrel's public surface (internal helpers used only as the
 // default `readPackageJsonVersion`/node-path parser), so imported from their implementation file.
-import { parseDirectNodeModulesNode, readNodePackageJsonVersion } from '../providers/auditOrchestrationService';
+import { parseDirectNodeModulesNode, readNodePackageJsonVersion } from '../providers/auditInstalledVersion';
 import type { AuditProject, PackageManager } from '../clients';
 import { OperationCoordinator } from '../utils';
 import type {
@@ -86,7 +86,7 @@ function createDependencies(
   overrides: Partial<AuditOrchestrationDependencies> = {},
 ): AuditOrchestrationDependencies {
   const client: AuditableClient = {
-    runAudit: vi.fn().mockResolvedValue(new Map()),
+    runAuditReport: vi.fn().mockResolvedValue(createReport([])),
   };
   return {
     checkCoordinator: new OperationCoordinator(2),
@@ -120,7 +120,7 @@ describe('AuditOrchestrationService', () => {
     const project = createProject(PROJECT_ROOT);
     const advisory = createAdvisory();
     const runAuditReport = vi.fn().mockResolvedValue(createReport([advisory]));
-    const createClient = vi.fn(() => ({ runAudit: vi.fn(), runAuditReport }));
+    const createClient = vi.fn(() => ({ runAuditReport }));
     const resolveAuditProjects = vi.fn().mockResolvedValue({ projects: [project], rejected: [] });
     const dependencies = createDependencies({ createClient, resolveAuditProjects });
 
@@ -146,7 +146,7 @@ describe('AuditOrchestrationService', () => {
     expect(result.vulnerablePackageCount).toBe(1);
   });
 
-  it('uses the legacy map adapter and keeps partial outcomes in input order', async () => {
+  it('keeps structured partial outcomes in input order', async () => {
     const projects = [
       createProject('/workspace/success'),
       createProject('/workspace/failure'),
@@ -160,12 +160,12 @@ describe('AuditOrchestrationService', () => {
     const resolveAuditProjects = vi.fn().mockResolvedValue({ projects, rejected: [rejected] });
     const createClient = vi.fn((_manager: PackageManager, projectRoot: string): AuditableClient => {
       if (projectRoot === '/workspace/success') {
-        return { runAudit: vi.fn().mockResolvedValue(new Map([['react', 'high']])) };
+        return { runAuditReport: vi.fn().mockResolvedValue(createReport([createAdvisory()])) };
       }
       if (projectRoot === '/workspace/failure') {
-        return { runAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')) };
+        return { runAuditReport: vi.fn().mockRejectedValue(new Error('audit unavailable')) };
       }
-      return { runAudit: vi.fn().mockResolvedValue({ future: 'schema' }) };
+      return { runAuditReport: vi.fn().mockResolvedValue({ future: 'schema' }) };
     });
     const dependencies = createDependencies({ resolveAuditProjects, createClient });
 
@@ -227,7 +227,7 @@ describe('AuditOrchestrationService', () => {
     ]));
     const dependencies = createDependencies({
       resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-      createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport })),
+      createClient: vi.fn(() => ({ runAuditReport })),
     });
 
     const result = await new AuditOrchestrationService(dependencies).run(createRequest({ rows: duplicateRows }));
@@ -252,8 +252,8 @@ describe('AuditOrchestrationService', () => {
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    const runAudit = vi.fn().mockImplementation(async () => {
-      const index = runAudit.mock.calls.length;
+    const runAuditReport = vi.fn().mockImplementation(async () => {
+      const index = runAuditReport.mock.calls.length;
       active += 1;
       peak = Math.max(peak, active);
       order.push(`enter-${index}`);
@@ -262,18 +262,18 @@ describe('AuditOrchestrationService', () => {
       }
       order.push(`exit-${index}`);
       active -= 1;
-      return new Map<string, never>();
+      return createReport([]);
     });
     const dependencies = createDependencies({
       resolveAuditProjects: vi.fn().mockResolvedValue({ projects, rejected: [] }),
-      createClient: vi.fn(() => ({ runAudit })),
+      createClient: vi.fn(() => ({ runAuditReport })),
     });
     const pending = new AuditOrchestrationService(dependencies).run(createRequest({
       packageFilePaths: projects.flatMap(project => project.originManifests),
       rows: [],
     }));
 
-    await vi.waitFor(() => expect(runAudit).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(runAuditReport).toHaveBeenCalledTimes(1));
     expect(active).toBe(1);
     releaseFirst();
     const result = await pending;
@@ -320,13 +320,13 @@ describe('AuditOrchestrationService', () => {
     expect(createClient).not.toHaveBeenCalled();
 
     current = true;
-    const runAudit = vi.fn().mockImplementation(() => {
+    const runAuditReport = vi.fn().mockImplementation(() => {
       current = false;
-      return new Map<string, never>();
+      return createReport([]);
     });
     const execution = await new AuditOrchestrationService(createDependencies({
       resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-      createClient: vi.fn(() => ({ runAudit })),
+      createClient: vi.fn(() => ({ runAuditReport })),
     })).run(createRequest({ isCurrent: () => current }));
 
     expect(execution).toEqual({ kind: 'discarded', reason: 'cancelled' });
@@ -397,7 +397,7 @@ describe('AuditOrchestrationService', () => {
       });
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport(advisories)) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport(advisories)) })),
         readPackageJsonVersion,
       });
       const rows = [
@@ -435,7 +435,7 @@ describe('AuditOrchestrationService', () => {
       const readPackageJsonVersion = vi.fn();
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         readPackageJsonVersion,
       });
 
@@ -459,7 +459,7 @@ describe('AuditOrchestrationService', () => {
       const readPackageJsonVersion = vi.fn();
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         readPackageJsonVersion,
       });
 
@@ -479,7 +479,7 @@ describe('AuditOrchestrationService', () => {
       const readPackageJsonVersion = vi.fn().mockResolvedValue(undefined);
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         readPackageJsonVersion,
       });
 
@@ -503,7 +503,7 @@ describe('AuditOrchestrationService', () => {
       ));
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         realpath,
         readPackageJsonVersion,
       });
@@ -524,7 +524,7 @@ describe('AuditOrchestrationService', () => {
       const readPackageJsonVersion = vi.fn().mockResolvedValue('18.1.0');
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         readPackageJsonVersion,
       });
 
@@ -549,7 +549,6 @@ describe('AuditOrchestrationService', () => {
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
         createClient: vi.fn(() => ({
-          runAudit: vi.fn(),
           runAuditReport: vi.fn().mockResolvedValue(createReport([advisoryA, advisoryB])),
         })),
         readPackageJsonVersion,
@@ -574,7 +573,7 @@ describe('AuditOrchestrationService', () => {
       const readPackageJsonVersion = vi.fn();
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
-        createClient: vi.fn(() => ({ runAudit: vi.fn(), runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
+        createClient: vi.fn(() => ({ runAuditReport: vi.fn().mockResolvedValue(createReport([advisory])) })),
         readPackageJsonVersion,
       });
 
@@ -599,7 +598,6 @@ describe('AuditOrchestrationService', () => {
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
         createClient: vi.fn(() => ({
-          runAudit: vi.fn(),
           runAuditReport: vi.fn().mockResolvedValue(createReport(advisories)),
         })),
         readPackageJsonVersion,
@@ -629,7 +627,6 @@ describe('AuditOrchestrationService', () => {
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
         createClient: vi.fn(() => ({
-          runAudit: vi.fn(),
           runAuditReport: vi.fn().mockResolvedValue(createReport([invalidNode, validNode])),
         })),
         readPackageJsonVersion,
@@ -663,7 +660,6 @@ describe('AuditOrchestrationService', () => {
       const dependencies = createDependencies({
         resolveAuditProjects: vi.fn().mockResolvedValue({ projects: [project], rejected: [] }),
         createClient: vi.fn(() => ({
-          runAudit: vi.fn(),
           runAuditReport: vi.fn().mockResolvedValue(createReport([validNode, rejectedNode])),
         })),
         readPackageJsonVersion,

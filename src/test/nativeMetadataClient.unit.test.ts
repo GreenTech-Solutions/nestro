@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPackageMetadataFromNativeCli, parseNativeCliMetadata } from '../utils';
+import { fetchPackageMetadataFromNativeCli } from '../utils/nativeMetadataClient';
+import { parsePackument } from '../utils/metadata/packument';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 
@@ -36,18 +37,54 @@ describe('native metadata client', () => {
       result: {
         distTags: { latest: '2.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '2.0.0': '2024-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '2.0.0'],
+        versions: ['2.0.0', '1.0.0'],
       },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'pnpm',
-      ['view', 'react', '--json'],
+      ['view', '--json', '--', 'react'],
       expect.objectContaining({ cwd: '/workspace/apps/web', signal: undefined }),
     );
   });
 
+  it.each([
+    ['npm', '--registry=https://evil.test'],
+    ['pnpm', '--userconfig=/tmp/evil.npmrc'],
+    ['npm', '-g'],
+    ['pnpm', ''],
+    ['npm', 'left pad'],
+    ['npm', '@scope/name/extra'],
+  ] as const)('does not run %s for the invalid package name %j', async (packageManager, packageName) => {
+    await expect(fetchPackageMetadataFromNativeCli({
+      packageName,
+      packageFilePath: '/workspace/package.json',
+      packageManager,
+    })).resolves.toEqual({ kind: 'unrecognized' });
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('puts a scoped package name after the option terminator', async () => {
+    runBoundedProcessMock.mockResolvedValueOnce({
+      kind: 'exit',
+      stdout: JSON.stringify({ 'dist-tags': {}, versions: [] }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(fetchPackageMetadataFromNativeCli({
+      packageName: '@scope/name',
+      packageFilePath: '/workspace/package.json',
+      packageManager: 'npm',
+    })).resolves.toMatchObject({ kind: 'success' });
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'npm',
+      ['view', '--json', '--', '@scope/name'],
+      expect.objectContaining({ cwd: '/workspace' }),
+    );
+  });
+
   it('accepts a full packument-shaped versions object without guessing another schema', () => {
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: '1.0.0' },
       versions: { '1.0.0': {}, '1.1.0': {} },
       time: { '1.0.0': '2020-01-01T00:00:00.000Z' },
@@ -56,7 +93,7 @@ describe('native metadata client', () => {
       result: {
         distTags: { latest: '1.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '1.0.0': '2020-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '1.1.0'],
+        versions: ['1.1.0', '1.0.0'],
       },
     });
   });
@@ -90,11 +127,11 @@ describe('native metadata client', () => {
   });
 
   it('rejects malformed version entries instead of treating their keys as versions', () => {
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: '1.0.0' },
       versions: { '1.0.0': 'not-version-metadata' },
     })).toEqual({ kind: 'malformed' });
-    expect(parseNativeCliMetadata({
+    expect(parsePackument({
       'dist-tags': { latest: 1 },
       versions: { '1.0.0': {} },
     })).toEqual({ kind: 'malformed' });

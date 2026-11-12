@@ -1,29 +1,24 @@
 import { execFile } from 'node:child_process';
 import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as vscode from 'vscode';
-import {
-  resolveYarnFamily,
-  yarnVersionProbeMaxBufferBytes,
-  yarnVersionProbeTimeoutMs,
-} from '../utils';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
+import { YARN_VERSION_PROBE_MAX_BUFFER_BYTES, YARN_VERSION_PROBE_TIMEOUT_MS } from '../config';
+import { resolveSpawnTarget } from '../shared';
+import { MetadataAdapterRegistry } from '../utils/metadataRegistry';
+import { resolveYarnFamily, runWithYarnFamilyMemo } from '../utils';
+import type { MetadataAdapter } from '../utils/metadataRegistry';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
+vi.mock('../shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../shared')>();
+  return { ...actual, resolveSpawnTarget: vi.fn(actual.resolveSpawnTarget) };
+});
 
 type ExecFileCallback = NonNullable<Parameters<typeof execFile>[3]>;
 
 const root = '/workspace/project';
-
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = files[uri.fsPath];
-    return value === undefined
-      ? Promise.reject(new Error(`File not found: ${uri.fsPath}`))
-      : Promise.resolve(Buffer.from(value));
-  });
-}
 
 function mockVersionProbe(err: unknown, stdout: string): void {
   vi.mocked(execFile).mockImplementationOnce((
@@ -143,11 +138,48 @@ describe('resolveYarnFamily()', () => {
       ['--version'],
       {
         cwd: root,
-        maxBuffer: yarnVersionProbeMaxBufferBytes,
-        timeout: yarnVersionProbeTimeoutMs,
+        maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+        timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
       },
       expect.any(Function),
     );
+  });
+
+  it('probes through the resolved Windows launcher with verbatim cmd.exe arguments', async () => {
+    mockWorkspaceFiles({ [`${root}/package.json`]: '{}' });
+    vi.mocked(resolveSpawnTarget).mockReturnValueOnce({
+      kind: 'resolved',
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', '""C:\\yarn\\yarn.cmd" --version"'],
+      windowsVerbatimArguments: true,
+    });
+    mockVersionProbe(null, '1.22.19\n');
+
+    await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'classic', source: 'version-probe' });
+    expect(resolveSpawnTarget).toHaveBeenCalledWith('yarn', ['--version']);
+    expect(execFile).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '""C:\\yarn\\yarn.cmd" --version"'],
+      {
+        cwd: root,
+        maxBuffer: YARN_VERSION_PROBE_MAX_BUFFER_BYTES,
+        timeout: YARN_VERSION_PROBE_TIMEOUT_MS,
+        windowsVerbatimArguments: true,
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('keeps the family unknown without probing when no Yarn launcher can be resolved', async () => {
+    mockWorkspaceFiles({ [`${root}/package.json`]: '{}' });
+    vi.mocked(resolveSpawnTarget).mockReturnValueOnce({
+      kind: 'unresolved',
+      reason: 'command-not-found',
+      message: 'yarn was not found on PATH.',
+    });
+
+    await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'unknown', source: 'version-probe' });
+    expect(execFile).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -175,5 +207,97 @@ describe('resolveYarnFamily()', () => {
       family: 'modern',
       source: 'project-markers',
     });
+  });
+});
+
+describe('Yarn family probe count', () => {
+  const markerless = { [`${root}/package.json`]: '{}', [`${root}/yarn.lock`]: '' };
+
+  function mockPersistentProbe(stdout: string): void {
+    vi.mocked(execFile).mockImplementation((
+      _file: string,
+      _args: readonly string[] | null | undefined,
+      _options: ExecFileOptions | null | undefined,
+      callback: ExecFileCallback | null | undefined,
+    ) => {
+      if (callback === undefined || callback === null) {
+        throw new Error('Expected execFile callback.');
+      }
+      callback(null, stdout, '');
+      return {} as ChildProcess;
+    });
+  }
+
+  function adapterResolvingFamily(outcome: 'unrecognized' | 'success'): MetadataAdapter {
+    return {
+      tier: 'native-cli',
+      packageManagers: ['yarn'],
+      fetchMetadata: async (request) => {
+        await resolveYarnFamily(root);
+        return outcome === 'success'
+          ? { kind: 'success', result: { versions: ['1.0.0'], distTags: {}, publishTimes: { kind: 'not-provided' } } }
+          : { kind: 'unrecognized' };
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(execFile).mockReset();
+    mockWorkspaceFiles(markerless);
+    mockPersistentProbe('4.6.0\n');
+  });
+
+  it('probes once per root while one metadata fetch cascades through several adapters', async () => {
+    const registry = new MetadataAdapterRegistry(() => Promise.resolve('yarn'), [
+      adapterResolvingFamily('unrecognized'),
+      adapterResolvingFamily('unrecognized'),
+      adapterResolvingFamily('success'),
+    ]);
+
+    const outcome = await registry.fetchMetadata({
+      packageName: 'left-pad',
+      packageFilePath: `${root}/package.json`,
+    });
+
+    expect(outcome.kind).toBe('success');
+    expect(execFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes once per root inside a memo scope and per call outside it', async () => {
+    await runWithYarnFamilyMemo(async () => {
+      await Promise.all([resolveYarnFamily(root), resolveYarnFamily(root)]);
+      await resolveYarnFamily(root);
+    });
+    expect(execFile).toHaveBeenCalledTimes(1);
+
+    await resolveYarnFamily(root);
+    await resolveYarnFamily(root);
+    expect(execFile).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps roots separate and carries no resolution into the next scope', async () => {
+    const otherRoot = '/workspace/other';
+    mockWorkspaceFiles({ ...markerless, [`${otherRoot}/package.json`]: '{}' });
+
+    await runWithYarnFamilyMemo(async () => {
+      await resolveYarnFamily(root);
+      await resolveYarnFamily(otherRoot);
+    });
+    expect(execFile).toHaveBeenCalledTimes(2);
+
+    mockWorkspaceFiles({ [`${root}/package.json`]: JSON.stringify({ packageManager: 'yarn@1.22.19' }) });
+    await runWithYarnFamilyMemo(async () => {
+      await expect(resolveYarnFamily(root)).resolves.toEqual({ family: 'classic', source: 'package-manager' });
+    });
+    expect(execFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('joins the enclosing memo when scopes nest', async () => {
+    await runWithYarnFamilyMemo(async () => {
+      await resolveYarnFamily(root);
+      await runWithYarnFamilyMemo(() => resolveYarnFamily(root));
+    });
+    expect(execFile).toHaveBeenCalledTimes(1);
   });
 });

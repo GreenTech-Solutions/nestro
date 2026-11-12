@@ -1,32 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
 import {
   findWorkspacePackageJsonFiles,
-  getWorkspacePackageFilePath,
-  getWorkspacePackageFilePaths,
-  readPackageFile,
-  toWorkspaceRelativePackageFilePath,
   writeManyPreparedPackageFilesAtomically,
   writePreparedPackageFile,
-} from '../utils';
-import type { PreparedPackageFile } from '../utils';
-
-describe('getWorkspacePackageFilePath()', () => {
-  resetWorkspaceFoldersBeforeEach();
-
-  it('joins the first workspace folder with package.json', () => {
-    expect(getWorkspacePackageFilePath()).toBe('/workspace/package.json');
-  });
-
-  it('returns undefined when no workspace folder is open', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
-
-    expect(getWorkspacePackageFilePath()).toBeUndefined();
-  });
-});
+} from '../utils/packageRepository';
+import { getWorkspacePackageFilePaths, readPackageFile } from '../utils';
+import type { PreparedPackageFile } from '../utils/packageRepository';
+import { toWorkspaceRelativePackageFilePath } from '../utils/packageRepository';
 
 describe('readPackageFile()', () => {
   beforeEach(() => {
@@ -216,10 +198,7 @@ describe('findWorkspacePackageJsonFiles() / getWorkspacePackageFilePaths()', () 
   });
 
   it('returns no files when no workspace folder is open', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [],
-    });
+    setWorkspaceFolders([]);
 
     await expect(findWorkspacePackageJsonFiles()).resolves.toEqual([]);
     expect(vscode.workspace.findFiles).not.toHaveBeenCalled();
@@ -258,9 +237,6 @@ describe('toWorkspaceRelativePackageFilePath()', () => {
 
 function resetWorkspaceFoldersBeforeEach(): void {
   beforeEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
   });
 }

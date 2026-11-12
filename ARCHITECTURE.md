@@ -33,37 +33,58 @@ below), creates the `nestro.packagesView` `TreeView` and calls `provider.attachT
 registers every command from `src/commands`, registers three watchers
 (`registerPackageJsonWatcher()`, `registerConfigurationWatcher()`,
 `registerWorkspaceFoldersWatcher()`), then calls `provider.loadPackages()`, optionally followed
-by `checkUpdates()`/`runAudit()` when the matching `*OnStartup` setting is enabled.
+by `checkUpdates()`/`runAudit()` when `nestro.checkUpdatesOnStartup` or
+`nestro.runAuditOnStartup` is enabled.
 
 `registerPackageJsonWatcher()` debounces filesystem events per
-`PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and skips scheduling entirely while
-`provider.suppressingWrites` is true — the write-suppression feedback-loop guard described in
-section 5. `registerWorkspaceFoldersWatcher()` refreshes the package-file watcher and reloads
-packages on `vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added or removed after
-activation is picked up without a window reload.
+`PACKAGE_JSON_WATCHER_DEBOUNCE_MS` (500 ms) and asks the provider whether each changed manifest
+matches a recorded own-write digest. `PackageProviderState` owns the `ManifestWriteBaselines` and
+the provider delegates writes to it; only files whose content changed during a provider write get
+a baseline. A missing baseline, unreadable file, or digest mismatch triggers a reload.
+`registerWorkspaceFoldersWatcher()` refreshes the package-file watcher and reloads packages on
+`vscode.workspace.onDidChangeWorkspaceFolders`, so a folder added or removed after activation is
+picked up without a window reload.
 
-### The provider as a thin adapter over four services
+### The provider, services, and row store
 
 `PackagesProvider` (`src/providers/PackagesProvider.ts`) implements
-`vscode.TreeDataProvider<vscode.TreeItem>` and `vscode.Disposable`. It owns mutable UI state —
-`allEntries` (the flat row list), `packageFilePaths`, `workspaceCapabilities`, operation
-generation and cancellation records, audit results and report summaries, and two `WeakMap`s
-backing the capability system (section 5). The update-result cache and its fingerprint belong to
-`UpdateOrchestrationService`. The provider delegates every non-trivial computation to one of four
-collaborators:
+`vscode.TreeDataProvider<vscode.TreeItem>` and `vscode.Disposable` as a facade over focused
+controllers and services. `PackageProviderState` owns mutable snapshot and operation state —
+`packageFilePaths`, `workspaceCapabilities`, lifecycle records, audit results and report summaries,
+and the `WeakMap` backing provider-issued row records (section 5). `PackageRowStore` owns the flat
+`allEntries` row list. `patchRow()` and `restoreAt()` record row mutations through
+`PackageCapabilityService.noteRowMutation()`. `replaceAll()` applies snapshot and presentation
+rebuilds while preserving row epochs; a new load invalidates old capabilities through the snapshot
+generation. `PackageProviderState` invalidates its owner-label cache whenever it replaces the
+tracked manifest-path list. `UpdateOrchestrationService` owns the update-result cache and
+coordinates its fingerprint gate, while `updateFingerprint.ts` computes the manifest fingerprint.
 
 | Service | File | Responsibility |
 |---|---|---|
-| `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json`, builds the flat entry list, snapshots a canonical-location baseline per manifest. |
-| `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Runs `npm-check-updates` once per manifest, computes release-age state, owns the update-result cache and its fingerprint. |
-| `AuditOrchestrationService` | `auditOrchestrationService.ts` | Resolves the canonical audit project graph, runs one audit per project, attributes advisories back to rows. |
-| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `projectStatusRows()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot of provider fields into contexts, badge, description, and status rows. |
+| `PackageLoadingService` | `packageLoadingService.ts` | Reads every workspace `package.json` and returns entries, paths, read failures, and canonical-location baselines. |
+| `UpdateOrchestrationService` | `updateOrchestrationService.ts` | Coordinates fetch, release-age classification, cache/debounce, and the fingerprint gate; `updateCheckFetcher.ts`, `updateReleaseAge.ts`, `updateCache.ts`, `updateResultApplication.ts`, and `updateFingerprint.ts` own those focused steps. |
+| `AuditOrchestrationService` | `auditOrchestrationService.ts` | Wraps the full audit run in a Yarn-family memo, resolves the canonical audit project graph, runs one audit per project, and attributes advisories back to rows. |
+| `PackageLoadController` | `packageLoadController.ts` | Applies load snapshots, resolves workspace action flags, and owns load cancellation and failure state. |
+| `PackageUpdateController` | `packageUpdateController.ts` | Drives update lifecycle, applies accepted results, and publishes update failures. |
+| `PackageAuditController` | `packageAuditController.ts` | Drives audit lifecycle, applies report snapshots, and rebuilds vulnerability badges. |
+| `WorkspaceCapabilityResolver` | `workspaceCapabilityResolver.ts` | Resolves global action flags and checks whether each project has a supported audit command. |
+| `PackageCapabilityOperations` | `packageCapabilityOperations.ts` | Resolves and revalidates provider-issued package capabilities at command boundaries. |
+| `PackageRowMutationService` | `packageRowMutationService.ts` | Updates package row state and recovers from progress-render races. |
+| `PackageProviderState` | `packageProviderState.ts` | Owns shared snapshot state, row construction, and owner-label caching. |
+| tree view | `packageViewController.ts` | Builds tree/status items, resolves package-detail paths through the shared label builder, and publishes tree-view state and context keys. |
+| package labels | `packageLabels.ts`, `packageLabelPaths.ts`, `packageLabelDisambiguation.ts` | Builds owner-qualified and package-file-relative labels, normalizes paths, disambiguates workspace names, and preserves folder-index ordering. |
+| status report | `statusReportAssembler.ts` | Builds defensive diagnostics snapshots and package read/update failure entries. |
+| view projection | `viewProjectionService.ts` | A stateless module (`computeViewProjection()`, `resolvePublishedWorkspaceCapabilities()`, `diffViewContexts()`) that turns a plain snapshot into contexts, badge, description, and the filtered tree projection. |
+| status-row projection | `statusRowProjection.ts` | Builds package-read, update, audit, filter, and search rows in display order from a plain snapshot. |
+| shared presentation | `src/shared/packagePresentation.ts` | Holds update-type icon/colors, dependency icons, filter colors, and the root-label string used by providers and reports. |
+| `PackageRowStore` | `packageRowStore.ts` | Owns `allEntries`; `patchRow()` and `restoreAt()` record row mutations and `replaceAll()` applies bulk rebuilds. |
 
-(All four files live under `src/providers/`.) The first three are constructor-injectable —
-`PackagesProvider` accepts each as an optional parameter, defaulting to a production instance —
-which is how `src/test/packagesProvider.unit.test.ts` substitutes fakes without touching VS
-Code APIs. The fourth is not a class: it holds no state, so every call site builds a
-`ViewProjectionSnapshot` from current provider fields and gets a fresh `ViewProjection` back.
+(All collaborators and the row store live under `src/providers/`.) Loading, update, and audit
+orchestration services remain constructor-injectable — `PackagesProvider` accepts them as optional
+parameters, defaulting to production instances — which is how provider tests substitute fakes
+without touching VS Code APIs. The view projection is stateless: `PackageViewController` builds a
+`ViewProjectionSnapshot` from shared state and gets a fresh `ViewProjection` back. The row store
+reports row mutations through `PackageCapabilityService.noteRowMutation()`.
 
 `getChildren()` returns early while `loading` is true, and otherwise returns status rows from
 `buildStatusItems()` first, followed by the package groups from `buildTree()` in `treeBuilder.ts`.
@@ -75,7 +96,8 @@ Code APIs. The fourth is not a class: it holds no state, so every call site buil
 `emitTreeChanged()` — the provider's single mutation-notification path — computes one
 `ViewProjection` via `computeViewProjection()`, applies `badge`/`description` to the attached
 `TreeView`, publishes only the context keys that changed since the last publication
-(`publishViewContexts()` + `diffViewContexts()`), and fires `_onDidChangeTreeData`. The
+(`publishViewContexts()` + `diffViewContexts()`), and fires `_onDidChangeTreeData`. It is a no-op
+after disposal. The
 published keys are declared once in `VIEW_CONTEXT_KEYS` (`viewProjectionService.ts`):
 `canUpdateVisiblePackages`, `hasPackageFiles`, `hasReadablePackageFiles`,
 `hasDependencyEntries`, `hasAuditableProjects`, `canRunInstall`, `canRunAudit`,
@@ -118,7 +140,7 @@ Nestro operates over two related but distinct notions of "project": a **manifest
 `AuditProject` (`src/clients/projectResolver.ts`) groups manifests whose audit graph resolves to
 the same canonical, symlink-resolved `projectRoot`. That root is the audit execution directory
 and the coordination identity for per-project work; it is not the working directory for every
-package-manager operation. `PackageManager` is defined in `src/utils/packageManagerKind.ts` and
+package-manager operation. `PackageManager` is defined in `src/shared/packageManagers.ts` and
 re-exported by `projectResolver.ts`.
 
 `resolveAuditProjects()` turns the manifest list into the project graph, used both to decide
@@ -188,13 +210,17 @@ still rejected. It then captures a `PackageFileStamp` (`dev`/`ino`/`size`/`mtime
 SHA-256 `manifestDigest` — the digest exists because a stat-only comparison cannot detect a
 rewrite that lands on the same size and millisecond-resolution mtime.
 
-Monorepo grouping and labels are built by `treeBuilder.ts` (`resolvePackageOwnerLabel()`,
-`resolvePackageFileLabels()`, `resolveWorkspaceFolderDisplayNames()`), entirely independent of
-the project graph above. Rows are labeled `<display name> — <relative path>` (root:
+`packageIdentityKey()` is the single row identity-key builder. It combines the exact manifest path,
+package name, and dependency section; the provider, update service, and audit attribution use this
+same key so multi-root rows stay distinct.
+
+Monorepo grouping lives in `treeBuilder.ts`; owner-qualified and package-file-relative labels
+come from `packageLabels.ts` (`resolvePackageOwnerLabel()`, `resolvePackageFileLabels()`,
+`resolveWorkspaceFolderDisplayNames()`). Rows use `<display name> — <relative path>` (root:
 `<display name> — (root)`), grouped and sorted by the owning folder's `WorkspaceFolder.index`,
 root before subpaths, alphabetical beyond that (`comparePackageOwnerLabels()`) — never a flat
-cross-root sort. Folders sharing a `WorkspaceFolder.name` fall back to the shortest unique path
-suffix (`shortestUniqueSuffix()`), then to a stable `#<index>` suffix on a full collision.
+cross-root sort. `packageLabelDisambiguation.ts` chooses the shortest unique path suffix for
+repeated folder names, then a stable `#<index>` suffix on a full collision.
 
 ## 4. Operation coordinator
 
@@ -229,7 +255,7 @@ project root, not serialized against each other:
   `AuditOrchestrationService` — both constructed with the *same* instance via
   `UpdateOrchestrationService.withCoordinators()`/`AuditOrchestrationService.withCoordinator()`.
   This serializes an update check and a security audit on the same root against each other and
-  bounds their combined fan-out, pinned by `packagesProvider.unit.test.ts`'s *"shares the read
+  bounds their combined fan-out, pinned by `packagesProviderUpdateLifecycle.unit.test.ts`'s *"shares the read
   cap and canonical root serialization between update and audit runs"*.
 - `metadataCoordinator` (`METADATA_CONCURRENCY_CAP = 4`) is a third, provider-owned instance
   nested inside the check coordinator's work: every metadata lookup acquires a check-coordinator
@@ -266,29 +292,32 @@ process/task actually stops would let a second operation start against the same 
 
 ### Generations
 
-`PackagesProvider` tracks three independent monotonic counters. `packageSnapshotGeneration` is
-bumped at the start of every `loadPackages()`; any outstanding update check or audit is aborted
-immediately, and `isLoadOutdated()` guards every await point inside `loadPackages()` against a
-still-later reload superseding it. `updateGeneration` pairs with an `UpdateOperation` record
-(`{generation, snapshotGeneration, abortController}`); `isUpdateCurrent()` requires the
-operation to still be the provider's `updateOperation`, its generation to match, its
-`snapshotGeneration` to match the *current* snapshot, `checkState` to still be `'running'`, and
-its signal not aborted — all five checked at every await boundary. `auditGeneration` mirrors
-this via `AuditOperation`/`isAuditCurrent()`. `checkUpdates()`/`runAuditCore()` both no-op
-immediately if already `'running'`, preventing two concurrent checks/audits from overlapping in
-the first place; the generation machinery exists for the case where a reload — which bumps the
-snapshot generation without going through that busy-check — supersedes an already-running one.
+`PackageProviderState` keeps one `OperationLifecycle<T>`
+(`src/providers/operationLifecycle.ts`) per operation — load, update check and audit. Each
+lifecycle owns a monotonic generation, the current `OperationRun`
+(`{kind, generation, snapshotGeneration, abortController}`), its completion promise and progress
+cancellation, including a progress token cancelled before the task starts. `PackageLoadController`
+bumps `packageSnapshotGeneration` at the start of every `loadPackages()`, which also cancels any
+outstanding update check or audit; it guards each await against a later reload or disposal.
+`PackageUpdateController` and `PackageAuditController` check ownership, snapshot generation, busy
+state, and abort status at every await boundary. `checkUpdates()` and `runAudit()` wait for the current load
+(`waitForCurrent()`) before reading rows instead of reading packages in parallel, and retry the
+load first when the last discovery failed without finding package files. Both no-op immediately if
+already `'running'`; the generation machinery covers a reload that supersedes a running operation.
+On a rejected current load, `PackageLoadController` clears `PackageRowStore.allEntries`, records a
+`package-load-failed` status-report entry and leaves `nestro.noWorkspace` false. The tree never
+retains rows without their capabilities.
 
 ### Capability records
 
 A `PackageItem` rendered in the tree cannot, by itself, be trusted as a write target: its
 fields are exactly what was true when last rendered, and any async gap (a QuickPick, a
 confirmation dialog) can let the file change underneath it. `resolvePackageItem()` is the
-boundary every command calls first: it confirms the raw argument is a real `PackageItem` this
-provider issued (`packageItemRecords: WeakMap<PackageItem, PackageItemRecord>`), confirms
+boundary every command calls first: `PackageCapabilityOperations` confirms the raw argument is a
+real `PackageItem` this provider issued (`packageItemRecords: WeakMap<PackageItem, PackageItemRecord>`), confirms
 exactly one current row still matches that identity tuple (`findCurrentEntry()`), resolves the
-canonical filesystem location, and issues a `ResolvedPackageItem` "capability" recorded in a
-second `WeakMap` (`packageCapabilityRecords`). Every field a command reads afterward — name,
+canonical filesystem location, and issues a `ResolvedPackageItem` capability recorded by
+`PackageCapabilityService` in a private `WeakMap`. Every field a command reads afterward — name,
 spec, section, canonical paths, file stamp — comes from this capability, never the original
 tree-rendered item.
 
@@ -308,11 +337,12 @@ write itself as a staleness failure.
 
 ### The update fingerprint
 
-`computeUpdateFingerprint()` decides whether a cached update result may be reused. For every
-identity being checked, it groups by manifest, resolves the canonical location, and re-reads
+`computeUpdateFingerprint()` (`src/providers/updateFingerprint.ts`) decides whether a cached update result may be reused.
+For every identity being checked, it groups by manifest, resolves the canonical location, and re-reads
 the exact dependency spec currently on disk (`readCanonicalDependencySpecs()`). Each entry
-becomes a sorted JSON tuple of `[canonicalManifestPath, section, packageName, spec-or-null,
-'ok'-or-rejection-reason]`, combined with the effective policy (`target`, `includePreReleases`,
+becomes a sorted JSON tuple containing the canonical manifest path when resolution succeeds
+(otherwise the requested path), section, package name, spec or `null`, and `ok` or the rejection
+reason. Entries are combined with the effective policy (`target`, `includePreReleases`,
 `minimumReleaseAgeDays`) into one string. `UpdateOrchestrationService.check()` computes this
 twice: once before the NCU fetch, to decide whether the cache can be reused, and once more —
 against the live, re-read policy — immediately before writing the freshly fetched result into
@@ -328,13 +358,13 @@ network — unless `checkUpdatesForceAlways` is set, or the debounce is `0`.
 
 ### Write suppression
 
-`withWriteSuppressed()` wraps every write a command makes to `package.json` so the watcher does
-not react to the extension's own edit as an external change. Suppression is reference-counted
-(`writeSuppressionDepth`), decremented only after a 600 ms timer fires on exit — not
-immediately — so a burst of near-simultaneous writes never lets the watcher's debounce window
-observe a gap. Every timer is tracked in `writeSuppressionTimers` and cleared in `dispose()`.
-`registerPackageJsonWatcher()` checks `provider.suppressingWrites` before scheduling its own
-debounced reload; the two debounce timers are independent mechanisms with similar durations.
+`withWriteSuppressed()` wraps every write a command makes to `package.json` and invalidates the
+update cache after a successful write. The provider captures digests for known manifests before
+and after the callback, then records a baseline only when a manifest's digest changed. A deleted
+or unreadable manifest drops its baseline, while unchanged manifests retain any existing baseline.
+At debounce, the watcher asks the provider to compare each changed file with its baseline; an
+absent or different digest triggers a reload. This keeps nested and overlapping writes from
+replacing baselines for files they did not change.
 
 ### Atomic multi-file write and switch-collision no-write
 
@@ -387,7 +417,7 @@ superseded it is discarded rather than applied over the fresh snapshot — pinne
 and never starts queued roots from the old snapshot"*. A **cancelled** predecessor's result
 arriving *late*, after a newer operation has started or finished, must not clobber that newer
 state either — pinned by *"keeps the current audit failure when a cancelled predecessor
-succeeds late"* and its mirror (all in `packagesProvider.unit.test.ts`).
+succeeds late"* and its mirror (all in `packagesProviderAuditLifecycle.unit.test.ts`).
 
 **Partial statuses.** `checkState` and `auditState` both carry an `'incomplete'` value distinct
 from `'done'` (and, for `auditState`, from `'failed'`): a run with at least one successful and
@@ -404,7 +434,7 @@ diagnostics output channels created in `activate()`.
 ### Outcome taxonomy
 
 Every audit-capable process runner returns one of four `AuditOutcome` kinds
-(`src/utils/auditClient.ts`): `clean` (recognized schema, zero vulnerabilities, compatible exit
+(`src/utils/audit/outcome.ts`): `clean` (recognized schema, zero vulnerabilities, compatible exit
 code), `advisories` (recognized schema, at least one vulnerability), `incomplete` (output
 received but not trustworthy — see reasons below), or `error` (the process never produced
 inspectable output). `incomplete`/`error` both throw `UnrecognizedAuditResultError` when
@@ -417,29 +447,30 @@ three a terminated process can never escape — `timeout`, `aborted`, `output-ov
 
 | Manager | Command | Schema id(s) | Notes |
 |---|---|---|---|
-| npm / pnpm | `<cmd> audit --json` | `npm-v2-vulnerabilities`, `npm-v1-advisories` | Shared parser in `auditClient.ts`; exit `0`/`1` accepted only with a recognized schema; zero readable advisories with a positive summary total is `summary-mismatch` at any exit code, not clean. |
+| npm / pnpm | `<cmd> audit --json` | `npm-v2-vulnerabilities`, `npm-v1-advisories` | `auditClient.ts` parses npm schemas through the shared outcome pipeline in `src/utils/audit/outcome.ts`; exit `0`/`1` is accepted only with a recognized schema; zero readable advisories with a positive summary total is `summary-mismatch` at any exit code, not clean. |
 | Yarn Classic | `yarn audit --json` | `yarn-classic-audit` | `yarnAuditClient.ts`; NDJSON lines individually validated; the final `auditSummary`'s per-severity counts must match parsed advisories, and its bitmask must match the exit code, or the run is `incomplete`. |
 | Yarn Modern | `yarn npm audit --all --recursive --json` | `yarn-modern-npm-audit` | Same file; requires empty `stderr`; empty stdout is clean only at exit `0`; advisory output requires exit `1`. |
 | Bun | `bun audit --json` | `bun-bulk-advisory` | `bunAuditClient.ts`; parses the raw npm Bulk Advisory shape (`Record<packageName, Advisory[]>`); `{}` is clean only at exit `0`; any partially-shaped entry invalidates the whole payload. |
 
-Which Yarn command family applies is resolved once per project root by `resolveYarnFamily()`
-(`src/utils/yarnFamily.ts`), in order: the manifest's `packageManager` field (`yarn@<major>`),
-then same-root markers considered as a set (`.yarnrc.yml`/a `__metadata:`-versioned
-`yarn.lock` mean modern; `.yarnrc`/a `# yarn lockfile v1` header mean classic — both present is
-`unknown`, never guessed), and only as a last resort a bounded `yarn --version` probe. Nothing
-defaults to Classic; an unresolved family disables the Audit action entirely
-(`PackagesProvider.isAuditableProject()`) rather than assuming a command shape.
+`resolveYarnFamily()` (`src/utils/yarnFamily.ts`) selects a family from the manifest's
+`packageManager` field (`yarn@<major>`), same-root markers considered as a set (`.yarnrc.yml`/a
+`__metadata:`-versioned `yarn.lock` mean modern; `.yarnrc`/a `# yarn lockfile v1` header mean
+classic — both present is `unknown`, never guessed), and a bounded `yarn --version` probe as the
+last resort. Memoization exists only inside `runWithYarnFamilyMemo()`: each project root resolves
+once per scope, while calls outside a scope resolve afresh. Nothing defaults to Classic; an
+unresolved family disables the Audit action entirely (`WorkspaceCapabilityResolver.isAuditableProject()`)
+rather than assuming a command shape.
 
 ### Bounded processes
 
 Every audit command (npm/pnpm/Yarn/Bun) runs through `runBoundedProcess()`
 (`src/utils/processRunner.ts`), which spawns the child in its own process group
 (`detached: true` on posix) and enforces a hard timeout and a per-stream byte cap independently
-of the child's behavior. On timeout, external abort, or overflow it signals the whole process
-group, waits `killGracePeriodMs` (2 s default), and escalates to a forceful kill if still alive —
-reaching grandchildren the npm/pnpm/yarn/bun wrappers commonly fork, which a plain `child.kill()`
-would not. `AUDIT_PROCESS_TIMEOUT_MS` (120 s) and `AUDIT_PROCESS_MAX_BUFFER_BYTES` (20 MiB per
-stream) remain the audit-command bounds. The fallback `yarn --version` family probe is separate:
+of the child's behavior. `BoundedOutput` (`src/utils/boundedOutput.ts`) counts and captures stdout
+and stderr bytes independently. `ProcessTerminator` (`src/utils/processTermination.ts`) signals
+the process tree, waits `killGracePeriodMs` (2 s default), and sends a forceful kill after the
+grace period. `AUDIT_PROCESS_TIMEOUT_MS` (120 s) and `AUDIT_PROCESS_MAX_BUFFER_BYTES` (20 MiB
+per stream) remain the audit-command bounds. The fallback `yarn --version` family probe is separate:
 `yarnFamily.ts` uses promisified `execFile` with a 5 s timeout and an 8 KiB `maxBuffer`; it does
 not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 
@@ -448,12 +479,16 @@ not use `runBoundedProcess()`, a process-group kill, or an `AbortSignal`.
 `AuditOrchestrationService.run()` resolves the project graph, runs one bounded audit per
 project through `runRootOperations()`, and folds each outcome into an `AuditProjectSummary`
 (kept even when row attribution is suppressed, so the report never loses a project's result)
-and, where advisories exist, into `auditResults: Map<identityKey, AuditSeverity>` for row
-badges. npm audit report v2 advisories carry no version field of their own, so
-`enrichNpmV2AdvisoryVersions()` resolves one first by reading
-`<projectRoot>/node_modules/<name>/package.json` through a bounded reader — a regular file
-under a size cap, a value matching a plain semver pattern, and a realpath check placing the
-read inside the project root — leaving the version unresolved on any failure. Row attribution
+and, where advisories exist, into `auditResults: Map<string, AuditSeverity>` for row badges; this
+map is the tree-badge projection. The audit project runner calls the client's `runAuditReport()`
+and accepts only an `AuditResult`; orchestration folds that structured result into project
+summaries and failures. The legacy Map-only report path is gone. The `AuditResult` and
+`AuditOutcome` contract lives in `src/utils/audit/outcome.ts`; each client parses its own schema.
+npm audit report v2 advisories carry no version field of their own, so
+`enrichNpmV2AdvisoryVersions()` reads the one direct `nodes[]` entry for the package, accepts
+only an immediate `node_modules/<name>` path, and resolves that package's installed
+`package.json` version through a bounded reader. It verifies the real path stays inside the
+project root and leaves the version unresolved on any failure. Row attribution
 (`applyStructuredProjectAuditResults()`) only badges a row when an
 advisory's `attribution` is `'direct'`, resolves to exactly one row by manifest and canonical
 resolved path (`resolvedPathBelongsToManifest()`, itself gated on the project having exactly
@@ -461,14 +496,13 @@ one origin manifest), and the row's spec is compatible with the resolved version
 advisory's affected range. Any ambiguity — several manifests sharing a project, several rows
 matching a resolved path, an unrecognized spec — leaves the advisory project-level only.
 
-Three separate sanitizers exist for three audiences, each with its own policy rather than a
-shared one: `sanitizeLogText()` (`src/utils/logger.ts`) for the output channel,
-`sanitizePackageText()` (`src/providers/PackageItem.ts`) for tree labels (collapses newlines,
-truncates to 240 characters), `sanitizeAuditText()` (`src/utils/auditReport.ts`) for the audit
-report. `statusReport.ts` layers a fourth pass (`sanitizeReportText()`) on top of
-`sanitizeLogText()` that substitutes known package-file paths with owner-qualified labels and
-redacts any *unknown* absolute path outright, so a diagnostics report never leaks a filesystem
-layout it cannot already explain.
+The shared text operations live in `src/shared/text.ts`: `sanitizeMultilineText()`,
+`sanitizeInlineText()`, and `redactCredentials()`. `sanitizeLogText()` (`src/utils/logger.ts`)
+uses multiline cleanup and credential redaction before adding continuation prefixes;
+`sanitizePackageText()` (`src/providers/packageItemPresentation.ts`) and
+`sanitizeAuditText()` (`src/utils/auditReport.ts`) wrap inline cleanup. `sanitizeReportText()`
+(`src/utils/statusReport.ts`) also substitutes owner-qualified labels for known package paths,
+hides unknown absolute paths, and applies the report length limit.
 
 ## 8. Update-check model
 
@@ -498,26 +532,24 @@ stops the chain rather than falling through to a different registry.
    the resolved family returns `unrecognized` without spawning a process.
 2. **`config-aware-https`** — `fetchPackageMetadataFromRegistry()`
    (`src/utils/registryClient.ts`) resolves registry URL, auth, TLS and proxy settings from
-   nested configuration sources (below) and issues one bounded HTTPS request. This tier also
-   serves as the effective public-npm fallback: its default registry is
-   `https://registry.npmjs.org/`, used whenever nothing overrides it.
-3. **`public-npm`** — declared in the `MetadataAdapterTier` type with a tier-order slot, but no
-   adapter is currently registered at it; `config-aware-https` already covers the public
-   registry case, so only two tiers are populated in practice today. This is not a fallback
-   slot: an unsupported or unstable response from a configured registry never falls through to
-   the public registry (section 10).
+   nested configuration sources (below) and issues one bounded HTTPS request. When no
+   configuration overrides the URL, it uses `https://registry.npmjs.org/`. This is the terminal
+   tier; an unsupported or unstable response from a configured registry never falls through to
+   another registry (section 10).
 
 ### Registry configuration sources
 
-`registryClient.ts` resolves, per manager, the nested configuration chain a real CLI would
-honor: npm/pnpm read project-to-user `.npmrc` plus `npm_config_*` overrides; Yarn Classic reads
-`.yarnrc`; Yarn Modern reads `.yarnrc.yml` including per-scope `npmScopes`; Bun reads
-`bunfig.toml` (`src/utils/bunConfig.ts`) including environment-reference expansion and
-credentials embedded in a registry URL. Every HTTPS request goes through
-`runBoundedMetadataRequest()` (`src/utils/metadataRunner.ts`): a 15 s timeout, a 5 MiB response
-cap, and redirects capped at `MAX_REGISTRY_REDIRECTS` (3), each confirmed same-origin before an
-`Authorization` header survives it, and confirmed `https:` with no embedded credentials before
-being followed at all.
+`registryClient.ts` is the config-aware HTTPS facade. It gets the merged configuration from
+`resolveRegistryConfiguration()` (`src/utils/registry/configResolution.ts`), which composes the
+`registry/` readers and parsers; environment expansion lives in `envExpansion.ts`. npm/pnpm read
+project-to-user `.npmrc` plus `npm_config_*` overrides; Yarn Classic reads `.yarnrc`; Yarn Modern
+reads `.yarnrc.yml` including per-scope `npmScopes`; Bun reads `bunfig.toml` through
+`registry/bunConfiguration.ts` and `bunConfig.ts`. `requestRegistryPayload()` (`src/utils/registry/httpClient.ts`)
+follows at most `MAX_REGISTRY_REDIRECTS` redirects, requires HTTPS without embedded credentials,
+and drops `Authorization` when a redirect changes origin. Each request uses
+`runBoundedMetadataRequest()` (`metadataRunner.ts`) with a 15 s timeout and 5 MiB response cap;
+`metadataResponse.ts` classifies completed responses by HTTP status and content length, parses
+JSON, and maps schema results.
 
 ### Release-age cooldown and prerelease policy
 
@@ -555,9 +587,9 @@ test (all under `src/test/`, path prefix omitted for brevity).
 | A manifest resolving outside its owning workspace is rejected, never treated as a project root. | `projectResolver.unit.test.ts` — *"rejects a project root whose canonical path escapes the owning workspace folder"* |
 | Two manifests colliding across workspace folders never silently merge. | `projectResolver.unit.test.ts` — *"rejects a cross-workspace collision instead of silently merging two workspace folders"* |
 | The update fingerprint mismatch discards a fetch instead of caching it. | `updateOrchestrationService.unit.test.ts` — *"discards as stale when the manifest spec changes mid-fetch…"*, *"discards as stale when the live policy changes mid-fetch"* |
-| Metadata lookups are deduplicated and bounded, not fetched once per row. | `packagesProvider.unit.test.ts` — *"deduplicates metadata by package and registry while capping concurrent requests"* |
-| A superseded audit/update result is discarded, never applied over a newer snapshot. | `packagesProvider.unit.test.ts` — *"discards an audit result after the package snapshot reloads"*, *"aborts an audit on reload and never starts queued roots from the old snapshot"* |
-| A late result from a cancelled predecessor never overwrites the current operation's outcome. | `packagesProvider.unit.test.ts` — *"keeps the current audit failure when a cancelled predecessor succeeds late"* and its mirror |
+| Metadata lookups are deduplicated and bounded, not fetched once per row. | `packagesProviderUpdates.unit.test.ts` — *"deduplicates metadata by package and registry while capping concurrent requests"* |
+| A superseded audit/update result is discarded, never applied over a newer snapshot. | `packagesProviderAuditLifecycle.unit.test.ts` — *"discards an audit result after the package snapshot reloads"*, *"aborts an audit on reload and never starts queued roots from the old snapshot"* |
+| A late result from a cancelled predecessor never overwrites the current operation's outcome. | `packagesProviderAuditLifecycle.unit.test.ts` — *"keeps the current audit failure when a cancelled predecessor succeeds late"* and its mirror |
 | A multi-file write rolls back every already-written file, in reverse order, on failure. | `packageRepository.unit.test.ts` — *"rolls back only successfully written files in reverse order on failure"* |
 | A dependency-type-switch collision writes nothing. | `packageTransforms.unit.test.ts` — *"throws a typed conflict when the target already has the package"* |
 | An audit outcome with an unrecognized or truncated result is never reported as clean. | `auditClient.unit.test.ts`, `bunAuditClient.unit.test.ts`, `yarnAuditClient.unit.test.ts` — incomplete/error classification cases |
@@ -629,19 +661,18 @@ not silently re-introduce it.
   `nestro.searchPackages` — by setting or omitting the command property. None of the three carries
   `enablement`: a row-bound command must never be able to render clickable while its precondition
   is false.
-- **The three text sanitizers stay separate rather than being consolidated into one.** Each
-  serves a different audience with a different policy (log continuation lines, truncated tree
-  labels, audit report text); merging them would touch each call site's already-reviewed
-  behavior for a stylistic gain only, so the duplication is accepted deliberately.
+- **Text handling shares one implementation.** `src/shared/text.ts` owns multiline and inline
+  cleanup plus credential redaction; logger, package, audit, and status-report modules compose
+  those helpers for their output surfaces.
 
 ## 11. Extension points
 
-**Adding a package manager.** Extend `PackageManager` (`src/utils/packageManagerKind.ts`), add
-its lock-file descriptor to `LOCKFILES`, implement a `Client` subclass in `src/clients/`
+**Adding a package manager.** Add its entry to `PACKAGE_MANAGERS` (`src/shared/packageManagers.ts`:
+bin, lock files, verbs, dev flag, audit/metadata argv, config file), implement a `Client` subclass in `src/clients/`
 (section flag before the `--` operand separator, names/versions validated through
 `operandValidation.ts` before shell-quoting), wire it into `ClientManager.createClient()`, add
-an audit adapter following the `AuditResult`/`AuditOutcome` contract in `auditClient.ts` (own
-schema id, bounded-process call, incomplete/error mapping), and add a metadata adapter at the
+an audit adapter following the `AuditResult`/`AuditOutcome` contract in
+`src/utils/audit/outcome.ts` (own schema id, bounded-process call, incomplete/error mapping), and add a metadata adapter at the
 appropriate tier in `metadataRegistry.ts` if the manager exposes a native metadata command or a
 distinct registry configuration format.
 
@@ -649,11 +680,12 @@ distinct registry configuration format.
 internal-only command additionally gets a `commandPalette` entry with `"when": "false"`);
 register it in `activate()`; if it targets a row, resolve identity through
 `resolveCommandPackageItem()`/`revalidateCommandPackageItem()` (`src/commands/packageIdentity.ts`)
-rather than trusting the raw argument; if it mutates `package.json`, acquire
-`mutationCoordinator` on the row's `resolveMutationCoordinatorKey()` result and wrap the write
+rather than trusting the raw argument; row-mutating commands use `runRowMutation()`
+(`src/commands/rowMutation.ts`) for guard, resolution, canonical project-key resolution, sorted
+lock acquisition, revalidation, provider marking, apply, and reconciliation; wrap manifest writes
 in `provider.withWriteSuppressed()`.
 
-**Adding a status row.** Add a case to `projectStatusRows()` in `viewProjectionService.ts`
+**Adding a status row.** Add a case to `projectStatusRows()` in `statusRowProjection.ts`
 reading from the `ViewProjectionSnapshot` fields `buildViewProjectionSnapshot()` already
 exposes; set `actionable: true` for a row that should open the diagnostics report, or an explicit
 `command: { command, title }` for a row that should invoke a different existing command instead —
@@ -669,6 +701,6 @@ projection a pure function of the snapshot.
 its value inside `computeViewProjection()`, and reference it from a `"when"` clause in
 `package.json` — never from `enablement` on a package-row context action (section 2). A key
 gating a global action should be added to `WorkspaceCapabilities` and resolved inside
-`PackagesProvider.resolveWorkspaceCapabilities()` alongside the existing `can*` fields, so it
-shares the pre-first-load permissive default (`resolvePublishedWorkspaceCapabilities()`) and
+`WorkspaceCapabilityResolver.resolve()` alongside the existing `can*` fields, so it shares the
+pre-first-load permissive default (`resolvePublishedWorkspaceCapabilities()`) and
 the all-`false` reset on `dispose()`.

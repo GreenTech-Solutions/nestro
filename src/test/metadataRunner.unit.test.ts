@@ -2,12 +2,10 @@ import { EventEmitter } from 'node:events';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  METADATA_REQUEST_TIMEOUT_MS,
-  METADATA_RESPONSE_MAX_BYTES,
-  runBoundedMetadataRequest,
-} from '../utils';
-import type { MetadataSchemaResult } from '../utils';
+import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
+import { isRecord } from '../shared';
+import { runBoundedMetadataRequest } from '../utils/metadataRunner';
+import type { MetadataSchemaResult } from '../utils/metadataRunner';
 
 vi.mock('node:https', () => ({
   get: vi.fn(),
@@ -223,8 +221,4 @@ function createMockResponse(statusCode: number, contentLength?: string): Incomin
 
 function toClientRequest(request: MockClientRequest): ClientRequest {
   return request as unknown as ClientRequest;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

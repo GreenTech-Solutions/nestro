@@ -1,3 +1,60 @@
+## [1.0.3](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.2...v1.0.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **audit:** order audit advisories by severity rank ([27a5186](https://github.com/GreenTech-Solutions/nestro/commit/27a5186883f673dd136be445afe0afdb09189b0e))
+* **audit:** start package-manager shims through cmd.exe on Windows ([ea6c08f](https://github.com/GreenTech-Solutions/nestro/commit/ea6c08fb94b03b753b90ae52c388b8ef2c5d1feb))
+* **clients:** accept only version, dist-tag, or workspace specs as version operands ([55bf68b](https://github.com/GreenTech-Solutions/nestro/commit/55bf68b0bf6531b202658156e6d93096095307f1))
+* **clients:** pass the workspace-root flag when adding at a pnpm or Yarn Classic root ([5b414fb](https://github.com/GreenTech-Solutions/nestro/commit/5b414fbf7852aad44869a2045cb77a0e15b9f07d))
+* **logger:** mask password and passwd values in log output ([ecbaf8b](https://github.com/GreenTech-Solutions/nestro/commit/ecbaf8b76a50e102127e8adead1d085f03c1cd91))
+* **logging:** sanitize log, report and tree text with one shared sanitizer ([8621f55](https://github.com/GreenTech-Solutions/nestro/commit/8621f55e4ffd9a645381fd4eb38e09e7dfd86e27))
+* **metadata:** validate package names and pass them after -- to metadata CLIs ([63c55a0](https://github.com/GreenTech-Solutions/nestro/commit/63c55a01c08f4b725815e8766b80390a4ab3c6bd))
+* **npm-link:** validate and encode the package name in the npm URL ([76adc5e](https://github.com/GreenTech-Solutions/nestro/commit/76adc5ea1cde6d5bd86ae8d903531afb89495b61))
+* **pin:** leave non-object dependency sections untouched in Pin All ([a237c60](https://github.com/GreenTech-Solutions/nestro/commit/a237c60d6824708d929d6112a5e97b75c8c3046a))
+* **projects:** detect lockfiles by stat and key coordinator locks canonically ([2f54044](https://github.com/GreenTech-Solutions/nestro/commit/2f5404433610bf6c1897e12b167ece053e6fa5f3))
+* **provider:** clear stale rows when a reload fails ([e5c0a1b](https://github.com/GreenTech-Solutions/nestro/commit/e5c0a1be76188de05390b5bad35591ece04dd7d3))
+* **provider:** keep row capabilities valid across rebuilds that do not change the row ([dc4cd9e](https://github.com/GreenTech-Solutions/nestro/commit/dc4cd9e2eee7fab288f6a8f5fdc21c1d6d044e83))
+* **provider:** run checks and audits after the current load ([c459254](https://github.com/GreenTech-Solutions/nestro/commit/c459254f0c4ed0149364a397911a19bb27ce4b8a))
+* **registry:** expand environment references once with each format's own syntax ([8b8d7ba](https://github.com/GreenTech-Solutions/nestro/commit/8b8d7ba8dd3fd233b80fd4f0b22ec82083538ffd))
+* **registry:** resolve a relative cafile against the config file that declares it ([c25994c](https://github.com/GreenTech-Solutions/nestro/commit/c25994ce91f0b0958398a661273bd9bb1bb73c8a))
+* **status:** strip ANSI escapes in the status report regex ([db97820](https://github.com/GreenTech-Solutions/nestro/commit/db97820755411ea815d7e6793e2e49f9accd6f79))
+* **tasks:** let a hung package manager task be cancelled ([2bff802](https://github.com/GreenTech-Solutions/nestro/commit/2bff8022a4d1d48a4dd8322f386bfa92042fefe7))
+* **update:** report partial Update All failures and reload the tree ([f8e7327](https://github.com/GreenTech-Solutions/nestro/commit/f8e7327044e1c5db4aaa3d031d528b335379ec86))
+* **versions:** parse versions and specs with one shared grammar ([0a5a10a](https://github.com/GreenTech-Solutions/nestro/commit/0a5a10a7f70eed4ce6ac6ca7d5106799b9e79e30))
+* **watcher:** recognise own manifest writes by content ([d892cea](https://github.com/GreenTech-Solutions/nestro/commit/d892ceabafddf4a2cb03e3f736462ad877caa335))
+
+### Performance
+
+* **yarn:** resolve the Yarn family once per root within one operation ([8841ea6](https://github.com/GreenTech-Solutions/nestro/commit/8841ea671e400e617ac6ad61c67e0068e1158015))
+
+### Maintenance
+
+* **audit:** define audit severity order and masks once ([b18c269](https://github.com/GreenTech-Solutions/nestro/commit/b18c26913f2604bea5b4dd34646f0e67804d61bf))
+* **audit:** share one audit outcome pipeline; clients parse only their schema ([cb287fe](https://github.com/GreenTech-Solutions/nestro/commit/cb287fe7f6de94a583417b87a7b2bc90e6baf5b5))
+* **clients:** describe package managers in one shared table ([bdf9766](https://github.com/GreenTech-Solutions/nestro/commit/bdf9766afcf861dbe8d7cf714d9cd0c8fd403917))
+* **clients:** drive every package manager through one client and argv builder ([c533122](https://github.com/GreenTech-Solutions/nestro/commit/c533122a00ffab623568b30c0b2d868a2962390c))
+* **commands:** one manifest entry resolver ([5d14d96](https://github.com/GreenTech-Solutions/nestro/commit/5d14d9641d9b938a8f25cbc68b739259cfdd1e02))
+* **commands:** one pipeline for row-mutating commands ([f5b7403](https://github.com/GreenTech-Solutions/nestro/commit/f5b7403afd57e7c2b31aaba40927036e10c02040))
+* **config:** define extension timeouts and limits once in config ([d4b5f95](https://github.com/GreenTech-Solutions/nestro/commit/d4b5f951931eade5516b6f85fc80bcbb909808fc))
+* **config:** read every nestro setting through one typed settings module ([3a92ea5](https://github.com/GreenTech-Solutions/nestro/commit/3a92ea58e42a6d463b0f4d39a4561a5f9a372a06))
+* **deps:** bump @vscode/vsce to 4.1.0 ([cf12348](https://github.com/GreenTech-Solutions/nestro/commit/cf123483359f9eb6759901f824e5a695dd78b5fa))
+* **deps:** bump transitive handlebars to 4.7.10 for critical advisories ([4664ca2](https://github.com/GreenTech-Solutions/nestro/commit/4664ca23470be0b69511592235c9a3633523e516))
+* **lint:** cap file and function length with a shrink-only exception list ([de35653](https://github.com/GreenTech-Solutions/nestro/commit/de35653e7c5af16d1b952c3023a7dea5273c40fd))
+* **lint:** drop the file and function length exceptions ([f7fe79a](https://github.com/GreenTech-Solutions/nestro/commit/f7fe79a8a3d936f360a3771d4e6247c9bcd56867))
+* **manifest:** keep command, view and context-key ids in one registry ([b39dde1](https://github.com/GreenTech-Solutions/nestro/commit/b39dde13e8e452129472318568703e580dd42ffc))
+* **metadata:** parse packuments once and share one CLI metadata adapter ([6bd446c](https://github.com/GreenTech-Solutions/nestro/commit/6bd446c56c8fa01bc380f17c83ef1674fb4a80f8))
+* **process:** split the bounded process and metadata runners by concern ([02e90ff](https://github.com/GreenTech-Solutions/nestro/commit/02e90fff81c6363ff2d68bb522138211ac17069d))
+* **provider:** move rows and identity keys into a row store ([dcdbd48](https://github.com/GreenTech-Solutions/nestro/commit/dcdbd48dc91ccc15d02b88b124c827c2c94e327c))
+* **provider:** resolve workspace capabilities outside the provider ([6ca5157](https://github.com/GreenTech-Solutions/nestro/commit/6ca515701001883d4bc5cd00fa340763215854be))
+* **registry:** split the registry client by responsibility ([50d3761](https://github.com/GreenTech-Solutions/nestro/commit/50d3761c469d06937751078826f3507b015b36ce))
+* remove dead code and test-only exports ([5b7fe18](https://github.com/GreenTech-Solutions/nestro/commit/5b7fe18b609163fd69601e8d60e9aa3b52aa8ce5))
+* **screenshots:** move the bundle hook and capture settings into files ([2f2260e](https://github.com/GreenTech-Solutions/nestro/commit/2f2260e343cff5dc878333b1caabee75a270809b))
+* **shared:** add a shared guards layer and drop duplicate type guards ([fe61778](https://github.com/GreenTech-Solutions/nestro/commit/fe617785d63db77c03fbc88175edab8a3aa1a78f))
+* **shared:** share file, hash, path and comparison helpers ([fbaa4b1](https://github.com/GreenTech-Solutions/nestro/commit/fbaa4b134c398d8eafeab58e45fec91ff36536bf))
+* **tree:** one label builder and a smaller tree projection ([21f0d9d](https://github.com/GreenTech-Solutions/nestro/commit/21f0d9da3585133baf14ddf4b85f8fd476f9effb))
+* **updates:** split the update check pipeline ([7d775cb](https://github.com/GreenTech-Solutions/nestro/commit/7d775cbd9d9d0ff09f7b5c667bb9ea865976f6ca))
+
 ## [1.0.2](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.1...v1.0.2) (2026-10-05)
 
 

@@ -7,7 +7,7 @@ import {
   buildArtifactProvenance,
   buildArtifactSbom,
   buildNormalizedManifest,
-  parsePackagedIdentity,
+  parseExtensionIdentity,
   readRuntimeDependencies,
   readVsixArchive,
   selectDeliveredRuntimeFiles,
@@ -67,7 +67,7 @@ async function createEvidenceDir(overrides: EvidenceEventOverrides = {}): Promis
   if (packageEntry === undefined) {
     throw new Error('fixture package manifest missing');
   }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
+  const identity = parseExtensionIdentity(packageEntry.bytes);
   const packagedManifest = JSON.parse(new TextDecoder().decode(packageEntry.bytes)) as unknown;
   const runtimeDependencies = readRuntimeDependencies(packagedManifest);
   const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
@@ -168,19 +168,19 @@ describe('packaged smoke evidence verifier', () => {
   it('rejects a push identity that carries a head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'push', pullRequestHeadSha: 'a'.repeat(40) });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('push identity without a head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('rejects a pull request identity without a head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'pull_request', pullRequestHeadSha: null });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('rejects a workflow dispatch identity with a short head SHA', async () => {
     const { dir } = await createEvidenceDir({ eventName: 'workflow_dispatch', pullRequestHeadSha: 'abc123' });
 
-    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('with a full head SHA');
+    await expect(verifyDownloadedEvidence(dir, SOURCE_SHA)).rejects.toThrow('does not match eventName');
   });
 
   it('requires explicit artifact directory and a full expected SHA', () => {

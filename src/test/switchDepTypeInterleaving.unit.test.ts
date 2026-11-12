@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { switchDepTypeCommand } from '../commands/switchDepType';
-import { PackageItem, PackagesProvider } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 const malformedCommandCases: readonly [string, string, unknown, string][] = [
@@ -72,24 +73,37 @@ describe('switchDepTypeCommand() writer boundary', () => {
   });
 
   it.each([
-    ['changed', { dependencies: { pkg: '~2.0.0' } }, 'source spec changed from ^1.2.3 to ~2.0.0'],
-    ['removed', { dependencies: {} }, 'source spec changed from ^1.2.3 to <missing>'],
-  ] as const)('rejects a source %s after final revalidation without writing or reloading', async (_label, nextManifest, expectedMessage) => {
+    ['changed', { dependencies: { pkg: '~2.0.0' } }, '^1.2.3', '~2.0.0'],
+    ['removed', { dependencies: {} }, '^1.2.3', '<missing>'],
+  ] as const)('rejects a source %s after final revalidation without writing or reloading', async (_label, nextManifest, expectedSourceSpec, actualSourceSpec) => {
     let manifest: Manifest = { dependencies: { pkg: '^1.2.3' } };
-    const provider = makeProvider(() => {
+    const provider = createSwitchProvider(() => {
       manifest = nextManifest;
     });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
       Buffer.from(JSON.stringify(manifest)),
     ));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3' }), provider);
 
     expect(identityMocks.revalidateCommandPackageItem).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.readFile).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: Cannot switch pkg: ${expectedMessage}.`);
+    expect(vscode.l10n.t).toHaveBeenCalledWith(
+      'Cannot switch {0}: source spec changed from {1} to {2}.',
+      'pkg',
+      expectedSourceSpec,
+      actualSourceSpec,
+    );
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${vscode.l10n.t(
+        'Cannot switch {0}: source spec changed from {1} to {2}.',
+        'pkg',
+        expectedSourceSpec,
+        actualSourceSpec,
+      )}`,
+    );
   });
 
   it.each([
@@ -100,15 +114,26 @@ describe('switchDepTypeCommand() writer boundary', () => {
       dependencies: { pkg: '^1.2.3' },
       devDependencies: { pkg: targetSpec },
     };
-    const provider = makeProvider(() => {});
+    const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3', packageFilePath: '', dev: false }), provider);
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
+    expect(vscode.l10n.t).toHaveBeenCalledWith(
+      'Cannot switch {0}: source spec {1} conflicts with target spec {2}.',
+      'pkg',
+      '^1.2.3',
+      targetSpec,
+    );
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining(`source spec ^1.2.3 conflicts with target spec ${targetSpec}`),
+      `${vscode.l10n.t('Nestro: ')}${vscode.l10n.t(
+        'Cannot switch {0}: source spec {1} conflicts with target spec {2}.',
+        'pkg',
+        '^1.2.3',
+        targetSpec,
+      )}`,
     );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining('/workspace/package.json'));
   });
@@ -120,20 +145,29 @@ describe('switchDepTypeCommand() writer boundary', () => {
           dependencies: { pkg: '^1.2.3' },
           devDependencies: { pkg: malformedSpec },
         };
-    const provider = makeProvider(() => {});
+    const provider = createSwitchProvider(() => {});
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify(manifest)));
 
-    await switchDepTypeCommand(new PackageItem('pkg', '^1.2.3', undefined, 'none'), provider);
+    await switchDepTypeCommand(buildPackageItem({ name: 'pkg', currentVersion: '^1.2.3', packageFilePath: '', dev: false }), provider);
 
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
+    const messageKey = side === 'source'
+      ? 'Cannot switch {0}: source spec changed from {1} to {2}.'
+      : 'Cannot switch {0}: source spec {1} conflicts with target spec {2}.';
+    const messageArguments = ['pkg', '^1.2.3', safeSpec] as const;
+    expect(vscode.l10n.t).toHaveBeenCalledWith(messageKey, ...messageArguments);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
     const message = String(vi.mocked(vscode.window.showErrorMessage).mock.calls[0]?.[0]);
+    const localizedMessage = vscode.l10n.t(messageKey, ...messageArguments);
+    const prefix = vscode.l10n.t('Nestro: ');
     if (_label === 'long string') {
       expect(message.length).toBeLessThanOrEqual(240);
+      expect(message.startsWith(`${prefix}${localizedMessage.slice(0, 32)}`)).toBe(true);
       expect(message).toMatch(/x/);
     }
-    if (_label !== 'long string') {
+    else {
+      expect(message).toBe(`${prefix}${localizedMessage}`);
       expect(message).toContain(side === 'source' ? `to ${safeSpec}` : `target spec ${safeSpec}`);
     }
     expect(message).not.toContain('/workspace/package.json');
@@ -147,14 +181,12 @@ interface Manifest {
   devDependencies?: Record<string, unknown>;
 }
 
-function makeProvider(onBeforeWrite: () => void): PackagesProvider {
-  const provider = {
+function createSwitchProvider(onBeforeWrite: () => void) {
+  return makeProvider({
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => {
       onBeforeWrite();
       return await fn();
     }),
-    loadPackages: vi.fn(),
     markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
-  } as unknown as PackagesProvider;
-  return provider;
+  });
 }

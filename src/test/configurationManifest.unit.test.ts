@@ -1,7 +1,19 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
+import {
+  getCheckUpdatesDebounce,
+  getConfirmBulkUpdate,
+  getDefaultFilter,
+  getMinimumReleaseAgeDays,
+  getMonorepoGlob,
+  getUpdatePolicySettings,
+} from '../config';
+import { getUpdateTarget, SETTING_DEFAULTS } from '../config/settings';
+import { FILTER_TYPES, isRecord } from '../shared';
+import { MAX_MINIMUM_RELEASE_AGE_DAYS, UPDATE_TARGETS } from '../shared/settingValues';
 
 interface ConfigurationSetting {
   readonly default: boolean | number | string;
@@ -35,10 +47,6 @@ type ManifestValue = null | boolean | number | string | ManifestValue[] | { read
 type MessageCatalog = Readonly<Record<string, string>>;
 
 const LOCALIZATION_TOKEN = /%([A-Za-z0-9_.-]+)%/g;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function validateMessageCatalog(value: unknown): MessageCatalog {
   if (!isRecord(value)) {
@@ -106,10 +114,15 @@ function resolveManifestLocalization(value: ManifestValue, catalogValue: unknown
 const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
 const nlsPath = path.resolve(path.dirname(manifestPath), 'package.nls.json');
 const rawManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ManifestValue;
+const messageCatalog = validateMessageCatalog(JSON.parse(readFileSync(nlsPath, 'utf8')));
 const manifest = resolveManifestLocalization(
   rawManifest,
-  JSON.parse(readFileSync(nlsPath, 'utf8')),
+  messageCatalog,
 ) as unknown as ExtensionManifest;
+
+function localizedMessage(key: string): string {
+  return resolveMessage(key, messageCatalog, new Set(), `package.nls.json:${key}`);
+}
 
 describe('extension configuration manifest', () => {
   it('resolves every manifest token against a non-empty English catalog', () => {
@@ -145,11 +158,11 @@ describe('extension configuration manifest', () => {
   it('declares unsupported workspace modes and workspace-side execution', () => {
     expect(manifest.capabilities.untrustedWorkspaces).toEqual({
       supported: false,
-      description: 'Nestro reads local package files and runs package-manager processes.',
+      description: localizedMessage('capabilities.untrustedWorkspaces.description'),
     });
     expect(manifest.capabilities.virtualWorkspaces).toEqual({
       supported: false,
-      description: 'Nestro requires local package files and package-manager processes.',
+      description: localizedMessage('capabilities.virtualWorkspaces.description'),
     });
     expect(manifest.extensionKind).toEqual(['workspace']);
   });
@@ -160,14 +173,14 @@ describe('extension configuration manifest', () => {
     expect(setting).toMatchObject({
       default: 'latest',
       enum: ['latest', 'greatest', 'minor', 'patch'],
-      description: 'Select the version target used by update checks. The chosen target controls how far a dependency may move; prerelease inclusion and the release-age cooldown still apply.',
-      enumDescriptions: [
-        'Use the package\'s latest dist-tag version, accepting a new major version when it is published under that tag, subject to the prerelease and minimum release age settings.',
-        'Choose the highest available version, independent of dist-tags, subject to the prerelease and minimum release age settings.',
-        'Allow patch and minor upgrades while staying on the current major version, subject to the prerelease and minimum release age settings.',
-        'Allow only patch upgrades within the current major and minor version, subject to the prerelease and minimum release age settings.',
-      ],
     });
+    expect(setting.description).toBe(localizedMessage('configuration.updateTarget.description'));
+    expect(setting.enumDescriptions).toEqual([
+      localizedMessage('configuration.updateTarget.enum.latest'),
+      localizedMessage('configuration.updateTarget.enum.greatest'),
+      localizedMessage('configuration.updateTarget.enum.minor'),
+      localizedMessage('configuration.updateTarget.enum.patch'),
+    ]);
     expect(setting.enumDescriptions).toHaveLength(setting.enum?.length ?? 0);
   });
 
@@ -177,15 +190,15 @@ describe('extension configuration manifest', () => {
     expect(setting).toMatchObject({
       default: 'all',
       enum: ['all', 'hasUpdates', 'patch', 'minor', 'breaking'],
-      description: 'Choose the package rows shown by the sidebar when Nestro starts. The Update All command acts only on the rows currently visible; the filter does not change which updates are checked. Every filter except All also hides a package while its update is in progress.',
-      enumDescriptions: [
-        'Show every discovered dependency, including packages without updates.',
-        'Show packages with an available update of any update type.',
-        'Show only packages with patch updates.',
-        'Show only packages with minor updates.',
-        'Show only packages whose update raises the major version.',
-      ],
     });
+    expect(setting.description).toBe(localizedMessage('configuration.defaultFilter.description'));
+    expect(setting.enumDescriptions).toEqual([
+      localizedMessage('configuration.defaultFilter.enum.all'),
+      localizedMessage('configuration.defaultFilter.enum.hasUpdates'),
+      localizedMessage('configuration.defaultFilter.enum.patch'),
+      localizedMessage('configuration.defaultFilter.enum.minor'),
+      localizedMessage('configuration.defaultFilter.enum.breaking'),
+    ]);
     expect(setting.enumDescriptions).toHaveLength(setting.enum?.length ?? 0);
   });
 
@@ -194,31 +207,130 @@ describe('extension configuration manifest', () => {
 
     expect(settings['nestro.checkUpdatesOnStartup']).toMatchObject({
       default: false,
-      description: 'After the initial package scan completes, run one update check on each extension activation.',
+      description: localizedMessage('configuration.checkUpdatesOnStartup.description'),
     });
     expect(settings['nestro.includePreReleases']).toMatchObject({
       default: false,
-      description: 'Include alpha, beta, and release-candidate versions in update checks and in the Pick Version version list. Disabled by default because prereleases can be less stable; enable it only when that risk is acceptable.',
+      description: localizedMessage('configuration.includePreReleases.description'),
     });
     expect(settings['nestro.minimumReleaseAgeDays']).toMatchObject({
       default: 7,
-      description: 'Minimum age in days before Nestro accepts a release for an update check; the value must be a whole number of days, or the default is used. For Nestro checks, this value overrides native package-manager release-age settings; newer releases may be deferred to an older eligible version, missing publish times are reported as unknown, and applying an update inside the window prompts for confirmation. The default 7-day cooldown reduces newly published release risk but delays updates; set to 0 to disable this Nestro policy. It does not change package-manager install behavior.',
+      description: localizedMessage('configuration.minimumReleaseAgeDays.description'),
     });
     expect(settings['nestro.checkUpdatesDebounce']).toMatchObject({
       default: 60,
-      description: 'Minimum seconds between update checks when the package files and update policy are unchanged. A click inside this window is ignored; after it, a valid cached result is reused without a network fetch. Set to 0 to disable this debounce. checkUpdatesForceAlways overrides this setting.',
+      description: localizedMessage('configuration.checkUpdatesDebounce.description'),
     });
     expect(settings['nestro.checkUpdatesForceAlways']).toMatchObject({
       default: false,
-      description: 'When no update check is already running, start every Check for Updates click immediately, bypassing checkUpdatesDebounce and the update cache. This can make a network request on every click; changes to update policy or package files already invalidate the cache and bypass the debounce.',
+      description: localizedMessage('configuration.checkUpdatesForceAlways.description'),
     });
     expect(settings['nestro.deferInstallAfterUpdate']).toMatchObject({
       default: false,
-      description: 'Write selected update versions to package.json without running the package manager. Run Nestro: Run Install separately to update installed packages and lockfiles; when disabled, each update runs the package manager immediately.',
+      description: localizedMessage('configuration.deferInstallAfterUpdate.description'),
     });
     expect(settings['nestro.runAuditOnStartup']).toMatchObject({
       default: false,
-      description: 'After the initial package scan completes, run one detected-package-manager security audit for each resolved project on every extension activation. This is independent of update checks and is disabled by default.',
+      description: localizedMessage('configuration.runAuditOnStartup.description'),
     });
+  });
+});
+
+/** Settings whose module default differs from the manifest default, or that exist on only one side. */
+function findDefaultMismatches(
+  properties: Readonly<Record<string, ConfigurationSetting>>,
+  defaultValues: object,
+): string[] {
+  const defaults: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(defaultValues));
+  const manifestKeys = Object.keys(properties).map(key => key.replace(/^nestro\./, ''));
+  const mismatches = manifestKeys
+    .filter(key => !Object.hasOwn(defaults, key) || defaults[key] !== properties[`nestro.${key}`].default)
+    .map(key => `${key}: module ${String(defaults[key])} vs manifest ${String(properties[`nestro.${key}`].default)}`);
+  const missingFromManifest = Object.keys(defaults).filter(key => !manifestKeys.includes(key));
+  return [...mismatches, ...missingFromManifest.map(key => `${key}: not declared in the manifest`)];
+}
+
+function mockSettings(values: Record<string, unknown>): void {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: vi.fn((key: string, defaultValue: unknown) => (
+      Object.hasOwn(values, key) ? values[key] : defaultValue
+    )),
+  } as unknown as vscode.WorkspaceConfiguration);
+}
+
+describe('typed settings module', () => {
+  const properties = manifest.contributes.configuration.properties;
+
+  beforeEach(() => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReset();
+    mockSettings({});
+  });
+
+  it('declares the same defaults as the manifest for every setting', () => {
+    expect(findDefaultMismatches(properties, SETTING_DEFAULTS)).toEqual([]);
+  });
+
+  it('reports a default that diverges from the manifest, or a setting missing on either side', () => {
+    expect(findDefaultMismatches(properties, { ...SETTING_DEFAULTS, confirmBulkUpdate: false }))
+      .toEqual(['confirmBulkUpdate: module false vs manifest true']);
+    expect(findDefaultMismatches(properties, { ...SETTING_DEFAULTS, extra: 1 }))
+      .toEqual(['extra: not declared in the manifest']);
+    const withoutGlob = Object.fromEntries(Object.entries(SETTING_DEFAULTS).filter(([key]) => key !== 'monorepoGlob'));
+    expect(findDefaultMismatches(properties, withoutGlob))
+      .toEqual(['monorepoGlob: module undefined vs manifest **/package.json']);
+  });
+
+  it('keeps the shared enum values and numeric bound equal to the manifest', () => {
+    expect([...UPDATE_TARGETS]).toEqual(properties['nestro.updateTarget'].enum);
+    expect([...FILTER_TYPES]).toEqual(properties['nestro.defaultFilter'].enum);
+    expect(MAX_MINIMUM_RELEASE_AGE_DAYS).toBe(properties['nestro.minimumReleaseAgeDays'].maximum);
+  });
+
+  it('returns the manifest defaults when nothing is configured', () => {
+    expect(getUpdatePolicySettings()).toEqual({
+      target: 'latest',
+      includePreReleases: false,
+      minimumReleaseAgeDays: 7,
+    });
+    expect(getDefaultFilter()).toBe('all');
+    expect(getConfirmBulkUpdate()).toBe(true);
+    expect(getCheckUpdatesDebounce()).toBe(60);
+    expect(getMonorepoGlob()).toBe('**/package.json');
+  });
+
+  it('reads the namespace live on every call', () => {
+    mockSettings({ confirmBulkUpdate: false });
+    expect(getConfirmBulkUpdate()).toBe(false);
+    mockSettings({ confirmBulkUpdate: true });
+    expect(getConfirmBulkUpdate()).toBe(true);
+    expect(vscode.workspace.getConfiguration).toHaveBeenLastCalledWith('nestro');
+  });
+
+  it.each([
+    ['patch', 'patch'],
+    ['sideways', 'latest'],
+    [42, 'latest'],
+  ])('maps updateTarget %j to %j', (configured, expected) => {
+    mockSettings({ updateTarget: configured });
+    expect(getUpdateTarget()).toBe(expected);
+  });
+
+  it.each([
+    ['hasUpdates', 'hasUpdates'],
+    ['everything', 'all'],
+    [undefined, 'all'],
+  ])('maps defaultFilter %j to %j', (configured, expected) => {
+    mockSettings({ defaultFilter: configured });
+    expect(getDefaultFilter()).toBe(expected);
+  });
+
+  it.each([
+    [30, 30],
+    [0, 0],
+    [-1, 7],
+    ['30', 7],
+  ])('reads minimumReleaseAgeDays %j as %j', (configured, expected) => {
+    mockSettings({ minimumReleaseAgeDays: configured });
+    expect(getMinimumReleaseAgeDays()).toBe(expected);
   });
 });

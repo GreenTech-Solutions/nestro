@@ -9,7 +9,7 @@ import type {
   CanonicalPackageLocation,
   CanonicalPackageLocationResult,
 } from './packageIdentity';
-import { resolveCanonicalPackageLocation } from './packageIdentity';
+import { resolveCanonicalPackageLocation } from './packageLocationResolution';
 
 export interface PackageLoadingSnapshot {
   readonly entries: readonly PackageFileEntry[];
@@ -36,6 +36,14 @@ export interface PackageLoadingDependencies {
   ) => Promise<CanonicalPackageLocationResult>;
 }
 
+interface PackageFilePathsSnapshot {
+  readonly packageFilePaths: string[];
+  readonly readablePackageFilePaths: string[];
+  readonly failedPackageReadPaths: string[];
+  readonly failedPackageReadDetails: PackageReadFailure[];
+  readonly packageReadFailed: boolean;
+}
+
 const DEFAULT_DEPENDENCIES: PackageLoadingDependencies = {
   readPackageEntries: () => utils.readAllWorkspaceDependencies(),
   discoverPackageFilePaths: () => utils.getWorkspacePackageFilePaths(),
@@ -51,79 +59,15 @@ export class PackageLoadingService implements PackageLoadingServiceContract {
       return undefined;
     }
 
-    const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
-    let packageReadFailed = false;
-    const failedPackageReadDetails: PackageReadFailure[] = (entries.skippedFiles ?? []).map(file => ({
-      packageFilePath: file.packageFilePath,
-      error: file.error,
-    }));
-    try {
-      const discoveredPackageFilePaths = await this.discoverPackageFilePaths();
-      if (signal?.aborted) {
-        return undefined;
-      }
-      packageFilePaths.push(...discoveredPackageFilePaths.filter(
-        packageFilePath => !packageFilePaths.includes(packageFilePath),
-      ));
-    }
-    catch {
-      packageReadFailed = true;
-      failedPackageReadDetails.push({
-        packageFilePath: '',
-        error: 'Failed to discover workspace package files.',
-      });
-      logger.warn('Failed to discover workspace package files; using loaded package entries.');
-    }
-    if (signal?.aborted) {
+    const paths = await collectPackageFilePaths(entries, this, signal);
+    if (paths === undefined) {
       return undefined;
     }
-
-    const failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
-    for (const packageFilePath of failedPackageReadPaths) {
-      if (!packageFilePaths.includes(packageFilePath)) {
-        packageFilePaths.push(packageFilePath);
-      }
-    }
-    const failedPackageReadPathSet = new Set(failedPackageReadPaths);
-    const readablePackageFilePaths = packageFilePaths.filter(
-      packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
-    );
-    const baselines = new Map<string, CanonicalPackageLocation>();
-    const canonicalManifestOwners = new Map<string, string>();
-    const collidingManifestPaths = new Set<string>();
-    for (const packageFilePath of new Set(entries.map(entry => entry.packageFilePath))) {
-      const location = await this.dependencies.resolveCanonicalPackageLocation(packageFilePath);
-      if (signal?.aborted) {
-        return undefined;
-      }
-      if (location.ok) {
-        const canonicalOwner = canonicalManifestOwners.get(location.value.packageFilePath);
-        if (canonicalOwner !== undefined && canonicalOwner !== packageFilePath) {
-          collidingManifestPaths.add(canonicalOwner);
-          collidingManifestPaths.add(packageFilePath);
-          baselines.delete(canonicalOwner);
-          baselines.delete(packageFilePath);
-          continue;
-        }
-        canonicalManifestOwners.set(location.value.packageFilePath, packageFilePath);
-        if (!collidingManifestPaths.has(packageFilePath)) {
-          baselines.set(packageFilePath, freezePackageLocation(location.value));
-        }
-      }
-    }
-    if (signal?.aborted) {
+    const baselines = await buildPackageLocationBaselines(entries, this.dependencies, signal);
+    if (baselines === undefined) {
       return undefined;
     }
-
-    return Object.freeze({
-      entries: Object.freeze(entries.map(entry => Object.freeze({ ...entry }))),
-      packageFilePaths: Object.freeze([...packageFilePaths]),
-      readablePackageFilePaths: Object.freeze([...readablePackageFilePaths]),
-      failedPackageReadPaths: Object.freeze([...failedPackageReadPaths]),
-      failedPackageReadDetails: Object.freeze(failedPackageReadDetails.map(failure => Object.freeze({ ...failure }))),
-      packageLocationBaselines: baselines,
-      packageReadFailed,
-    });
+    return freezePackageLoadingSnapshot(entries, paths, baselines);
   }
 
   readPackageEntries(): Promise<PackageFileEntries> {
@@ -139,5 +83,103 @@ function freezePackageLocation(location: CanonicalPackageLocation): CanonicalPac
   return Object.freeze({
     ...location,
     fileStamp: Object.freeze({ ...location.fileStamp }),
+  });
+}
+
+async function collectPackageFilePaths(
+  entries: PackageFileEntries,
+  service: PackageLoadingService,
+  signal?: AbortSignal,
+): Promise<PackageFilePathsSnapshot | undefined> {
+  const packageFilePaths = [...new Set(entries.map(entry => entry.packageFilePath))];
+  let packageReadFailed = false;
+  const failedPackageReadDetails: PackageReadFailure[] = (entries.skippedFiles ?? []).map(file => ({
+    packageFilePath: file.packageFilePath,
+    error: file.error,
+  }));
+  try {
+    const discoveredPackageFilePaths = await service.discoverPackageFilePaths();
+    if (signal?.aborted) {
+      return undefined;
+    }
+    packageFilePaths.push(...discoveredPackageFilePaths.filter(
+      packageFilePath => !packageFilePaths.includes(packageFilePath),
+    ));
+  }
+  catch {
+    packageReadFailed = true;
+    failedPackageReadDetails.push({
+      packageFilePath: '',
+      error: 'Failed to discover workspace package files.',
+    });
+    logger.warn('Failed to discover workspace package files; using loaded package entries.');
+  }
+  if (signal?.aborted) {
+    return undefined;
+  }
+  const failedPackageReadPaths = (entries.skippedFiles ?? []).map(file => file.packageFilePath);
+  for (const packageFilePath of failedPackageReadPaths) {
+    if (!packageFilePaths.includes(packageFilePath)) {
+      packageFilePaths.push(packageFilePath);
+    }
+  }
+  const failedPackageReadPathSet = new Set(failedPackageReadPaths);
+  const readablePackageFilePaths = packageFilePaths.filter(
+    packageFilePath => !failedPackageReadPathSet.has(packageFilePath),
+  );
+  return {
+    packageFilePaths,
+    readablePackageFilePaths,
+    failedPackageReadPaths,
+    failedPackageReadDetails,
+    packageReadFailed,
+  };
+}
+
+async function buildPackageLocationBaselines(
+  entries: PackageFileEntries,
+  dependencies: PackageLoadingDependencies,
+  signal?: AbortSignal,
+): Promise<Map<string, CanonicalPackageLocation> | undefined> {
+  const baselines = new Map<string, CanonicalPackageLocation>();
+  const canonicalManifestOwners = new Map<string, string>();
+  const collidingManifestPaths = new Set<string>();
+  for (const packageFilePath of new Set(entries.map(entry => entry.packageFilePath))) {
+    const location = await dependencies.resolveCanonicalPackageLocation(packageFilePath);
+    if (signal?.aborted) {
+      return undefined;
+    }
+    if (!location.ok) {
+      continue;
+    }
+    const canonicalOwner = canonicalManifestOwners.get(location.value.packageFilePath);
+    if (canonicalOwner !== undefined && canonicalOwner !== packageFilePath) {
+      collidingManifestPaths.add(canonicalOwner);
+      collidingManifestPaths.add(packageFilePath);
+      baselines.delete(canonicalOwner);
+      baselines.delete(packageFilePath);
+      continue;
+    }
+    canonicalManifestOwners.set(location.value.packageFilePath, packageFilePath);
+    if (!collidingManifestPaths.has(packageFilePath)) {
+      baselines.set(packageFilePath, freezePackageLocation(location.value));
+    }
+  }
+  return signal?.aborted ? undefined : baselines;
+}
+
+function freezePackageLoadingSnapshot(
+  entries: PackageFileEntries,
+  paths: PackageFilePathsSnapshot,
+  packageLocationBaselines: ReadonlyMap<string, CanonicalPackageLocation>,
+): PackageLoadingSnapshot {
+  return Object.freeze({
+    entries: Object.freeze(entries.map(entry => Object.freeze({ ...entry }))),
+    packageFilePaths: Object.freeze([...paths.packageFilePaths]),
+    readablePackageFilePaths: Object.freeze([...paths.readablePackageFilePaths]),
+    failedPackageReadPaths: Object.freeze([...paths.failedPackageReadPaths]),
+    failedPackageReadDetails: Object.freeze(paths.failedPackageReadDetails.map(failure => Object.freeze({ ...failure }))),
+    packageLocationBaselines,
+    packageReadFailed: paths.packageReadFailed,
   });
 }

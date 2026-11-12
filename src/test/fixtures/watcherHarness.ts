@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import { writeFile } from 'node:fs/promises';
-import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS, registerPackageJsonWatcher } from '../../extension';
-import { FilterManager, GroupItem, PackageItem, PackagesProvider, WorkspaceFolderItem } from '../../providers';
+import { PACKAGE_JSON_WATCHER_DEBOUNCE_MS } from '../../config';
+import { registerPackageJsonWatcher } from '../../extension';
+import { FilterManager, PackagesProvider } from '../../providers';
+import { GroupItem } from '../../providers/GroupItem';
+import { PackageItem } from '../../providers/PackageItem';
+import { WorkspaceFolderItem } from '../../providers/WorkspaceFolderItem';
 
 /**
  * Ceiling for the native file-watcher backend to attach to a freshly added workspace folder.
@@ -26,15 +30,6 @@ const SETTLE_MARGIN_MS = 200;
  * reload and, after it, to prove that nothing further follows.
  */
 export const DEBOUNCE_SETTLE_MS = PACKAGE_JSON_WATCHER_DEBOUNCE_MS + SETTLE_MARGIN_MS;
-
-/** How long after `fn()` returns `withWriteSuppressed()` lifts suppression. */
-const SUPPRESSION_LIFT_MS = 600;
-
-/**
- * How long to wait before a suppressed write can be called unobserved: the lift
- * delay plus a full debounce window for any event it released.
- */
-export const SUPPRESSION_SETTLE_MS = SUPPRESSION_LIFT_MS + DEBOUNCE_SETTLE_MS;
 
 export function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -163,15 +158,13 @@ export function createPackageJsonWatcherHarness(): PackageJsonWatcherHarness {
   const context = createStubContext();
   let count = 0;
 
-  const spy: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'suppressingWrites'> = {
+  const spy: Pick<PackagesProvider, 'invalidateUpdateCache' | 'loadPackages' | 'isOwnManifestWrite'> = {
     invalidateUpdateCache: () => provider.invalidateUpdateCache(),
     loadPackages: async () => {
       count += 1;
       await provider.loadPackages();
     },
-    get suppressingWrites(): boolean {
-      return provider.suppressingWrites;
-    },
+    isOwnManifestWrite: uri => provider.isOwnManifestWrite(uri),
   };
 
   const controller = registerPackageJsonWatcher(context as unknown as vscode.ExtensionContext, spy);

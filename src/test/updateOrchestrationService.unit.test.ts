@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  computeUpdateFingerprint,
-  UpdateOrchestrationService,
-} from '../providers';
+import { computeUpdateFingerprint, UpdateOrchestrationService } from '../providers/updateOrchestrationService';
+import type { CanonicalPackageLocation, PackageIdentityTuple } from '../providers/packageIdentity';
 import type {
-  CanonicalPackageLocation,
-  PackageIdentityTuple,
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
   UpdateOrchestrationResult,
-} from '../providers';
+} from '../providers/updateOrchestrationService';
 import { OperationCoordinator } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 
@@ -119,6 +115,21 @@ describe('UpdateOrchestrationService', () => {
   });
 
   describe('cache contract', () => {
+    it('uses an empty current-version fallback for an identity missing from the version map', async () => {
+      const service = new UpdateOrchestrationService(createDependencies());
+      const request = createRequest({ currentVersions: new Map(), forceAlways: true });
+
+      const result = await service.check(request);
+
+      if (!expectCompleted(result)) {
+        return;
+      }
+      expect(result.data.get('/workspace/package.json\0react\0dependencies')).toEqual({
+        acceptedVersion: undefined,
+        releaseAge: { kind: 'accepted' },
+      });
+    });
+
     it('fetches once, reuses the cache on a matching fingerprint, and refetches after invalidation', async () => {
       const dependencies = createDependencies({
         fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map([['react', '2.0.0']])),
@@ -276,6 +287,33 @@ describe('UpdateOrchestrationService', () => {
   });
 
   describe('partial and total root failure', () => {
+    it('reports a canonical coordinator key failure instead of fetching under a manifest path', async () => {
+      const packageFilePath = '/workspace/app/package.json';
+      const error = new Error('Canonical project root could not be resolved.');
+      const dependencies = createDependencies({
+        resolveMutationCoordinatorKey: vi.fn().mockRejectedValue(error),
+      });
+      const onRootFailure = vi.fn();
+      const service = new UpdateOrchestrationService(dependencies);
+
+      const result = await service.check(createRequest({
+        packageFiles: [packageFilePath],
+        identities: [identity('react', packageFilePath)],
+        forceAlways: true,
+        onRootFailure,
+      }));
+
+      if (!expectCompleted(result)) {
+        return;
+      }
+      expect(result.failedPackageFilePaths).toEqual([packageFilePath]);
+      expect(result.failures).toEqual([{ packageFilePath, error }]);
+      expect(result.allFailed).toBe(true);
+      expect(dependencies.resolveMutationCoordinatorKey).toHaveBeenCalledOnce();
+      expect(dependencies.fetchAllLatestVersions).not.toHaveBeenCalled();
+      expect(onRootFailure).toHaveBeenCalledOnce();
+    });
+
     it('reports a partial failure without caching, and calls onRootFailure once per failed root', async () => {
       const packageFiles = ['/workspace/a/package.json', '/workspace/b/package.json'];
       const identities = [identity('react', packageFiles[0]), identity('vite', packageFiles[1])];

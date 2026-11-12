@@ -3,6 +3,38 @@ import { parseVsixManifestIdentity } from '../tools';
 import { toBytes } from './fixtures';
 
 const VSX_SCHEMA_URI = 'http://schemas.microsoft.com/developer/vsx-schema/2011';
+const LABEL = 'extension.vsixmanifest';
+
+const REAL_VSCE_MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
+  <PackageManifest Version="2.0.0" xmlns="${VSX_SCHEMA_URI}" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+    <Metadata>
+      <Identity Language="en-US" Id="nestro" Version="1.0.2" Publisher="greentech-solutions" />
+      <DisplayName>Nestro</DisplayName>
+      <Description xml:space="preserve">Manage npm/pnpm/yarn packages from the VS Code sidebar with update status and version switching</Description>
+      <Tags>npm,pnpm,yarn,bun,packages,dependencies,update,manager,sidebar,audit,node</Tags>
+      <Categories>Other</Categories>
+      <GalleryFlags>Public</GalleryFlags>
+
+      <Properties>
+        <Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.125.0" />
+        <Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value="" />
+        <Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
+        <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/GreenTech-Solutions/nestro.git" />
+        <Property Id="Microsoft.VisualStudio.Services.Branding.Color" Value="#1e1e2e" />
+        <Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free"/>
+      </Properties>
+      <License>extension/LICENSE.txt</License>
+      <Icon>extension/resources/icon.png</Icon>
+    </Metadata>
+    <Installation>
+      <InstallationTarget Id="Microsoft.VisualStudio.Code"/>
+    </Installation>
+    <Dependencies/>
+    <Assets>
+      <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true" />
+      <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/readme.md" Addressable="true" />
+    </Assets>
+  </PackageManifest>`;
 
 function manifest(identity: string): Uint8Array {
   return toBytes(
@@ -14,105 +46,128 @@ function document(body: string): string {
   return `<PackageManifest xmlns="${VSX_SCHEMA_URI}">${body}</PackageManifest>`;
 }
 
-describe('parseVsixManifestIdentity()', () => {
-  it('reads single- and double-quoted attributes and decodes XML entities', () => {
-    const bytes = manifest(
-      '<Identity Publisher="green&#x74;ech-solutions" Version=\'9.9.&#57;\' Id="nes&#116;ro" />',
-    );
+const VALID_IDENTITY = '<Identity Id="nestro" Version="9.9.9" Publisher="p" />';
 
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest')).toEqual({
+describe('parseVsixManifestIdentity()', () => {
+  it('reads the identity from a manifest produced by vsce', () => {
+    expect(parseVsixManifestIdentity(toBytes(REAL_VSCE_MANIFEST), LABEL)).toEqual({
+      id: 'nestro',
+      version: '1.0.2',
+      publisher: 'greentech-solutions',
+    });
+  });
+
+  it('reads single- and double-quoted attributes in any order', () => {
+    const bytes = manifest('<Identity Publisher="greentech-solutions" Version=\'9.9.9\' Id="nestro" />');
+
+    expect(parseVsixManifestIdentity(bytes, LABEL)).toEqual({
       id: 'nestro',
       version: '9.9.9',
       publisher: 'greentech-solutions',
     });
   });
 
-  it('does not treat Identity-looking comments, CDATA, or processing instructions as elements', () => {
+  it('does not treat Identity-looking comments or CDATA as elements', () => {
     const bytes = toBytes(`<?xml version="1.0"?>
       <PackageManifest xmlns="${VSX_SCHEMA_URI}">
         <Metadata>
           <!-- <Identity Id="comment" Version="1.0.0" Publisher="comment" /> -->
-          <![CDATA[<Identity Id="cdata" Version="1.0.0" Publisher="cdata" />]]>
-          <?ignored <Identity Id="pi" Version="1.0.0" Publisher="pi" ?>
+          <Description><![CDATA[<Identity Id="cdata" Version="1.0.0" Publisher="cdata" />]]></Description>
           <Identity Id="nestro" Version="9.9.9" Publisher="greentech-solutions" />
         </Metadata>
       </PackageManifest>`);
 
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest').id).toBe('nestro');
+    expect(parseVsixManifestIdentity(bytes, LABEL).id).toBe('nestro');
   });
 
-  it('accepts a BOM, namespace prefixes, predefined entities, and entity text', () => {
-    const bytes = toBytes(`\ufeff<v:PackageManifest xmlns:v="${VSX_SCHEMA_URI}" xmlns:a="urn:attributes">
-      <v:Metadata><v:DisplayName>Nestro &amp; Tools</v:DisplayName>
-        <v:Identity a:note="ignored" Id="nestro" Version="9.9.9" Publisher="green&amp;tech" />
-      </v:Metadata>
-    </v:PackageManifest>`);
+  it('accepts a BOM, an XML declaration, and processing instructions outside the root', () => {
+    const bytes = toBytes(`﻿<?xml version='1.0' encoding="UTF-8" standalone='yes'?><?build data?>${document(
+      `<Metadata>${VALID_IDENTITY}</Metadata>`,
+    )}`);
 
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest')).toEqual({
-      id: 'nestro',
-      version: '9.9.9',
-      publisher: 'green&tech',
-    });
+    expect(parseVsixManifestIdentity(bytes, LABEL).id).toBe('nestro');
+  });
+
+  it('ignores prefixed attributes and unrelated namespace declarations on Identity', () => {
+    const bytes = toBytes(`<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:a="urn:attributes">
+      <Metadata><Identity a:Id="decoy" Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>
+    </PackageManifest>`);
+
+    expect(parseVsixManifestIdentity(bytes, LABEL).id).toBe('nestro');
   });
 
   it.each([
-    ['an empty processing instruction', '<?build?>'],
-    ['processing-instruction data', '<?build data?>'],
-    ['the xml-stylesheet target', '<?xml-stylesheet href="theme.css"?>'],
-  ])('accepts %s outside the root', (_label, instruction) => {
-    const bytes = toBytes(`${instruction}${document(
-      '<Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>',
-    )}`);
-
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest').id).toBe('nestro');
+    ['DOCTYPE declaration', `<!DOCTYPE PackageManifest>${document(`<Metadata>${VALID_IDENTITY}</Metadata>`)}`],
+    [
+      'DOCTYPE with an internal subset',
+      `<!DOCTYPE PackageManifest [<!ENTITY x "y">]>${document(`<Metadata>${VALID_IDENTITY}</Metadata>`)}`,
+    ],
+    [
+      'lowercase doctype',
+      `<!doctype PackageManifest>${document(`<Metadata>${VALID_IDENTITY}</Metadata>`)}`,
+    ],
+    ['external entity declaration', `<!ENTITY xxe SYSTEM "file:///etc/passwd">${document('')}`],
+    [
+      'DOCTYPE hidden in a comment',
+      document(`<Metadata><!-- <!DOCTYPE x> -->${VALID_IDENTITY}</Metadata>`),
+    ],
+  ])('rejects a %s before parsing', (_label, xml) => {
+    expect(() => parseVsixManifestIdentity(toBytes(xml), LABEL))
+      .toThrow('DOCTYPE and ENTITY declarations are not allowed');
   });
 
-  it('accepts one complete UTF-8 XML declaration after a BOM', () => {
-    const bytes = toBytes(`\ufeff<?xml version='1.0' encoding="UTF-8" standalone='yes'?>${document(
-      '<Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>',
-    )}`);
+  it('rejects an entity-expansion document without expanding it', () => {
+    const laughs = `<?xml version="1.0"?>
+      <!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>
+      ${document('<Metadata><Identity Id="&lol2;" Version="9.9.9" Publisher="p" /></Metadata>')}`;
 
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest').id).toBe('nestro');
+    expect(() => parseVsixManifestIdentity(toBytes(laughs), LABEL)).toThrow('not allowed');
   });
 
-  it('accepts the reserved xml binding and an empty default namespace on a nested branch', () => {
-    const bytes = toBytes(`<PackageManifest xmlns="${VSX_SCHEMA_URI}"
-      xmlns:xml="http://www.w3.org/XML/1998/namespace">
-      <Other xmlns=""><Child xml:space="preserve" /></Other>
-      <Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>
-    </PackageManifest>`);
-
-    expect(parseVsixManifestIdentity(bytes, 'extension.vsixmanifest').id).toBe('nestro');
-  });
-
-  it('normalizes literal XML line endings before attribute parsing but leaves character references literal', () => {
-    const literal = manifest('<Identity Id="nestro" Version="9.9.9" Publisher="green\r\ntech\rteam" />');
-    const referenced = manifest(
-      '<Identity Id="nestro" Version="9.9.9" Publisher="green&#13;&#10;tech" />',
-    );
-
-    expect(parseVsixManifestIdentity(literal, 'extension.vsixmanifest').publisher).toBe('green tech team');
-    expect(parseVsixManifestIdentity(referenced, 'extension.vsixmanifest').publisher).toBe('green\r\ntech');
-  });
-
-  it.each(['__proto__', 'constructor', 'toString'])(
-    'rejects inherited Object.prototype entity name %s',
+  it.each(['amp', 'lt', 'quot', '#x74', '#116', 'lol'])(
+    'rejects the entity reference &%s; in an identity attribute instead of decoding it',
     (entity) => {
-      const bytes = manifest(
-        `<Identity Id="nest&${entity};ro" Version="9.9.9" Publisher="greentech-solutions" />`,
-      );
+      const bytes = manifest(`<Identity Id="nest&${entity};ro" Version="9.9.9" Publisher="p" />`);
 
-      expect(() => parseVsixManifestIdentity(bytes, 'extension.vsixmanifest'))
-        .toThrow(`unsupported entity "&${entity};"`);
+      expect(() => parseVsixManifestIdentity(bytes, LABEL))
+        .toThrow(new RegExp(`${LABEL}.*entity references`, 'u'));
     },
   );
 
   it.each([
-    ['missing Identity', document(''), 'exactly one Identity'],
+    ['Id', '<Identity Id="' + 'a'.repeat(513) + '" Version="9.9.9" Publisher="p" />'],
+    ['Version', '<Identity Id="nestro" Version="' + '1'.repeat(513) + '" Publisher="p" />'],
+    ['Publisher', '<Identity Id="nestro" Version="9.9.9" Publisher="' + 'p'.repeat(513) + '" />'],
+  ])('rejects an oversized %s attribute', (name, identity) => {
+    expect(() => parseVsixManifestIdentity(manifest(identity), LABEL))
+      .toThrow(`Identity ${name} exceeds 512 characters`);
+  });
+
+  it('accepts an identity attribute at the length limit', () => {
+    const bytes = manifest(`<Identity Id="${'a'.repeat(512)}" Version="9.9.9" Publisher="p" />`);
+
+    expect(parseVsixManifestIdentity(bytes, LABEL).id).toHaveLength(512);
+  });
+
+  it('rejects a document over the size limit', () => {
+    const padding = `<!-- ${'x'.repeat(1024 * 1024)} -->`;
+    const bytes = toBytes(document(`<Metadata>${padding}${VALID_IDENTITY}</Metadata>`));
+
+    expect(() => parseVsixManifestIdentity(bytes, LABEL)).toThrow('document exceeds');
+  });
+
+  it.each([
+    ['missing Identity', document('<Metadata />'), 'exactly one Identity'],
+    ['missing Metadata', document(''), 'direct PackageManifest/Metadata child'],
     [
       'duplicate Identity',
       document('<Metadata><Identity Id="a" Version="1.0.0" Publisher="p" /><Identity Id="b" Version="1.0.0" Publisher="p" /></Metadata>'),
       'exactly one Identity',
+    ],
+    [
+      'duplicate Metadata',
+      document(`<Metadata>${VALID_IDENTITY}</Metadata><Metadata>${VALID_IDENTITY}</Metadata>`),
+      'direct PackageManifest/Metadata child',
     ],
     [
       'missing required attribute',
@@ -120,283 +175,78 @@ describe('parseVsixManifestIdentity()', () => {
       'Id, Version, and Publisher',
     ],
     [
-      'duplicate attribute',
-      document('<Metadata><Identity Id="nestro" Id="other" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'duplicate attribute',
+      'empty required attribute',
+      document('<Metadata><Identity Id="" Version="9.9.9" Publisher="p" /></Metadata>'),
+      'Id, Version, and Publisher',
     ],
     [
-      'unknown entity',
-      document('<Metadata><Identity Id="nest&unknown;ro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'unsupported entity',
+      'duplicate attribute',
+      document('<Metadata><Identity Id="nestro" Id="other" Version="9.9.9" Publisher="p" /></Metadata>'),
+      'repeated',
     ],
     [
       'unquoted attribute',
       document('<Metadata><Identity Id=nestro Version="9.9.9" Publisher="p" /></Metadata>'),
-      'quoted',
+      'not valid XML',
     ],
     [
       'mismatched closing element',
       document('<Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p"></Metadata>'),
-      'does not match',
-    ],
-    [
-      'DOCTYPE declaration',
-      `<!DOCTYPE PackageManifest>${document('<Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>')}`,
-      'DOCTYPE',
+      'not valid XML',
     ],
     [
       'Identity at the wrong schema path',
-      document('<Identity Id="nestro" Version="9.9.9" Publisher="p" />'),
+      document(VALID_IDENTITY),
       'direct PackageManifest/Metadata child',
     ],
     [
-      'a wrong root namespace',
-      '<PackageManifest xmlns="urn:other"><Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata></PackageManifest>',
-      'VSX schema namespace',
-    ],
-  ])('rejects %s with a label-aware diagnostic', (_label, xml, message) => {
-    expect(() => parseVsixManifestIdentity(toBytes(xml), 'outer extension.vsixmanifest'))
-      .toThrow(new RegExp(`outer extension\\.vsixmanifest.*${message}`, 'i'));
-  });
-
-  it.each([
-    ['an empty document', '', 'complete root'],
-    ['an unsupported declaration', `<!ENTITY x "y">${document('')}`, 'unsupported declaration'],
-    ['an unclosed root', `<PackageManifest xmlns="${VSX_SCHEMA_URI}">`, 'not closed'],
-    ['an invalid element name', '<1PackageManifest />', 'expected an XML name'],
-    ['a multiply-prefixed name', '<v:a:b />', 'invalid qualified name'],
-    [
-      'an unescaped less-than sign in an attribute',
-      document('<Metadata><Identity Id="nes<tro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'unescaped',
-    ],
-    [
-      'an unterminated attribute quote',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}"><Metadata><Identity Id="nestro`,
-      'closing quote',
-    ],
-    [
-      'an unterminated entity',
-      document('<Metadata><Identity Id="nest&ro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'unterminated entity',
-    ],
-    [
-      'an invalid hexadecimal entity',
-      document('<Metadata><Identity Id="nest&#xZZ;ro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'invalid numeric entity',
-    ],
-    [
-      'an invalid decimal entity',
-      document('<Metadata><Identity Id="nest&#abc;ro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'invalid numeric entity',
-    ],
-    [
-      'a forbidden numeric XML code point',
-      document('<Metadata><Identity Id="nest&#0;ro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'not a valid XML character',
-    ],
-    [
-      'an unterminated start element',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}"`,
-      'no closing',
-    ],
-    [
-      'an attribute without equals',
-      `<PackageManifest xmlns"${VSX_SCHEMA_URI}" />`,
-      'missing "="',
-    ],
-    [
-      'a rebound reserved xml prefix',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:xml="urn:wrong" />`,
-      'xml prefix',
-    ],
-    [
-      'an undeclared element prefix',
-      '<v:PackageManifest />',
-      'not declared',
-    ],
-    [
-      'duplicate expanded attributes',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:a="urn:x" xmlns:b="urn:x"><Metadata>
-        <Identity Id="nestro" Version="9.9.9" Publisher="p" a:note="1" b:note="2" />
-      </Metadata></PackageManifest>`,
-      'duplicate expanded attribute',
-    ],
-    [
-      'a namespace rebound around Identity',
-      document('<Metadata xmlns="urn:other"><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>'),
-      'VSX schema namespace',
-    ],
-    [
       'a nested PackageManifest identity decoy',
-      document(`<Wrapper><PackageManifest><Metadata>
-        <Identity Id="nestro" Version="9.9.9" Publisher="p" />
-      </Metadata></PackageManifest></Wrapper>`),
+      document(`<Wrapper><PackageManifest><Metadata>${VALID_IDENTITY}</Metadata></PackageManifest></Wrapper>`),
       'document root',
     ],
     [
-      'missing whitespace between the element name and its first attribute',
-      `<PackageManifestxmlns="${VSX_SCHEMA_URI}" />`,
-      'separated by XML whitespace',
+      'a wrong root namespace',
+      `<PackageManifest xmlns="urn:other"><Metadata>${VALID_IDENTITY}</Metadata></PackageManifest>`,
+      'VSX schema namespace',
     ],
     [
-      'missing whitespace between attributes',
-      document('<Metadata><Identity Id="nestro"Version="9.9.9" Publisher="p" /></Metadata>'),
-      'separated by XML whitespace',
-    ],
-    ['a targetless processing instruction', `<??>${document('')}`, 'processing instruction target'],
-    ['an invalid processing instruction target', `<?1bad?>${document('')}`, 'processing instruction target'],
-    ['a prefixed processing instruction target', `<?p:target?>${document('')}`, 'processing instruction target'],
-    ['processing-instruction data without whitespace', `<?build=data?>${document('')}`, 'separated from its data'],
-    [
-      'an XML declaration nested inside the document',
-      document('<?xml version="1.0"?><Metadata />'),
-      'XML declaration must appear once at document start',
+      'a missing root namespace',
+      `<PackageManifest><Metadata>${VALID_IDENTITY}</Metadata></PackageManifest>`,
+      'VSX schema namespace',
     ],
     [
-      'a case-variant reserved XML target',
-      `<?XML version="1.0"?>${document('')}`,
-      'reserved processing instruction target',
+      'a prefixed root element',
+      `<v:PackageManifest xmlns:v="${VSX_SCHEMA_URI}"><v:Metadata><v:Identity Id="nestro" Version="9.9.9" Publisher="p" /></v:Metadata></v:PackageManifest>`,
+      'VSX schema namespace',
     ],
     [
-      'an XML declaration without a version',
-      `<?xml encoding="UTF-8"?>${document('')}`,
-      'version="1.0"',
+      'a wrong root element',
+      `<Other xmlns="${VSX_SCHEMA_URI}"><Metadata>${VALID_IDENTITY}</Metadata></Other>`,
+      'root must be PackageManifest',
     ],
-    [
-      'an XML declaration after leading whitespace',
-      ` \n<?xml version="1.0"?>${document('')}`,
-      'XML declaration must appear once at document start',
-    ],
-    [
-      'an XML declaration after a comment',
-      `<!-- prolog --><?xml version="1.0"?>${document('')}`,
-      'XML declaration must appear once at document start',
-    ],
-    [
-      'a duplicate XML declaration',
-      `<?xml version="1.0"?><?xml version="1.0"?>${document('')}`,
-      'XML declaration must appear once at document start',
-    ],
-    [
-      'out-of-order XML declaration pseudo-attributes',
-      `<?xml encoding="UTF-8" version="1.0"?>${document('')}`,
-      'version="1.0"',
-    ],
-    [
-      'a duplicate XML declaration version',
-      `<?xml version="1.0" version="1.0"?>${document('')}`,
-      'unexpected or out-of-order',
-    ],
-    [
-      'a non-UTF-8 declared encoding',
-      `<?xml version="1.0" encoding="UTF-16"?>${document('')}`,
-      'encoding must be UTF-8',
-    ],
-    [
-      'an unsupported XML version',
-      `<?xml version="1.1"?>${document('')}`,
-      'version="1.0"',
-    ],
-    [
-      'an invalid standalone value',
-      `<?xml version="1.0" standalone="maybe"?>${document('')}`,
-      'standalone value',
-    ],
-    [
-      'an invalid XML declaration pseudo-attribute name',
-      `<?xml 1version="1.0"?>${document('')}`,
-      'invalid pseudo-attribute',
-    ],
-    [
-      'an XML declaration pseudo-attribute without equals',
-      `<?xml version "1.0"?>${document('')}`,
-      'missing "="',
-    ],
-    [
-      'an unquoted XML declaration pseudo-attribute',
-      `<?xml version=1.0?>${document('')}`,
-      'must be quoted',
-    ],
-    [
-      'markup inside an XML declaration pseudo-attribute',
-      `<?xml version="1<&0"?>${document('')}`,
-      'invalid markup',
-    ],
-    [
-      'an unterminated XML declaration pseudo-attribute',
-      `<?xml version="1.0?>${document('')}`,
-      'no closing quote',
-    ],
-    [
-      'a prefixed namespace undeclaration',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:p=""><Metadata>
-        <Identity Id="nestro" Version="9.9.9" Publisher="p" />
-      </Metadata></PackageManifest>`,
-      'prefixed namespace cannot be undeclared',
-    ],
-    [
-      'a non-xml prefix bound to the reserved XML namespace',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:p="http://www.w3.org/XML/1998/namespace"><Metadata>
-        <Identity Id="nestro" Version="9.9.9" Publisher="p" />
-      </Metadata></PackageManifest>`,
-      'only the xml prefix',
-    ],
-    [
-      'a prefix bound to the reserved XMLNS namespace',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}" xmlns:p="http://www.w3.org/2000/xmlns/"><Metadata>
-        <Identity Id="nestro" Version="9.9.9" Publisher="p" />
-      </Metadata></PackageManifest>`,
-      'XMLNS namespace cannot be bound',
-    ],
-    [
-      'a default namespace bound to the reserved XML namespace',
-      '<PackageManifest xmlns="http://www.w3.org/XML/1998/namespace" />',
-      'only the xml prefix',
-    ],
-    [
-      'a default namespace bound to the reserved XMLNS namespace',
-      '<PackageManifest xmlns="http://www.w3.org/2000/xmlns/" />',
-      'XMLNS namespace cannot be bound',
-    ],
-    [
-      'the reserved xmlns prefix used on an element',
-      `<xmlns:PackageManifest xmlns="${VSX_SCHEMA_URI}" />`,
-      'xmlns prefix',
-    ],
-    [
-      'a qualified name whose local part starts with a digit',
-      `<v:PackageManifest xmlns:v="${VSX_SCHEMA_URI}"><v:1Metadata /></v:PackageManifest>`,
-      'invalid qualified name',
-    ],
-    [
-      'a second root',
-      `${document('<Metadata><Identity Id="nestro" Version="9.9.9" Publisher="p" /></Metadata>')}${document('')}`,
-      'more than one root',
-    ],
-    [
-      'a closing element without its terminator',
-      `<PackageManifest xmlns="${VSX_SCHEMA_URI}"><Metadata></Metadata </PackageManifest>`,
-      'has no',
-    ],
-    ['a CDATA terminator in text', document('<Metadata>bad ]]></Metadata>'), 'CDATA terminator'],
-    ['non-whitespace text outside the root', `junk${document('')}`, 'outside the root'],
-    ['non-XML NBSP whitespace outside the root', `\u00a0${document('')}`, 'outside the root'],
-    ['a character reference outside the root', `&#x20;${document('')}`, 'outside the root'],
-    ['an unterminated comment', document('<Metadata><!-- missing</Metadata>'), 'comment is not terminated'],
-    ['a double hyphen inside a comment', document('<Metadata><!-- bad -- value --></Metadata>'), 'invalid "--"'],
-    ['CDATA outside the root', `<![CDATA[value]]>${document('')}`, 'CDATA is outside'],
-    ['unterminated CDATA', document('<Metadata><![CDATA[value</Metadata>'), 'CDATA is not terminated'],
-    ['an unterminated processing instruction', `<?xml version="1.0"${document('')}`, 'processing instruction'],
-    ['a control character in a comment', document('<Metadata><!-- bad\u0000 --></Metadata>'), 'invalid XML character'],
-    ['a control character in CDATA', document('<Metadata><![CDATA[bad\u0000]]></Metadata>'), 'invalid XML character'],
-    ['a control character in a processing instruction', `<?bad \u0000?>${document('')}`, 'invalid XML character'],
-  ])('rejects malformed XML: %s', (_label, xml, message) => {
-    expect(() => parseVsixManifestIdentity(toBytes(xml), 'extension.vsixmanifest')).toThrow(message);
+  ])('rejects %s with a label-aware diagnostic', (_label, xml, message) => {
+    expect(() => parseVsixManifestIdentity(toBytes(xml), 'outer extension.vsixmanifest'))
+      .toThrow(new RegExp(`outer extension\\.vsixmanifest.*${message}`, 'iu'));
+  });
+
+  it.each([
+    ['an empty document', ''],
+    ['text only', 'not xml'],
+    ['an unclosed root', `<PackageManifest xmlns="${VSX_SCHEMA_URI}">`],
+    ['an unterminated start element', `<PackageManifest xmlns="${VSX_SCHEMA_URI}"`],
+    ['an invalid element name', '<1PackageManifest />'],
+    ['an unterminated attribute quote', `<PackageManifest xmlns="${VSX_SCHEMA_URI}"><Metadata><Identity Id="nestro`],
+    ['a second root', `${document(`<Metadata>${VALID_IDENTITY}</Metadata>`)}${document('')}`],
+    ['junk before the root', `junk${document(`<Metadata>${VALID_IDENTITY}</Metadata>`)}`],
+    ['an unterminated comment', document('<Metadata><!-- missing</Metadata>')],
+    ['a reserved prototype element name', document('<Metadata><__proto__ /></Metadata>')],
+    ['excessive element nesting', document(`<Metadata>${'<a>'.repeat(200)}${'</a>'.repeat(200)}</Metadata>`)],
+  ])('rejects malformed XML: %s', (_label, xml) => {
+    expect(() => parseVsixManifestIdentity(toBytes(xml), LABEL)).toThrow(`${LABEL} is not valid XML`);
   });
 
   it('rejects bytes that are not valid UTF-8', () => {
-    expect(() => parseVsixManifestIdentity(new Uint8Array([0xff]), 'extension.vsixmanifest'))
+    expect(() => parseVsixManifestIdentity(new Uint8Array([0xff]), LABEL))
       .toThrow('extension.vsixmanifest is not valid UTF-8 XML');
   });
 });

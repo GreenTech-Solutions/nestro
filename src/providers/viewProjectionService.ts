@@ -1,22 +1,13 @@
-import * as vscode from 'vscode';
-import { formatViewDescription, projectPackageTree, truncateSearchQuery } from './treeBuilder';
+import { formatViewDescription, projectPackageTree } from './treeBuilder';
 import type { PackageTreeEntry, PackageTreeProjection } from './treeBuilder';
-import { getFilterLabel } from './FilterManager';
 import type { FilterType } from './FilterManager';
-import { sanitizePackageText } from './PackageItem';
 import type { WorkspaceCapabilities } from './PackagesProvider';
-import {
-  formatFailedPackageFileCount,
-  formatFailedPackageRootCount,
-  formatFilteredPackageCount,
-  formatPackageCount,
-  formatPackageUpdatesAvailable,
-  formatVulnerablePackageCount,
-} from '../utils';
+import { projectStatusRows } from './statusRowProjection';
+import { formatPackageUpdatesAvailable } from '../utils';
 import type { StatusReportFailure } from '../utils';
+import { CONTEXT_KEYS } from '../shared';
 
-const SHOW_FILTER_PICKER_COMMAND = 'nestro.showFilterPicker';
-const SEARCH_PACKAGES_COMMAND = 'nestro.searchPackages';
+export { projectStatusRows } from './statusRowProjection';
 
 export type CheckState = 'idle' | 'running' | 'done' | 'incomplete';
 export type AuditState = 'idle' | 'running' | 'done' | 'incomplete' | 'failed';
@@ -56,20 +47,7 @@ export interface StatusRowProjection {
   readonly command?: StatusRowCommand;
 }
 
-export const VIEW_CONTEXT_KEYS = {
-  canUpdateVisiblePackages: 'nestro.canUpdateVisiblePackages',
-  hasPackageFiles: 'nestro.hasPackageFiles',
-  hasReadablePackageFiles: 'nestro.hasReadablePackageFiles',
-  hasDependencyEntries: 'nestro.hasDependencyEntries',
-  hasAuditableProjects: 'nestro.hasAuditableProjects',
-  canRunInstall: 'nestro.canRunInstall',
-  canRunAudit: 'nestro.canRunAudit',
-  canSearchPackages: 'nestro.canSearchPackages',
-  canFilterPackages: 'nestro.canFilterPackages',
-  canPinAllVersions: 'nestro.canPinAllVersions',
-  noWorkspace: 'nestro.noWorkspace',
-  hasSearchQuery: 'nestro.hasSearchQuery',
-} as const;
+export const VIEW_CONTEXT_KEYS = CONTEXT_KEYS;
 
 export type ViewContextKey = keyof typeof VIEW_CONTEXT_KEYS;
 export type ViewContextMap = Readonly<Record<ViewContextKey, boolean>>;
@@ -170,149 +148,4 @@ export function diffViewContexts(
 export function createAllFalseViewContexts(): ViewContextMap {
   const entries = (Object.keys(VIEW_CONTEXT_KEYS) as ViewContextKey[]).map(key => [key, false] as const);
   return Object.fromEntries(entries) as ViewContextMap;
-}
-
-/**
- * Status rows for the current state, cheap enough to recompute on every tree read. `packageTree`
- * lets a caller with the filtered projection already in hand skip a second, identical
- * `projectPackageTree()` call — reuse, not a cache; without it, one is computed here instead.
- */
-export function projectStatusRows(
-  snapshot: ViewProjectionSnapshot,
-  packageTree?: PackageTreeProjection,
-): StatusRowProjection[] {
-  const rows: StatusRowProjection[] = [];
-
-  const failedPackageReadCount = uniqueStrings(
-    snapshot.packageReadFailures.flatMap(failure => failure.packageFilePaths),
-  ).length;
-  const packageLoadOperationFailed = snapshot.packageReadFailures.some(
-    failure => failure.packageFilePaths.length === 0,
-  );
-  if (failedPackageReadCount > 0) {
-    rows.push({
-      label: vscode.l10n.t('Package read incomplete'),
-      description: formatFailedPackageFileCount(failedPackageReadCount),
-      icon: 'warning',
-      color: 'charts.yellow',
-      actionable: true,
-    });
-  }
-  if (packageLoadOperationFailed) {
-    rows.push({
-      label: vscode.l10n.t('Workspace package loading failed'),
-      description: '',
-      icon: 'warning',
-      color: 'charts.yellow',
-      actionable: true,
-    });
-  }
-  // A readable package.json with zero dependencies is a real project, not an empty
-  // workspace — without this row the panel would show nothing at all in that state.
-  else if (
-    failedPackageReadCount === 0
-    && snapshot.workspaceCapabilities.hasPackageFiles
-    && !snapshot.workspaceCapabilities.hasDependencyEntries
-    && !snapshot.packageReadFailed
-  ) {
-    rows.push({
-      label: vscode.l10n.t('No dependencies to manage'),
-      description: vscode.l10n.t('This package.json has no dependencies yet.'),
-      icon: 'info',
-      actionable: false,
-    });
-  }
-
-  if (snapshot.checkState === 'running') {
-    rows.push({ label: vscode.l10n.t('Checking updates…'), description: '', icon: 'loading~spin', actionable: false });
-  }
-  else if (snapshot.checkState === 'done' && snapshot.lastCheckTime !== undefined) {
-    rows.push({
-      label: vscode.l10n.t('Last update check'),
-      description: snapshot.lastCheckTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      icon: 'clock',
-      actionable: false,
-    });
-  }
-  else if (snapshot.checkState === 'incomplete') {
-    rows.push({
-      label: vscode.l10n.t('Update check incomplete'),
-      description: formatFailedPackageRootCount(uniqueStrings(snapshot.failedUpdatePaths).length),
-      icon: 'warning',
-      color: 'charts.yellow',
-      actionable: true,
-    });
-  }
-
-  if (snapshot.auditState === 'running') {
-    rows.push({ label: vscode.l10n.t('Running audit…'), description: '', icon: 'loading~spin', actionable: false });
-  }
-  else if (snapshot.auditState === 'done') {
-    const count = snapshot.lastAuditCount ?? 0;
-    rows.push({
-      label: vscode.l10n.t('Audit complete'),
-      description: count === 0 ? vscode.l10n.t('No vulnerabilities') : formatVulnerablePackageCount(count),
-      icon: count === 0 ? 'shield-check' : 'warning',
-      color: count === 0 ? 'charts.green' : 'charts.red',
-      actionable: false,
-    });
-  }
-  else if (snapshot.auditState === 'incomplete') {
-    const count = snapshot.lastAuditCount ?? 0;
-    const resultDescription = snapshot.lastAuditSuccessfulRootCount === 0
-      ? vscode.l10n.t('No successful audit results')
-      : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
-    rows.push({
-      label: vscode.l10n.t('Audit incomplete'),
-      description: vscode.l10n.t(
-        '{0}; {1}',
-        resultDescription,
-        formatFailedPackageRootCount(uniqueStrings(snapshot.failedAuditPaths).length),
-      ),
-      icon: 'warning',
-      color: 'charts.yellow',
-      actionable: true,
-    });
-  }
-  else if (snapshot.auditState === 'failed') {
-    rows.push({
-      label: vscode.l10n.t('Audit failed'),
-      description: vscode.l10n.t('No audit results available'),
-      icon: 'warning',
-      color: 'charts.yellow',
-      actionable: true,
-    });
-  }
-
-  // Placed last, directly above the (possibly filtered) tree these rows describe.
-  if (snapshot.filterType !== 'all' || snapshot.search !== '') {
-    const filteredProjection = packageTree ?? projectPackageTree(snapshot.entries, snapshot.filterType, snapshot.search);
-    if (snapshot.filterType !== 'all') {
-      rows.push({
-        label: vscode.l10n.t('Filter: {0}', getFilterLabel(snapshot.filterType)),
-        description: formatFilteredPackageCount(
-          filteredProjection.filterCounts[snapshot.filterType],
-          filteredProjection.filterCounts.all,
-        ),
-        icon: 'filter',
-        actionable: false,
-        command: { command: SHOW_FILTER_PICKER_COMMAND, title: vscode.l10n.t('Change filter') },
-      });
-    }
-    if (snapshot.search !== '') {
-      rows.push({
-        label: vscode.l10n.t('Search: "{0}"', truncateSearchQuery(sanitizePackageText(snapshot.search))),
-        description: formatPackageCount(filteredProjection.filterCounts.all),
-        icon: 'search',
-        actionable: false,
-        command: { command: SEARCH_PACKAGES_COMMAND, title: vscode.l10n.t('Edit search') },
-      });
-    }
-  }
-
-  return rows;
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
 }

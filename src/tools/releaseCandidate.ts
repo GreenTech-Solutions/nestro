@@ -1,9 +1,10 @@
+import { bundleFileName, RELEASE_CONTRACT, VSIX_FILE_PATTERN } from './releaseContract';
+import { compareCodeUnits, isPlainNumericSemver } from '../shared';
+
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const RUN_ID_PATTERN = /^[1-9]\d*$/u;
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/u;
 const SAFE_FILE_PATTERN = /^[A-Za-z0-9._-]+$/u;
-const VSIX_FILE_PATTERN = /^[A-Za-z0-9._-]+\.vsix$/u;
 
 export interface ReleaseCandidateEvidence {
   readonly sourceSha: string;
@@ -33,11 +34,11 @@ export interface ReleaseCandidateContext {
   readonly expectedSourceSha?: string;
   readonly expectedCiRunId?: string;
   readonly candidateRunId?: string;
-  readonly artifact?: ReleaseCandidateArtifact;
+  readonly artifact: ReleaseCandidateArtifact;
 }
 
 export interface ReleaseCandidateManifest extends ReleaseCandidateArtifact {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: number;
   readonly version: string;
   readonly sourceSha: string;
   readonly ciRunId: string;
@@ -49,20 +50,6 @@ export interface ReleaseCandidateManifest extends ReleaseCandidateArtifact {
 export type ReleaseCandidateOutcome = { readonly isCandidate: true; readonly manifest: ReleaseCandidateManifest }
   | { readonly isCandidate: false; readonly reason: string };
 
-function defaultArtifact(evidence: ReleaseCandidateEvidence): ReleaseCandidateArtifact {
-  return {
-    vsixFile: evidence.vsixFile,
-    digestFile: `${evidence.vsixFile}.sha256`,
-    digest: evidence.vsixSha256,
-    manifestFile: `${evidence.vsixFile}.manifest.txt`,
-    manifestSha256: evidence.vsixSha256,
-    sbomFile: 'sbom.json',
-    sbomSha256: evidence.vsixSha256,
-    provenanceFile: 'provenance.json',
-    provenanceSha256: evidence.vsixSha256,
-  };
-}
-
 function isSafeFile(file: string): boolean {
   return SAFE_FILE_PATTERN.test(file) && !file.endsWith('.');
 }
@@ -70,10 +57,10 @@ function isSafeFile(file: string): boolean {
 function isValidArtifact(artifact: ReleaseCandidateArtifact, evidence: ReleaseCandidateEvidence): boolean {
   return artifact.vsixFile === evidence.vsixFile
     && artifact.digest === evidence.vsixSha256
-    && artifact.digestFile === `${artifact.vsixFile}.sha256`
-    && artifact.manifestFile === `${artifact.vsixFile}.manifest.txt`
-    && artifact.sbomFile === 'sbom.json'
-    && artifact.provenanceFile === 'provenance.json'
+    && artifact.digestFile === bundleFileName('digest', artifact.vsixFile)
+    && artifact.manifestFile === bundleFileName('manifest', artifact.vsixFile)
+    && artifact.sbomFile === bundleFileName('sbom', artifact.vsixFile)
+    && artifact.provenanceFile === bundleFileName('provenance', artifact.vsixFile)
     && VSIX_FILE_PATTERN.test(artifact.vsixFile)
     && isSafeFile(artifact.digestFile)
     && isSafeFile(artifact.manifestFile)
@@ -85,61 +72,75 @@ function isValidArtifact(artifact: ReleaseCandidateArtifact, evidence: ReleaseCa
     && DIGEST_PATTERN.test(artifact.provenanceSha256);
 }
 
+function findCandidateInputViolation(
+  evidence: ReleaseCandidateEvidence,
+  packageVersion: string,
+  existingTags: readonly string[],
+  context: ReleaseCandidateContext,
+): string | undefined {
+  if (!isPlainNumericSemver(packageVersion)) {
+    return `package version "${packageVersion}" is not a plain major.minor.patch semver`;
+  }
+  const tag = `v${packageVersion}`;
+  if (existingTags.includes(tag)) {
+    return `${tag} is already released`;
+  }
+  if (evidence.eventName !== 'push') {
+    return 'candidate evidence must come from a push run';
+  }
+  if (evidence.pullRequestHeadSha !== null) {
+    return 'candidate evidence must not carry a pull request head';
+  }
+  if (evidence.releaseEligible !== false) {
+    return 'candidate evidence must be marked releaseEligible=false';
+  }
+  if (!COMMIT_SHA_PATTERN.test(evidence.sourceSha)) {
+    return 'candidate source SHA must be a full lowercase 40-character commit SHA';
+  }
+  if (!RUN_ID_PATTERN.test(evidence.runId) || !RUN_ID_PATTERN.test(evidence.runAttempt)) {
+    return 'candidate CI run ID and attempt must be positive integers';
+  }
+  if (!VSIX_FILE_PATTERN.test(evidence.vsixFile)) {
+    return 'candidate VSIX filename must be a safe .vsix filename';
+  }
+  if (!DIGEST_PATTERN.test(evidence.vsixSha256)) {
+    return 'candidate VSIX digest must be a lowercase SHA-256 digest';
+  }
+  if (context.expectedSourceSha !== undefined && evidence.sourceSha !== context.expectedSourceSha) {
+    return 'candidate source SHA does not match the verified workflow run';
+  }
+  if (context.expectedCiRunId !== undefined && evidence.runId !== context.expectedCiRunId) {
+    return 'candidate CI run ID does not match the verified workflow run';
+  }
+  return undefined;
+}
+
 export function buildReleaseCandidate(
   evidence: ReleaseCandidateEvidence,
   packageVersion: string,
   existingTags: readonly string[],
   notes: string,
-  context: ReleaseCandidateContext = {},
+  context: ReleaseCandidateContext,
 ): ReleaseCandidateOutcome {
-  if (!VERSION_PATTERN.test(packageVersion)) {
-    return { isCandidate: false, reason: `package version "${packageVersion}" is not a plain major.minor.patch semver` };
+  const inputViolation = findCandidateInputViolation(evidence, packageVersion, existingTags, context);
+  if (inputViolation !== undefined) {
+    return { isCandidate: false, reason: inputViolation };
   }
-  const tag = `v${packageVersion}`;
-  if (existingTags.includes(tag)) {
-    return { isCandidate: false, reason: `${tag} is already released` };
-  }
-  if (evidence.eventName !== 'push') {
-    return { isCandidate: false, reason: 'candidate evidence must come from a push run' };
-  }
-  if (evidence.pullRequestHeadSha !== null) {
-    return { isCandidate: false, reason: 'candidate evidence must not carry a pull request head' };
-  }
-  if (evidence.releaseEligible !== false) {
-    return { isCandidate: false, reason: 'candidate evidence must be marked releaseEligible=false' };
-  }
-  if (!COMMIT_SHA_PATTERN.test(evidence.sourceSha)) {
-    return { isCandidate: false, reason: 'candidate source SHA must be a full lowercase 40-character commit SHA' };
-  }
-  if (!RUN_ID_PATTERN.test(evidence.runId) || !RUN_ID_PATTERN.test(evidence.runAttempt)) {
-    return { isCandidate: false, reason: 'candidate CI run ID and attempt must be positive integers' };
-  }
-  if (!VSIX_FILE_PATTERN.test(evidence.vsixFile)) {
-    return { isCandidate: false, reason: 'candidate VSIX filename must be a safe .vsix filename' };
-  }
-  if (!DIGEST_PATTERN.test(evidence.vsixSha256)) {
-    return { isCandidate: false, reason: 'candidate VSIX digest must be a lowercase SHA-256 digest' };
-  }
-  if (context.expectedSourceSha !== undefined && evidence.sourceSha !== context.expectedSourceSha) {
-    return { isCandidate: false, reason: 'candidate source SHA does not match the verified workflow run' };
-  }
-  if (context.expectedCiRunId !== undefined && evidence.runId !== context.expectedCiRunId) {
-    return { isCandidate: false, reason: 'candidate CI run ID does not match the verified workflow run' };
-  }
-  if (context.candidateRunId === undefined || !RUN_ID_PATTERN.test(context.candidateRunId)) {
+  const { candidateRunId } = context;
+  if (candidateRunId === undefined || !RUN_ID_PATTERN.test(candidateRunId)) {
     return { isCandidate: false, reason: 'candidateRunId must be a positive integer' };
   }
-  const artifact = context.artifact ?? defaultArtifact(evidence);
+  const { artifact } = context;
   if (!isValidArtifact(artifact, evidence)) {
     return { isCandidate: false, reason: 'candidate artifact provenance members do not match the verified evidence' };
   }
   const manifest: ReleaseCandidateManifest = {
-    schemaVersion: 2,
+    schemaVersion: RELEASE_CONTRACT.schemaVersions.candidate,
     version: packageVersion,
     sourceSha: evidence.sourceSha,
     ciRunId: evidence.runId,
     ciRunAttempt: evidence.runAttempt,
-    candidateRunId: context.candidateRunId,
+    candidateRunId,
     ...artifact,
     notes,
   };
@@ -151,33 +152,16 @@ export function buildReleaseCandidate(
 }
 
 export function findManifestViolation(manifest: ReleaseCandidateManifest): string | undefined {
-  const expectedKeys = [
-    'candidateRunId',
-    'ciRunAttempt',
-    'ciRunId',
-    'digest',
-    'digestFile',
-    'manifestFile',
-    'manifestSha256',
-    'notes',
-    'provenanceFile',
-    'provenanceSha256',
-    'schemaVersion',
-    'sbomFile',
-    'sbomSha256',
-    'sourceSha',
-    'version',
-    'vsixFile',
-  ];
-  const actualKeys = Object.keys(manifest).sort((left, right) => left.localeCompare(right));
-  const requiredKeys = expectedKeys.slice().sort((left, right) => left.localeCompare(right));
+  const expectedKeys = RELEASE_CONTRACT.candidateKeys;
+  const actualKeys = Object.keys(manifest).sort(compareCodeUnits);
+  const requiredKeys = [...expectedKeys].sort(compareCodeUnits);
   if (JSON.stringify(actualKeys) !== JSON.stringify(requiredKeys)) {
     return 'manifest contains unexpected or missing fields';
   }
-  if (manifest.schemaVersion !== 2) {
-    return 'schemaVersion must be exactly 2';
+  if (manifest.schemaVersion !== RELEASE_CONTRACT.schemaVersions.candidate) {
+    return `schemaVersion must be exactly ${RELEASE_CONTRACT.schemaVersions.candidate}`;
   }
-  if (typeof manifest.version !== 'string' || !VERSION_PATTERN.test(manifest.version)) {
+  if (typeof manifest.version !== 'string' || !isPlainNumericSemver(manifest.version)) {
     return 'version must be a plain major.minor.patch semver';
   }
   if (typeof manifest.sourceSha !== 'string' || !COMMIT_SHA_PATTERN.test(manifest.sourceSha)) {
@@ -194,18 +178,18 @@ export function findManifestViolation(manifest: ReleaseCandidateManifest): strin
     return 'vsixFile must be a safe .vsix filename';
   }
   if (typeof manifest.digestFile !== 'string'
-    || !isSafeFile(manifest.digestFile) || manifest.digestFile !== `${manifest.vsixFile}.sha256`) {
+    || !isSafeFile(manifest.digestFile) || manifest.digestFile !== bundleFileName('digest', manifest.vsixFile)) {
     return 'digestFile must be the VSIX SHA-256 sidecar';
   }
   if (typeof manifest.manifestFile !== 'string'
-    || !isSafeFile(manifest.manifestFile) || manifest.manifestFile !== `${manifest.vsixFile}.manifest.txt`) {
+    || !isSafeFile(manifest.manifestFile) || manifest.manifestFile !== bundleFileName('manifest', manifest.vsixFile)) {
     return 'manifestFile must be the VSIX normalized manifest sidecar';
   }
-  if (typeof manifest.sbomFile !== 'string' || manifest.sbomFile !== 'sbom.json' || !isSafeFile(manifest.sbomFile)) {
-    return 'sbomFile must be sbom.json';
+  if (typeof manifest.sbomFile !== 'string' || manifest.sbomFile !== RELEASE_CONTRACT.bundle.sbom || !isSafeFile(manifest.sbomFile)) {
+    return `sbomFile must be ${RELEASE_CONTRACT.bundle.sbom}`;
   }
-  if (typeof manifest.provenanceFile !== 'string' || manifest.provenanceFile !== 'provenance.json' || !isSafeFile(manifest.provenanceFile)) {
-    return 'provenanceFile must be provenance.json';
+  if (typeof manifest.provenanceFile !== 'string' || manifest.provenanceFile !== RELEASE_CONTRACT.bundle.provenance || !isSafeFile(manifest.provenanceFile)) {
+    return `provenanceFile must be ${RELEASE_CONTRACT.bundle.provenance}`;
   }
   if (typeof manifest.digest !== 'string' || typeof manifest.manifestSha256 !== 'string'
     || typeof manifest.sbomSha256 !== 'string' || typeof manifest.provenanceSha256 !== 'string'
@@ -219,11 +203,4 @@ export function findManifestViolation(manifest: ReleaseCandidateManifest): strin
     return 'notes must be non-empty';
   }
   return undefined;
-}
-
-export function isWellFormedManifest(value: unknown): value is ReleaseCandidateManifest {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return findManifestViolation(value as ReleaseCandidateManifest) === undefined;
 }

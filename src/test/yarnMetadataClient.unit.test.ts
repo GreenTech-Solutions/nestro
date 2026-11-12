@@ -4,7 +4,7 @@ import {
   fetchPackageMetadataFromYarnModern,
   parseYarnClassicMetadata,
   parseYarnModernMetadata,
-} from '../utils';
+} from '../utils/yarnMetadataClient';
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
 const resolveYarnFamilyMock = vi.hoisted(() => vi.fn());
@@ -47,12 +47,12 @@ describe('Yarn native metadata clients', () => {
       result: {
         distTags: { latest: '2.0.0' },
         publishTimes: { kind: 'provided', byVersion: { '2.0.0': '2024-01-01T00:00:00.000Z' } },
-        versions: ['1.0.0', '2.0.0'],
+        versions: ['2.0.0', '1.0.0'],
       },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',
-      ['info', 'react', '--json'],
+      ['info', '--json', '--', 'react'],
       expect.objectContaining({ cwd: '/workspace/apps/web', signal: undefined }),
     );
   });
@@ -68,11 +68,40 @@ describe('Yarn native metadata clients', () => {
 
     await expect(fetchPackageMetadataFromYarnModern(request)).resolves.toMatchObject({
       kind: 'success',
-      result: { versions: ['1.0.0', '2.0.0'] },
+      result: { versions: ['2.0.0', '1.0.0'] },
     });
     expect(runBoundedProcessMock).toHaveBeenCalledWith(
       'yarn',
-      ['npm', 'info', 'react', '--json'],
+      ['npm', 'info', '--json', '--', 'react'],
+      expect.objectContaining({ cwd: '/workspace/apps/web' }),
+    );
+  });
+
+  it.each([
+    ['Classic', fetchPackageMetadataFromYarnClassic, 'classic'],
+    ['Modern', fetchPackageMetadataFromYarnModern, 'modern'],
+  ] as const)('does not run Yarn %s for an invalid package name', async (_label, fetchMetadata, family) => {
+    resolveYarnFamilyMock.mockResolvedValue({ family, source: 'package-manager' });
+
+    for (const packageName of ['--registry=https://evil.test', '--userconfig=/tmp/evil.yarnrc', '', 'left pad']) {
+      await expect(fetchMetadata({ ...request, packageName })).resolves.toEqual({ kind: 'unrecognized' });
+    }
+    expect(runBoundedProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('puts a scoped package name after the option terminator', async () => {
+    runBoundedProcessMock.mockResolvedValueOnce({
+      kind: 'exit',
+      stdout: JSON.stringify({ type: 'inspect', data: metadata }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(fetchPackageMetadataFromYarnClassic({ ...request, packageName: '@scope/name' }))
+      .resolves.toMatchObject({ kind: 'success' });
+    expect(runBoundedProcessMock).toHaveBeenCalledWith(
+      'yarn',
+      ['info', '--json', '--', '@scope/name'],
       expect.objectContaining({ cwd: '/workspace/apps/web' }),
     );
   });

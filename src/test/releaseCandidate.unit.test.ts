@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildReleaseCandidate,
   findManifestViolation,
-  isWellFormedManifest,
 } from '../tools';
 import type { ReleaseCandidateEvidence, ReleaseCandidateManifest } from '../tools';
 
@@ -47,7 +46,7 @@ function validManifest(overrides: Partial<ReleaseCandidateManifest> = {}): Relea
 }
 
 describe('release candidate contract', () => {
-  it('creates a manifest bound to source, CI and candidate run identities', () => {
+  it('creates a valid manifest bound to source, CI and candidate run identities', () => {
     expect(buildReleaseCandidate(
       evidence,
       '0.5.0',
@@ -58,6 +57,17 @@ describe('release candidate contract', () => {
       isCandidate: true,
       manifest: validManifest(),
     });
+    expect(findManifestViolation(validManifest())).toBeUndefined();
+    expect(findManifestViolation({ ...validManifest(), unexpected: true } as ReleaseCandidateManifest))
+      .toContain('manifest contains unexpected or missing fields');
+    expect(findManifestViolation({ ...validManifest(), digestFile: '../digest.txt' }))
+      .toContain('digestFile must be the VSIX SHA-256 sidecar');
+    expect(findManifestViolation({ ...validManifest(), manifestFile: '../manifest.txt' }))
+      .toContain('manifestFile must be the VSIX normalized manifest sidecar');
+    expect(findManifestViolation({ ...validManifest(), sbomFile: '../sbom.json' }))
+      .toContain('sbomFile must be sbom.json');
+    expect(findManifestViolation({ ...validManifest(), provenanceFile: '../provenance.json' }))
+      .toContain('provenanceFile must be provenance.json');
   });
 
   it.each([
@@ -78,12 +88,16 @@ describe('release candidate contract', () => {
     expect(outcome).toMatchObject({ reason: expect.stringContaining(reason) });
   });
 
-  it('rejects malformed manifests and accepts the complete schema', () => {
-    expect(findManifestViolation(validManifest())).toBeUndefined();
-    expect(isWellFormedManifest(validManifest())).toBe(true);
-    expect(isWellFormedManifest(null)).toBe(false);
-    expect(isWellFormedManifest({})).toBe(false);
-    expect(isWellFormedManifest({ ...validManifest(), unexpected: true })).toBe(false);
+  it('does not compile a candidate build without explicit artifact digests', () => {
+    const withoutArtifact = (): ReturnType<typeof buildReleaseCandidate> => buildReleaseCandidate(
+      evidence,
+      '0.5.0',
+      [],
+      'notes',
+      // @ts-expect-error the context must carry the verified artifact members
+      { candidateRunId: '43' },
+    );
+    expect(withoutArtifact).toBeTypeOf('function');
   });
 
   it.each([

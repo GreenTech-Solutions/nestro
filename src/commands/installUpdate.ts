@@ -1,63 +1,65 @@
 import * as vscode from 'vscode';
-import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
-import {
-  getLocalizedPackageLabelFormatting,
-  isPackageItem,
-  PackagesProvider,
-  resolvePackageFileLabels,
-  sanitizePackageText,
-  toWorkspaceFolderDescriptors,
-} from '../providers';
+import { getDeferInstallAfterUpdate } from '../config';
+import { ClientManager } from '../clients';
+import { isPackageItem, PackagesProvider } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
-import {
-  formatHeldBackDate,
-  formatPackageCount,
-  formatShellTaskCommandForLog,
-  formatShellTaskFailureMessage,
-  getPackageDirectory,
-  getWorkspacePackageFilePaths,
-  logger,
-  mutationCoordinator,
-  PackageFileDependencyUpdates,
-  runShellTaskAndWait,
-  ShellTaskCommand,
-  showError,
-  updateDependencyVersionsInFile,
-  updateDependencyVersionsInFilesAtomically,
-} from '../utils';
+import { COMMAND_IDS, describeError } from '../shared';
+import { logger, showError } from '../utils';
 import type { ReleaseAgeState } from '../utils';
-import { resolveCommandPackageItem, revalidateCommandPackageItem } from './packageIdentity';
+import { resolveCommandPackageItem } from './packageIdentity';
+import { revalidateUpdates, runImmediateUpdateGroups } from './packageUpdateExecution';
+import type { BulkUpdateChecked, ImmediateUpdateRun } from './packageUpdateExecution';
+import { confirmRiskyUpdates } from './updateRiskConfirmation';
+import {
+  confirmBulkPackageUpdate,
+  formatUnverifiedUpdateMessage,
+  reconcileFailedPackageMutation,
+  writeAndMarkPackageUpdates,
+  writePackageUpdateBatch,
+} from './packageUpdateSteps';
+import type { PackageUpdate } from './packageUpdateSteps';
+import { clearMutationProgress, markPackageCapabilities, runRowMutation } from './rowMutation';
+import type { RowMutationExecution, RowMutationProgress } from './rowMutation';
 
 const clientManager = new ClientManager();
 
-type PackageUpdate = { capability: ResolvedPackageItem; version: string; releaseAge?: ReleaseAgeState };
+interface UpdateItemRequest {
+  readonly kind: 'item';
+  readonly item: unknown;
+  readonly provider: PackagesProvider;
+}
 
-interface InstallPackageSelection {
+interface SelectedUpdateRequest {
   readonly kind: 'selected';
-  readonly packageFilePath: string;
+  readonly capability: ResolvedPackageItem;
+  readonly version: string;
+  readonly provider: PackagesProvider;
+  readonly releaseAge?: ReleaseAgeState;
 }
 
-interface CancelledInstallPackageSelection {
-  readonly kind: 'cancelled';
+type UpdateAllRequest = { readonly kind: 'all'; readonly provider: PackagesProvider };
+
+type UpdateRequest = UpdateItemRequest | SelectedUpdateRequest | UpdateAllRequest;
+
+interface UpdateBatchMutation {
+  readonly kind: 'single' | 'bulk';
+  readonly updates: readonly PackageUpdate[];
+  readonly provider: PackagesProvider;
 }
+
+type BulkUpdateMarked
+  = | { readonly kind: 'immediate' }
+    | { readonly kind: 'deferred'; readonly progress: RowMutationProgress; readonly updates: readonly PackageUpdate[] };
+
+type BulkUpdateApplied
+  = | { readonly kind: 'deferred' }
+    | { readonly kind: 'unverified' }
+    | { readonly kind: 'immediate'; readonly outcome: ImmediateUpdateRun };
+
+type BulkUpdateExecution = RowMutationExecution<BulkUpdateChecked, BulkUpdateMarked, BulkUpdateApplied>;
 
 export async function installUpdateCommand(item: unknown, provider: PackagesProvider): Promise<void> {
-  if (!isPackageItem(item)) {
-    logger.warn('nestro.installUpdate invoked without a valid package item; ignoring.');
-    return;
-  }
-
-  const capability = await resolveCommandPackageItem(item, provider);
-  if (capability === undefined) {
-    return;
-  }
-
-  const current = capability.item;
-  if (current.latest !== undefined && current.operation === undefined) {
-    // The selected version is intentionally read from the freshly resolved row;
-    // `item.latest` is never an operation input after validation.
-    await runResolvedPackageVersion(capability, current.latest, provider);
-  }
+  await runUpdateMutation({ kind: 'item', item, provider });
 }
 
 /**
@@ -71,482 +73,197 @@ export async function runResolvedPackageVersion(
   provider: PackagesProvider,
   selectedReleaseAge?: ReleaseAgeState,
 ): Promise<void> {
-  // Locked from the pre-write revalidation through the write or task and the
-  // reconciliation that follows it; the key comes from the capability's already-canonical
-  // `packageFilePath` before any lock is requested.
-  const projectKey = await resolveMutationCoordinatorKey(capability.packageFilePath);
-  await mutationCoordinator.runExclusive(projectKey, async () => {
-    const checked = await revalidateCommandPackageItem(capability, provider);
-    if (checked === undefined) {
-      return;
-    }
+  await runUpdateMutation({ kind: 'selected', capability, version, provider, releaseAge: selectedReleaseAge });
+}
 
-    const current = checked.item;
-    let activeCapability: ResolvedPackageItem | undefined;
-    try {
-      logger.info(`Preparing update for ${current.packageName} to ${version}.`);
-      const confirmedRiskyUpdates = new Set<string>();
-      if (isDeferredInstallEnabled()) {
-        if (!await confirmRiskyUpdates([{ capability: checked, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
-          return;
-        }
-        activeCapability = provider.markPackageUpdatingForCapability(checked, {
-          kind: 'update',
-          target: version,
-        });
-        if (activeCapability === undefined) {
-          return;
-        }
-        await provider.withWriteSuppressed(() => updateDependencyVersionsInFile(checked.packageFilePath, [
-          { name: current.packageName, version, section: checked.identity.section },
-        ]));
-        const refreshed = await provider.refreshPackageBaselineForCapability(
-          activeCapability,
-          `${current.versionPrefix}${version}`,
-        );
-        if (refreshed === undefined) {
-          await provider.loadPackages();
-          throw new Error(vscode.l10n.t(
-            'Package update could not be verified. Refresh the package list and try again.',
-          ));
-        }
-        provider.markPackageUpdatedForCapability(refreshed, version);
-        return;
-      }
-
-      const cwd = checked.packageDirectory;
-      const client = await clientManager.getClient(cwd);
-      const beforeTask = await revalidateCommandPackageItem(checked, provider);
-      if (beforeTask === undefined) {
-        return;
-      }
-      const taskItem = beforeTask.item;
-      if (!await confirmRiskyUpdates([{ capability: beforeTask, version, releaseAge: selectedReleaseAge }], confirmedRiskyUpdates)) {
-        return;
-      }
-      await runPackageUpdateTask(
-        [{ capability: beforeTask, version }],
-        client.buildUpdateCommand([{
-          name: taskItem.packageName,
-          version,
-          section: beforeTask.identity.section,
-        }]),
-        vscode.l10n.t('Update {0}', sanitizePackageText(taskItem.packageName)),
-        provider,
-        beforeTask.packageDirectory,
-      );
-    }
-    catch (err) {
-      if (activeCapability !== undefined) {
-        provider.markPackageUpdatingForCapability(activeCapability, undefined);
-      }
-      showError(vscode.l10n.t('failed to install update — {0}', err instanceof Error ? err.message : String(err)), err);
-    }
+async function runUpdateMutation(request: UpdateRequest): Promise<void> {
+  await runRowMutation<UpdateRequest, UpdateBatchMutation, BulkUpdateChecked, BulkUpdateMarked, BulkUpdateApplied>(request, {
+    guard: current => guardUpdateRequest(current),
+    resolve: current => resolveUpdateBatch(current),
+    lockTargets: batch => batch.updates.map(update => update.capability.packageFilePath),
+    revalidate: batch => createBulkUpdatePlan(batch),
+    mark: checked => markBulkUpdates(checked, request.provider),
+    apply: (checked, marked) => applyBulkUpdates(checked, marked, request.provider),
+    reconcile: execution => reconcileBulkUpdates(execution, request.provider),
+    reportError: error => reportUpdateError(request, error),
   });
 }
 
-export async function runInstallCommand(provider?: PackagesProvider): Promise<void> {
-  try {
-    const selection = await resolveInstallPackageSelection();
-    if (selection === undefined) {
-      throw new Error(vscode.l10n.t('No workspace package.json found.'));
-    }
-    if (selection.kind === 'cancelled') {
-      return;
-    }
-    const packageFilePath = selection.packageFilePath;
-    // Locked for the full task run so a concurrent Update/Pin/Remove/Switch on the same
-    // project root cannot start a second package-manager process, or write the manifest,
-    // while this install is running.
-    const projectKey = await resolveMutationCoordinatorKey(packageFilePath);
-    await mutationCoordinator.runExclusive(projectKey, async () => {
-      const client = await clientManager.getClient(getPackageDirectory(packageFilePath));
-      const command = client.buildInstallCommand();
-      logger.info(`Running install command: ${formatShellTaskCommandForLog(command)}`);
-      const taskName = vscode.l10n.t('Install Dependencies');
-      const activeIdentities = provider?.getPackageIdentitiesForFile(packageFilePath) ?? [];
-      activeIdentities.forEach(identity => provider?.markPackageUpdating(identity, { kind: 'install' }));
-      try {
-        const exitCode = await runShellTaskAndWait(command, taskName, getPackageDirectory(packageFilePath));
-        if (exitCode !== 0) {
-          showError(formatShellTaskFailureMessage(taskName, exitCode));
-        }
-      }
-      finally {
-        activeIdentities.forEach(identity => provider?.markPackageUpdating(identity, undefined));
-      }
-    });
-  }
-  catch (err) {
-    showError(vscode.l10n.t('failed to run install — {0}', err instanceof Error ? err.message : String(err)), err);
-  }
-}
-
-export async function updateAllVisibleCommand(provider: PackagesProvider): Promise<void> {
-  const packages = provider.getVisibleOutdatedPackages();
-  if (packages.length === 0) {
+function reportUpdateError(request: UpdateRequest, error: unknown): void {
+  if (request.kind === 'all') {
+    showError(vscode.l10n.t('failed to update packages — {0}', describeError(error)), error);
     return;
   }
-
-  const capabilities: ResolvedPackageItem[] = [];
-  for (const item of packages) {
-    const capability = await resolveCommandPackageItem(item, provider);
-    if (capability === undefined) {
-      return;
-    }
-    const current = capability.item;
-    if (current.latest !== undefined && current.operation === undefined) {
-      capabilities.push(capability);
-    }
-  }
-  if (capabilities.length === 0) {
-    return;
-  }
-
-  if (isBulkUpdateConfirmationEnabled()) {
-    const updateAllAction = vscode.l10n.t('Update All');
-    const answer = await vscode.window.showWarningMessage(
-      vscode.l10n.t('Update {0}? This cannot be undone.', formatPackageCount(capabilities.length)),
-      { modal: true },
-      updateAllAction,
-    );
-    if (answer !== updateAllAction) {
-      return;
-    }
-  }
-
-  const updates = capabilities.map(capability => ({
-    capability,
-    version: capability.item.latest as string,
-  }));
-
-  // Update All can span multiple project roots in one call, so all of them are locked
-  // together for the whole operation: a concurrent single-row command on any of these
-  // manifests waits behind it, and the bulk update never holds a subset of its roots.
-  const projectKeys = await Promise.all(
-    updates.map(update => resolveMutationCoordinatorKey(update.capability.packageFilePath)),
-  );
-
-  await mutationCoordinator.runManyExclusive(projectKeys, async () => {
-    let activeDeferredUpdates: { capability: ResolvedPackageItem; version: string }[] = [];
-    try {
-      // Confirm every selected row after the modal confirmation and before any
-      // progress mark, write, or task. Group-level checks below close the async
-      // window again immediately before each individual task.
-      const prevalidatedUpdates = await revalidateUpdates(updates, provider);
-      if (prevalidatedUpdates === undefined) {
-        return;
-      }
-      const confirmedRiskyUpdates = new Set<string>();
-      if (!await confirmRiskyUpdates(prevalidatedUpdates, confirmedRiskyUpdates)) {
-        return;
-      }
-      if (isDeferredInstallEnabled()) {
-        const checkedUpdates = await revalidateUpdates(prevalidatedUpdates, provider);
-        if (checkedUpdates === undefined) {
-          return;
-        }
-        if (!await confirmRiskyUpdates(checkedUpdates, confirmedRiskyUpdates)) {
-          return;
-        }
-        const activeUpdates = checkedUpdates.map(update => ({
-          ...update,
-          capability: provider.markPackageUpdatingForCapability(update.capability, {
-            kind: 'update',
-            target: update.version,
-          }),
-        }));
-        if (activeUpdates.some(update => update.capability === undefined)) {
-          resetActiveCapabilities(activeUpdates, provider);
-          return;
-        }
-        const active = activeUpdates as { capability: ResolvedPackageItem; version: string }[];
-        activeDeferredUpdates = active;
-        await provider.withWriteSuppressed(async () => {
-          await updateDependencyVersionsInFilesAtomically(toDeferredUpdateFileGroups(active));
-        });
-        const refreshed = await refreshUpdatedCapabilities(active, provider);
-        if (refreshed === undefined) {
-          await provider.loadPackages();
-          throw new Error(vscode.l10n.t(
-            'Package update could not be verified. Refresh the package list and try again.',
-          ));
-        }
-        refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
-        return;
-      }
-
-      for (const group of groupImmediateUpdatesByPackageFile(prevalidatedUpdates)) {
-        const checkedUpdates = await revalidateUpdates(group.updates, provider);
-        if (checkedUpdates === undefined) {
-          return;
-        }
-        const cwd = checkedUpdates[0].capability.packageDirectory;
-        const client = await clientManager.getClient(cwd);
-        const beforeTaskUpdates = await revalidateUpdates(checkedUpdates, provider);
-        if (beforeTaskUpdates === undefined) {
-          return;
-        }
-        if (!await confirmRiskyUpdates(beforeTaskUpdates, confirmedRiskyUpdates)) {
-          return;
-        }
-        const command = client.buildUpdateCommand(
-          beforeTaskUpdates.map(update => ({
-            name: update.capability.item.packageName,
-            version: update.version,
-            section: update.capability.identity.section,
-          })),
-        );
-        const completed = await runPackageUpdateTask(
-          beforeTaskUpdates,
-          command,
-          vscode.l10n.t('Update All Packages'),
-          provider,
-          cwd,
-        );
-        if (!completed) {
-          return;
-        }
-      }
-    }
-    catch (err) {
-      activeDeferredUpdates.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-      showError(vscode.l10n.t('failed to update packages — {0}', err instanceof Error ? err.message : String(err)), err);
-    }
-  });
+  showError(vscode.l10n.t('failed to install update — {0}', describeError(error)), error);
 }
 
-function isDeferredInstallEnabled(): boolean {
-  return vscode.workspace
-    .getConfiguration('nestro')
-    .get<boolean>('deferInstallAfterUpdate', false);
-}
-
-function isBulkUpdateConfirmationEnabled(): boolean {
-  return vscode.workspace
-    .getConfiguration('nestro')
-    .get<boolean>('confirmBulkUpdate', true);
-}
-
-async function confirmRiskyUpdates(
-  updates: readonly PackageUpdate[],
-  confirmedRiskyUpdates: Set<string>,
-): Promise<boolean> {
-  const riskyUpdates = updates.filter(({ capability, version, releaseAge: selectedReleaseAge }) => {
-    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
-    return releaseAge?.kind === 'held-back'
-      && releaseAge.version === version
-      && !confirmedRiskyUpdates.has(getRiskyUpdateKey(capability, version));
-  });
-  if (riskyUpdates.length === 0) {
+function guardUpdateRequest(request: UpdateRequest): boolean {
+  if (request.kind !== 'item' || isPackageItem(request.item)) {
     return true;
   }
-
-  const labels = riskyUpdates.map(({ capability, version, releaseAge: selectedReleaseAge }) => {
-    const releaseAge = selectedReleaseAge ?? capability.item.releaseAge;
-    const eligibleAt = releaseAge?.kind === 'held-back' ? formatHeldBackDate(releaseAge.eligibleAt) : '';
-    return vscode.l10n.t(
-      '{0}@{1} (held back until {2})',
-      sanitizePackageText(capability.item.packageName),
-      sanitizePackageText(version),
-      sanitizePackageText(eligibleAt),
-    );
-  });
-  const updateRiskyAction = vscode.l10n.t('Update Risky Packages');
-  const riskyPrompt = riskyUpdates.length === 1
-    ? vscode.l10n.t(
-        'The selected update is inside the minimum release-age window:\n{0}\nUpdate anyway?',
-        labels.join('\n'),
-      )
-    : vscode.l10n.t(
-        'The selected updates are inside the minimum release-age window:\n{0}\nUpdate anyway?',
-        labels.join('\n'),
-      );
-  const answer = await vscode.window.showWarningMessage(
-    riskyPrompt,
-    { modal: true },
-    updateRiskyAction,
-  );
-  if (answer !== updateRiskyAction) {
-    return false;
-  }
-  riskyUpdates.forEach(({ capability, version }) => {
-    confirmedRiskyUpdates.add(getRiskyUpdateKey(capability, version));
-  });
-  return true;
-}
-
-function getRiskyUpdateKey(capability: ResolvedPackageItem, version: string): string {
-  return [
-    capability.packageFilePath,
-    capability.identity.section,
-    capability.item.packageName,
-    version,
-  ].join('\u0000');
-}
-
-async function runPackageUpdateTask(
-  updates: readonly PackageUpdate[],
-  command: ShellTaskCommand,
-  taskName: string,
-  provider: PackagesProvider,
-  cwd?: string,
-): Promise<boolean> {
-  const activeUpdates = updates.map(update => ({
-    ...update,
-    capability: provider.markPackageUpdatingForCapability(update.capability, {
-      kind: 'update',
-      target: update.version,
-    }),
-  }));
-  if (activeUpdates.some(update => update.capability === undefined)) {
-    resetActiveCapabilities(activeUpdates, provider);
-    return false;
-  }
-  const active = activeUpdates as { capability: ResolvedPackageItem; version: string }[];
-  logger.info(`Running update command: ${formatShellTaskCommandForLog(command)}`);
-  let exitCode: number | undefined;
-  try {
-    exitCode = await runShellTaskAndWait(command, taskName, cwd);
-  }
-  catch (err) {
-    active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-    throw err;
-  }
-  if (exitCode === 0) {
-    const refreshed = await refreshUpdatedCapabilities(active, provider);
-    if (refreshed === undefined) {
-      active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-      await provider.loadPackages();
-      throw new Error(vscode.l10n.t(
-        'Package update could not be verified. Refresh the package list and try again.',
-      ));
-    }
-    provider.invalidateUpdateCache();
-    refreshed.forEach(update => provider.markPackageUpdatedForCapability(update.capability, update.version));
-    return true;
-  }
-  active.forEach(update => provider.markPackageUpdatingForCapability(update.capability, undefined));
-  showError(formatShellTaskFailureMessage(taskName, exitCode));
+  logger.warn(`${COMMAND_IDS.installUpdate} invoked without a valid package item; ignoring.`);
   return false;
 }
 
-function resetActiveCapabilities(
-  updates: readonly { capability: ResolvedPackageItem | undefined; version: string }[],
-  provider: PackagesProvider,
-): void {
-  updates.forEach((update) => {
-    if (update.capability !== undefined) {
-      provider.markPackageUpdatingForCapability(update.capability, undefined);
-    }
-  });
-}
-
-async function refreshUpdatedCapabilities(
-  updates: readonly PackageUpdate[],
-  provider: PackagesProvider,
-): Promise<PackageUpdate[] | undefined> {
-  const refreshed: PackageUpdate[] = [];
-  for (const update of updates) {
-    const capability = await provider.refreshPackageBaselineForCapability(
-      update.capability,
-      `${update.capability.item.versionPrefix}${update.version}`,
-    );
-    if (capability === undefined) {
-      return undefined;
-    }
-    refreshed.push({ ...update, capability });
+async function resolveUpdateBatch(request: UpdateRequest): Promise<UpdateBatchMutation | undefined> {
+  if (request.kind === 'all') {
+    const updates = await resolveBulkUpdates(request.provider);
+    return updates === undefined ? undefined : { kind: 'bulk', updates, provider: request.provider };
   }
-  return refreshed;
-}
-
-function groupDeferredUpdatesByPackageFile(
-  updates: readonly PackageUpdate[],
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
-  return groupUpdatesByPackageFile(updates, update => update.capability.packageFilePath);
-}
-
-/**
- * Shape `active` deferred updates for `updateDependencyVersionsInFilesAtomically()`.
- * Kept as its own top-level function (rather than inline) so the write call site
- * inside `mutationCoordinator.runManyExclusive()` stays within the project's nested-
- * function-depth limit.
- */
-function toDeferredUpdateFileGroups(active: readonly PackageUpdate[]): PackageFileDependencyUpdates[] {
-  return groupDeferredUpdatesByPackageFile(active).map(group => ({
-    packageFilePath: group.packageFilePath,
-    updates: group.updates.map(update => ({
-      name: update.capability.item.packageName,
-      version: update.version,
-      section: update.capability.identity.section,
-    })),
-  }));
-}
-
-function groupImmediateUpdatesByPackageFile(
-  updates: readonly PackageUpdate[],
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
-  return groupUpdatesByPackageFile(updates, (update) => {
-    return `${update.capability.packageFilePath}\0${update.capability.identity.section}`;
-  });
-}
-
-function groupUpdatesByPackageFile(
-  updates: readonly PackageUpdate[],
-  getGroupKey: (update: PackageUpdate) => string,
-): { packageFilePath: string; updates: PackageUpdate[] }[] {
-  const byKey = new Map<string, PackageUpdate[]>();
-  for (const update of updates) {
-    const groupKey = getGroupKey(update);
-    byKey.set(groupKey, [...(byKey.get(groupKey) ?? []), update]);
+  if (request.kind === 'selected') {
+    return {
+      kind: 'single',
+      updates: [{
+        capability: request.capability,
+        version: request.version,
+        releaseAge: request.releaseAge,
+        source: 'selected',
+      }],
+      provider: request.provider,
+    };
   }
-  return [...byKey.values()].map(groupUpdates => ({
-    packageFilePath: groupUpdates[0].capability.packageFilePath,
-    updates: groupUpdates,
-  }));
-}
-
-async function revalidateUpdates(
-  updates: readonly PackageUpdate[],
-  provider: PackagesProvider,
-): Promise<PackageUpdate[] | undefined> {
-  const checked: PackageUpdate[] = [];
-  for (const update of updates) {
-    const capability = await provider.reissuePackageCapability(update.capability)
-      ?? await revalidateCommandPackageItem(update.capability, provider);
-    if (capability === undefined) {
-      return undefined;
-    }
-    const currentVersion = capability.item.latest;
-    if (currentVersion === undefined || capability.item.operation !== undefined) {
-      return undefined;
-    }
-    checked.push({ capability, version: currentVersion });
-  }
-  return checked;
-}
-
-async function resolveInstallPackageSelection(): Promise<InstallPackageSelection | CancelledInstallPackageSelection | undefined> {
-  const packageFilePaths = await getWorkspacePackageFilePaths();
-  if (packageFilePaths.length === 0) {
+  const capability = await resolveCommandPackageItem(request.item, request.provider);
+  const version = capability?.item.latest;
+  if (capability === undefined || version === undefined || capability.item.operation !== undefined) {
     return undefined;
   }
-  const folders = toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []);
-  const labels = resolvePackageFileLabels(packageFilePaths, folders, getLocalizedPackageLabelFormatting());
-  if (labels.length === 1) {
-    return { kind: 'selected', packageFilePath: labels[0].packageFilePath };
-  }
+  return {
+    kind: 'single',
+    updates: [{ capability, version, source: 'latest' }],
+    provider: request.provider,
+  };
+}
 
-  const selected = await vscode.window.showQuickPick(
-    labels.map(({ packageFilePath, owner }) => ({
-      label: owner.label,
-      packageFilePath,
-    })),
-    { placeHolder: vscode.l10n.t('Select the package.json to install dependencies for') },
-  );
-  if (selected === undefined) {
-    return { kind: 'cancelled' };
-  }
+export async function updateAllVisibleCommand(provider: PackagesProvider): Promise<void> {
+  await runUpdateMutation({ kind: 'all', provider });
+}
 
-  return { kind: 'selected', packageFilePath: selected.packageFilePath };
+async function resolveBulkUpdates(provider: PackagesProvider): Promise<PackageUpdate[] | undefined> {
+  const items = provider.getVisibleOutdatedPackages();
+  if (items.length === 0) {
+    return undefined;
+  }
+  const updates: PackageUpdate[] = [];
+  for (const item of items) {
+    const capability = await resolveCommandPackageItem(item, provider);
+    if (capability === undefined) {
+      return undefined;
+    }
+    if (capability.item.latest !== undefined && capability.item.operation === undefined) {
+      updates.push({ capability, version: capability.item.latest, source: 'latest' });
+    }
+  }
+  if (updates.length === 0 || !await confirmBulkPackageUpdate(updates.length)) {
+    return undefined;
+  }
+  return updates;
+}
+
+async function createBulkUpdatePlan(
+  batch: UpdateBatchMutation,
+): Promise<BulkUpdateChecked | undefined> {
+  let checkedUpdates = await revalidateUpdates(batch.updates, batch.provider, batch.kind === 'bulk');
+  if (checkedUpdates === undefined) {
+    return undefined;
+  }
+  const confirmedRiskyUpdates = new Set<string>();
+  if (batch.kind === 'bulk' && !await confirmRiskyUpdates(checkedUpdates, confirmedRiskyUpdates)) {
+    return undefined;
+  }
+  const strategy = getDeferInstallAfterUpdate() ? 'deferred' : 'immediate';
+  if (strategy === 'deferred') {
+    if (batch.kind === 'bulk') {
+      checkedUpdates = await revalidateUpdates(checkedUpdates, batch.provider, true) ?? [];
+      if (checkedUpdates.length === 0 || !await confirmRiskyUpdates(checkedUpdates, confirmedRiskyUpdates)) {
+        return undefined;
+      }
+    }
+    else if (!await confirmRiskyUpdates(checkedUpdates, confirmedRiskyUpdates)) {
+      return undefined;
+    }
+  }
+  return { kind: batch.kind, strategy, updates: checkedUpdates, confirmedRiskyUpdates };
+}
+
+function markBulkUpdates(checked: BulkUpdateChecked, provider: PackagesProvider): BulkUpdateMarked | undefined {
+  if (checked.strategy === 'immediate') {
+    return { kind: 'immediate' };
+  }
+  const progress = markPackageCapabilities(provider, checked.updates.map(update => ({
+    capability: update.capability,
+    operation: { kind: 'update' as const, target: update.version },
+  })));
+  return progress === undefined
+    ? undefined
+    : {
+        kind: 'deferred',
+        progress,
+        updates: checked.updates.map((update, index) => ({
+          ...update,
+          capability: progress.capabilities[index],
+        })),
+      };
+}
+
+async function applyBulkUpdates(
+  checked: BulkUpdateChecked,
+  marked: BulkUpdateMarked,
+  provider: PackagesProvider,
+): Promise<BulkUpdateApplied> {
+  if (marked.kind === 'immediate') {
+    return {
+      kind: 'immediate',
+      outcome: await runImmediateUpdateGroups(checked, provider, clientManager),
+    };
+  }
+  const refreshed = await writeAndMarkPackageUpdates(marked.updates, provider, () => (
+    writePackageUpdateBatch(checked.kind, marked.updates)
+  ));
+  if (refreshed === undefined) {
+    return { kind: 'unverified' };
+  }
+  return { kind: 'deferred' };
+}
+
+async function reconcileBulkUpdates(execution: BulkUpdateExecution, provider: PackagesProvider): Promise<void> {
+  if (execution.kind === 'apply-failed') {
+    if (execution.marked.kind === 'deferred') {
+      clearMutationProgress(execution.marked.progress);
+    }
+    if (execution.checked.kind === 'bulk') {
+      await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a failed Update All.');
+    }
+    return;
+  }
+  if (execution.result.kind === 'unverified') {
+    if (execution.checked.kind === 'bulk') {
+      await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a failed Update All.');
+    }
+    else {
+      await provider.loadPackages();
+    }
+    throw new Error(formatUnverifiedUpdateMessage());
+  }
+  if (execution.result.kind !== 'immediate') {
+    return;
+  }
+  if (execution.result.outcome.kind === 'stopped') {
+    await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a failed Update All.');
+    showError(execution.result.outcome.message, execution.result.outcome.error);
+  }
+  else if (execution.result.outcome.kind === 'stopped-cancelled') {
+    await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a cancelled Update All.');
+    logger.info(execution.result.outcome.message);
+    void vscode.window.showInformationMessage(execution.result.outcome.message);
+  }
+  else if (execution.result.outcome.kind === 'single-cancelled') {
+    await reconcileFailedPackageMutation(provider, 'Failed to reconcile package state after a cancelled update.');
+  }
+  else if (execution.result.outcome.kind === 'single-failed') {
+    showError(execution.result.outcome.message);
+  }
+  else if (execution.result.outcome.kind === 'single-unverified') {
+    await provider.loadPackages();
+    throw new Error(formatUnverifiedUpdateMessage());
+  }
 }

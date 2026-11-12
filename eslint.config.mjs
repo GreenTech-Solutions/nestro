@@ -3,6 +3,35 @@ import gitignore from 'eslint-config-flat-gitignore';
 import sonarjs from 'eslint-plugin-sonarjs';
 import typescriptEslint from 'typescript-eslint';
 
+const PRODUCT_LIMITS = { maxLines: 300, maxFunctionLines: 60 };
+const TEST_LIMITS = { maxLines: 800 };
+
+function maxLinesRule(max) {
+  return ['error', { max, skipBlankLines: true, skipComments: true }];
+}
+
+function sizeLimitConfigs() {
+  return [
+    {
+      name: 'app/size-limits-product',
+      files: ['src/**/*.{ts,mts}'],
+      ignores: ['src/test/**'],
+      rules: {
+        'max-lines': maxLinesRule(PRODUCT_LIMITS.maxLines),
+        'max-lines-per-function': maxLinesRule(PRODUCT_LIMITS.maxFunctionLines),
+      },
+    },
+    {
+      name: 'app/size-limits-test',
+      files: ['src/test/**/*.{ts,mts}'],
+      rules: {
+        'max-lines': maxLinesRule(TEST_LIMITS.maxLines),
+        'max-lines-per-function': 'off',
+      },
+    },
+  ];
+}
+
 export default [
   {
     name: 'app/files-to-lint',
@@ -79,4 +108,5 @@ export default [
       '@stylistic/function-call-argument-newline': ['warn', 'consistent'],
     },
   },
+  ...sizeLimitConfigs(),
 ];

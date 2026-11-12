@@ -1,0 +1,27 @@
+{
+  "params": {
+    "updateWaitMs": 30000,
+    "auditWaitMs": 30000,
+    "filter": "patch",
+    "pickWaitMs": 8000,
+    "rowDown": 4,
+    "pickName": "express"
+  },
+  "userSettings": {
+    "workbench.colorTheme": "Dark Modern",
+    "workbench.startupEditor": "none",
+    "window.zoomLevel": 0,
+    "workbench.tips.enabled": false,
+    "update.mode": "none",
+    "telemetry.telemetryLevel": "off",
+    "extensions.autoUpdate": "off",
+    "security.workspace.trust.enabled": false,
+    "workbench.editor.showTabs": "none",
+    "window.restoreWindows": "none",
+    "workbench.secondarySideBar.defaultVisibility": "hidden",
+    "chat.commandCenter.enabled": false,
+    "workbench.activityBar.location": "default",
+    "workbench.sideBar.location": "left",
+    "window.commandCenter": false
+  }
+}

@@ -62,7 +62,7 @@ describe('logger', () => {
     const logged = channel.entries[0]?.message;
     expect(logged).toBe('Fetching versions for evil\n↳ [error] forged\n↳ [warn] lone\n↳ [warn] forged\n↳ [debug] forged\n↳ red');
     expect(logged).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(logged).not.toContain('[error] Nestro:');
+    expect(logged).not.toContain(`[error] ${freshVscode.l10n.t('Nestro: ').trimEnd()}`);
   });
 
   it('redacts shaped credentials in registry and audit text', async () => {
@@ -99,6 +99,34 @@ describe('logger', () => {
     expect(sanitized).not.toContain(npmToken);
   });
 
+  it('redacts password and passwd values in plain, quoted, and JSON forms', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const input = [
+      'npm ERR! password=hunter2',
+      'passwd: s3cret',
+      'PASSWORD = "quoted secret"',
+      ['passwd', '=', `'single-quoted'`].join(''),
+      'config={"password":"json-pass","passwd":"json-passwd"}',
+    ].join('\n');
+
+    const sanitized = sanitizeLogText(input);
+
+    expect(sanitized).toContain('password=[REDACTED]');
+    expect(sanitized).toContain('passwd: [REDACTED]');
+    expect(sanitized).toContain('PASSWORD = "[REDACTED]"');
+    expect(sanitized).toContain(['passwd', '=', `'[REDACTED]'`].join(''));
+    expect(sanitized).toContain('"password":"[REDACTED]"');
+    expect(sanitized).toContain('"passwd":"[REDACTED]"');
+    expect(sanitized).not.toMatch(/hunter2|s3cret|quoted secret|single-quoted|json-pass/);
+  });
+
+  it('keeps ordinary words that merely contain password intact', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const ordinary = 'Resolving my-password-utils and passwords-list without assignment';
+
+    expect(sanitizeLogText(ordinary)).toBe(ordinary);
+  });
+
   it('preserves git SSH users and redacts only password-bearing URLs across multiple URLs', async () => {
     const { sanitizeLogText } = await import('../utils/logger');
     const input = 'first https://registry.internal/npm then git+ssh://git@github.com/acme/lib.git#v1.2.3 and second https://ci:s3cr3t@registry.internal/npm';
@@ -109,6 +137,36 @@ describe('logger', () => {
     expect(sanitized).toContain('git+ssh://git@github.com/acme/lib.git#v1.2.3');
     expect(sanitized).toContain('https://registry.internal/npm');
     expect(sanitized).not.toContain('https://ci:s3cr3t@registry.internal/npm');
+  });
+
+  it('keeps closing brackets around a redacted value', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const genericSecret = 'abcdefghijklmnopqrstuv';
+
+    expect(sanitizeLogText(`(token=${genericSecret})`)).toBe('(token=[REDACTED])');
+    expect(sanitizeLogText('[password=hunter2]')).toBe('[password=[REDACTED]]');
+    expect(sanitizeLogText('(_authToken=abc) and [passwd: xyz]')).toBe('(_authToken=[REDACTED]) and [passwd: [REDACTED]]');
+    expect(sanitizeLogText('password=ab)cd')).toBe('password=[REDACTED]');
+    expect(sanitizeLogText('password=)))')).toBe('password=[REDACTED]');
+  });
+
+  it('turns tabs into spaces instead of gluing words together', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+
+    expect(sanitizeLogText('name\tversion\t1.0.0')).toBe('name version 1.0.0');
+  });
+
+  it('redacts URL user info in linear time on a long run of separators', async () => {
+    const { sanitizeLogText } = await import('../utils/logger');
+    const input = `${`https://a:b ${'x'.repeat(100)} `.repeat(10_000)}https://ci:s3cr3t@registry.internal/npm`;
+
+    const started = performance.now();
+    const sanitized = sanitizeLogText(input);
+    const elapsed = performance.now() - started;
+
+    expect(sanitized).toContain('https://registry.internal/npm');
+    expect(sanitized).not.toContain('s3cr3t');
+    expect(elapsed).toBeLessThan(500);
   });
 
   it('keeps ordinary short credential-like words and package text intact', async () => {

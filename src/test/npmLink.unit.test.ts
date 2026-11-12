@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { buildPackageItem, makeContext } from './fixtures';
 import { activate } from '../extension';
-import { PackageItem } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 
 vi.mock('../providers', async () => {
   // isPackageItem/PackageItem come from the real module: the guard these commands rely on
@@ -25,15 +26,10 @@ vi.mock('../providers', async () => {
       this.setFilter = vi.fn();
       this.resetUpdateData = vi.fn();
       this.showFilterPicker = vi.fn().mockResolvedValue(undefined);
-      this.suppressingWrites = false;
       this.dispose = vi.fn();
     }),
   };
 });
-
-function makeContext(): vscode.ExtensionContext {
-  return { subscriptions: [] } as unknown as vscode.ExtensionContext;
-}
 
 function getRegisteredCommand(command: string): (item: unknown) => void {
   const call = vi.mocked(vscode.commands.registerCommand).mock.calls.find(([id]) => id === command);
@@ -44,7 +40,7 @@ function getRegisteredCommand(command: string): (item: unknown) => void {
 }
 
 function makePackageItem(packageName: string): PackageItem {
-  return new PackageItem(packageName, '1.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+  return buildPackageItem({ name: packageName, currentVersion: '1.0.0', updateType: 'none', packageFilePath: '/workspace/package.json' });
 }
 
 describe('npm link commands', () => {

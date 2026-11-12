@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { mockWorkspaceFiles } from './fixtures/workspaceFs';
 import { FilterManager, PackagesProvider } from '../providers';
 import { readAllWorkspaceDependencies } from '../utils';
+import { createStructuredAuditResult } from './fixtures/packagesProviderMocks';
 
 // Every other provider-level suite mocks `resolveAuditProjects`, so none of them prove that
 // the real resolver, wired to the real provider, collapses several manifests sharing one lock
@@ -30,24 +33,11 @@ vi.mock('../utils', async () => {
   };
 });
 
-function mockWorkspaceFiles(files: Record<string, string>): void {
-  vi.mocked(vscode.workspace.fs.readFile).mockImplementation((uri: vscode.Uri) => {
-    const value = files[uri.fsPath];
-    if (value === undefined) {
-      return Promise.reject(new Error(`File not found: ${uri.fsPath}`));
-    }
-    return Promise.resolve(Buffer.from(value));
-  });
-}
-
 describe('audit project graph integration (real resolver + real provider)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fsMock.realpath.mockImplementation((value: string) => Promise.resolve(value));
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
+    setWorkspaceFolders([{ uri: { fsPath: '/workspace' } }]);
     vi.mocked(vscode.workspace.getWorkspaceFolder).mockImplementation((uri: { fsPath: string }) =>
       vscode.workspace.workspaceFolders?.find(folder => uri.fsPath.startsWith(folder.uri.fsPath)));
     createClientMock.mockReset();
@@ -67,7 +57,9 @@ describe('audit project graph integration (real resolver + real provider)', () =
       { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/packages/ui/package.json' },
       { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: '/workspace/packages/cli/package.json' },
     ]);
-    createClientMock.mockReturnValue({ runAudit: vi.fn().mockResolvedValue(new Map()) });
+    createClientMock.mockReturnValue({
+      runAuditReport: vi.fn().mockResolvedValue(createStructuredAuditResult(new Map(), new Map(), 'pnpm')),
+    });
 
     const provider = new PackagesProvider(new FilterManager('all'));
     await provider.loadPackages();

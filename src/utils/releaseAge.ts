@@ -1,10 +1,8 @@
 /* eslint-disable @stylistic/eol-last */
 
+import { readMinimumReleaseAgeDays } from '../shared';
 import type { PackageMetadataOutcome, PublishTimes } from './metadataRegistry';
 import { getUpdateType } from './versionUtils';
-
-export const DEFAULT_MINIMUM_RELEASE_AGE_DAYS = 7;
-export const MAX_MINIMUM_RELEASE_AGE_DAYS = 99_000_000;
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -12,15 +10,6 @@ export type ReleaseAgeState
   = | { readonly kind: 'accepted' }
     | { readonly kind: 'held-back'; readonly version: string; readonly eligibleAt: string }
     | { readonly kind: 'unknown'; readonly version?: string };
-
-export function readMinimumReleaseAgeDays(value: unknown): number {
-  return typeof value === 'number'
-    && Number.isInteger(value)
-    && value >= 0
-    && value <= MAX_MINIMUM_RELEASE_AGE_DAYS
-    ? value
-    : DEFAULT_MINIMUM_RELEASE_AGE_DAYS;
-}
 
 export function classifyVersionReleaseAge(
   version: string,

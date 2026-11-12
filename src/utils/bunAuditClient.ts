@@ -1,26 +1,19 @@
+import { isAdvisoryId, parseFixAvailable } from './audit/fields';
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
-  AUDIT_PROCESS_TIMEOUT_MS,
-  describeBoundedProcessFailure,
-  mergeSeverity,
-  parseSeverity,
+  buildRecognizedOutcome,
+  incompleteOutcome,
+  readAuditJsonDocument,
+  runAuditCommand,
   toAuditResult,
-} from './auditClient';
-import type {
-  AuditExecution,
-  AuditIncompleteOutcome,
-  AuditIncompleteReason,
-  AuditOutcome,
-  AuditResult,
-  AuditSeverity,
-} from './auditClient';
-import { logger } from './logger';
-import { runBoundedProcess } from './processRunner';
+} from './audit/outcome';
+import type { AuditExecution, AuditOutcome, AuditResult } from './audit/outcome';
+import { parseSeverity } from './audit/types';
 import { createAuditAdvisory, mergeAuditAdvisory } from './auditReport';
 import type { AuditAdvisory } from './auditReport';
+import { logger } from './logger';
+import { isRecord, PACKAGE_MANAGERS, readRequiredString } from '../shared';
 
 const bunSchema = 'bun-bulk-advisory' as const;
-const compatibleExitCodes: readonly number[] = [0, 1];
 
 /** Runs Bun's raw-registry JSON audit contract in one package root. */
 export async function runBunAudit(cwd: string, signal?: AbortSignal): Promise<AuditResult> {
@@ -32,17 +25,11 @@ export async function runBunAudit(cwd: string, signal?: AbortSignal): Promise<Au
  * Runs `bun audit --json`, bounded by a timeout, output cap and optional cancellation
  * `signal`, and preserves advisory exit 1 for the Bun parser.
  */
-export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
-  const outcome = await runBoundedProcess('bun', ['audit', '--json'], {
-    cwd,
-    timeoutMs: AUDIT_PROCESS_TIMEOUT_MS,
-    maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES,
-    signal,
-  });
-  if (outcome.kind !== 'exit') {
-    return describeBoundedProcessFailure('bun', outcome);
-  }
-  return parseBunAuditOutcome({ command: 'bun', stdout: outcome.stdout, exitCode: outcome.exitCode });
+export function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Promise<AuditOutcome> {
+  return runAuditCommand(
+    { command: PACKAGE_MANAGERS.bun.bin, args: PACKAGE_MANAGERS.bun.dialect.audit, cwd, signal },
+    parseBunAuditOutcome,
+  );
 }
 
 /**
@@ -51,33 +38,13 @@ export async function runBunAuditOutcome(cwd: string, signal?: AbortSignal): Pro
  * invalidates the whole payload so schema evolution cannot silently hide a finding.
  */
 export function parseBunAuditOutcome(execution: AuditExecution): AuditOutcome {
-  const { command, exitCode, stdout } = execution;
-  logger.debug(`${command} audit output received (${stdout.length} bytes).`);
-
-  if (exitCode === undefined || !compatibleExitCodes.includes(exitCode)) {
-    return incompleteOutcome(
-      'unexpected-exit',
-      `${command} audit exited with an unexpected code (${exitCode ?? 'none'}).`,
-    );
+  const { command } = execution;
+  const document = readAuditJsonDocument(execution);
+  if (document.kind !== 'json') {
+    return document;
   }
 
-  const output = stdout.trim();
-  if (output === '') {
-    return incompleteOutcome('empty-output', `${command} audit produced no output.`);
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(output);
-  }
-  catch (err) {
-    return incompleteOutcome(
-      'malformed-json',
-      `${command} audit output is not valid JSON: ${describeError(err)}`,
-    );
-  }
-
-  const advisories = parseBulkAdvisories(json);
+  const advisories = parseBulkAdvisories(document.json);
   if (advisories === undefined) {
     return incompleteOutcome(
       'unrecognized-schema',
@@ -85,47 +52,18 @@ export function parseBunAuditOutcome(execution: AuditExecution): AuditOutcome {
     );
   }
 
-  const vulnerabilities = new Map<string, AuditSeverity>();
-  for (const advisory of advisories.values()) {
-    const current = vulnerabilities.get(advisory.packageName);
-    vulnerabilities.set(advisory.packageName, current === undefined ? advisory.severity : mergeSeverity(current, advisory.severity));
-  }
-  const structuredAdvisories = [...advisories.values()].sort((left, right) => left.identity.localeCompare(right.identity));
-  const expectedExitCode = vulnerabilities.size === 0 ? 0 : 1;
-  if (exitCode !== expectedExitCode) {
+  const expectedExitCode = advisories.size === 0 ? 0 : 1;
+  if (document.exitCode !== expectedExitCode) {
     return incompleteOutcome(
       'unexpected-exit',
-      `${command} audit schema requires exit ${expectedExitCode} but received ${exitCode}.`,
+      `${command} audit schema requires exit ${expectedExitCode} but received ${document.exitCode}.`,
     );
   }
-
-  if (vulnerabilities.size === 0) {
-    logger.info('Audit complete: 0 vulnerable package(s).');
-    return {
-      kind: 'clean',
-      schema: bunSchema,
-      manager: 'bun',
-      exitCode,
-      vulnerabilities,
-      advisories: structuredAdvisories,
-      total: 0,
-    };
-  }
-
-  logger.info(`Audit complete: ${vulnerabilities.size} vulnerable package(s).`);
-  return {
-    kind: 'advisories',
-    schema: bunSchema,
-    manager: 'bun',
-    exitCode,
-    vulnerabilities,
-    advisories: structuredAdvisories,
-    total: vulnerabilities.size,
-  };
+  return buildRecognizedOutcome(bunSchema, 'bun', document.exitCode, advisories.values());
 }
 
 function parseBulkAdvisories(json: unknown): Map<string, AuditAdvisory> | undefined {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return undefined;
   }
 
@@ -150,7 +88,7 @@ function parseBulkAdvisories(json: unknown): Map<string, AuditAdvisory> | undefi
 }
 
 function parseBulkAdvisory(packageName: string, value: unknown): AuditAdvisory | undefined {
-  if (!isPlainObject(value)
+  if (!isRecord(value)
     || !isAdvisoryId(value.id)
     || readRequiredString(value.url) === undefined
     || readRequiredString(value.title) === undefined
@@ -186,27 +124,6 @@ function readOptionalIdentity(value: unknown): string | undefined {
     : readRequiredString(value);
 }
 
-function parseFixAvailable(value: unknown): boolean | { name?: string; version?: string; isSemVerMajor?: boolean } | undefined {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (!isPlainObject(value)) {
-    return undefined;
-  }
-  const name = readRequiredString(value.name);
-  const version = readRequiredString(value.version);
-  const isSemVerMajor = typeof value.isSemVerMajor === 'boolean' ? value.isSemVerMajor : undefined;
-  return name === undefined && version === undefined && isSemVerMajor === undefined
-    ? undefined
-    : { name, version, isSemVerMajor };
-}
-
-function isAdvisoryId(value: unknown): boolean {
-  return typeof value === 'number'
-    ? Number.isFinite(value)
-    : readRequiredString(value) !== undefined;
-}
-
 function isOptionalCwe(value: unknown): boolean {
   return value === undefined
     || (Array.isArray(value) && value.every(entry => readRequiredString(entry) !== undefined));
@@ -216,28 +133,8 @@ function isOptionalCvss(value: unknown): boolean {
   if (value === undefined) {
     return true;
   }
-  if (!isPlainObject(value) || typeof value.score !== 'number' || !Number.isFinite(value.score)) {
+  if (!isRecord(value) || typeof value.score !== 'number' || !Number.isFinite(value.score)) {
     return false;
   }
   return value.vectorString === null || readRequiredString(value.vectorString) !== undefined;
-}
-
-function incompleteOutcome(
-  reason: AuditIncompleteReason,
-  detail: string,
-): AuditIncompleteOutcome {
-  logger.warn(detail);
-  return { kind: 'incomplete', reason, detail };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readRequiredString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

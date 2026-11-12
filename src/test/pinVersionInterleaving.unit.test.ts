@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import type { ProviderStub } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { pinVersionCommand } from '../commands/pinVersion';
-import { PACKAGE_IDENTITY_REJECTED_MESSAGE, PackageItem, PackagesProvider } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
 import type { ResolvedPackageItem } from '../providers';
 
 vi.mock('../clients', async () => {
@@ -23,11 +26,11 @@ describe('pinVersionCommand() writer boundary', () => {
   it('rejects a spec changed after final resolver validation without writing the fresh spec', async () => {
     let manifest: Manifest = { dependencies: { pkg: '1.2.3' } };
     const capability = makeCapability('1.2.3');
-    const { provider, revalidate, beforeWrite } = makeProvider(capability, () => {
+    const { provider, revalidate, beforeWrite } = createPinVersionHarness(capability, () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: { pkg: '~2.0.0' } };
     });
-    const item = new PackageItem('pkg', '1.2.3', undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '1.2.3' });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
       Buffer.from(JSON.stringify(manifest)),
     ));
@@ -39,18 +42,20 @@ describe('pinVersionCommand() writer boundary', () => {
     expect(vscode.workspace.fs.readFile).toHaveBeenCalledTimes(2);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
     expect(provider.loadPackages).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: ${PACKAGE_IDENTITY_REJECTED_MESSAGE}`);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
+    );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining('~2.0.0'));
   });
 
   it('rejects a selected entry removed after final resolver validation without writing', async () => {
     let manifest: Manifest = { dependencies: { pkg: '1.2.3' } };
     const capability = makeCapability('1.2.3');
-    const { provider, revalidate, beforeWrite } = makeProvider(capability, () => {
+    const { provider, revalidate, beforeWrite } = createPinVersionHarness(capability, () => {
       expect(revalidate).toHaveBeenCalledTimes(2);
       manifest = { dependencies: {} };
     });
-    const item = new PackageItem('pkg', '1.2.3', undefined, 'none');
+    const item = buildPackageItem({ name: 'pkg', currentVersion: '1.2.3' });
     vi.mocked(vscode.workspace.fs.readFile).mockImplementation(() => Promise.resolve(
       Buffer.from(JSON.stringify(manifest)),
     ));
@@ -60,7 +65,9 @@ describe('pinVersionCommand() writer boundary', () => {
     expect(revalidate).toHaveBeenCalledTimes(2);
     expect(beforeWrite).toHaveBeenCalledTimes(1);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(`Nestro: ${PACKAGE_IDENTITY_REJECTED_MESSAGE}`);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      `${vscode.l10n.t('Nestro: ')}${PACKAGE_IDENTITY_REJECTED_MESSAGE}`,
+    );
   });
 });
 
@@ -93,18 +100,18 @@ function makeCapability(currentVersion: string): ResolvedPackageItem {
   };
 }
 
-function makeProvider(
+function createPinVersionHarness(
   capability: ResolvedPackageItem,
   onBeforeWrite: () => void,
 ): {
-  provider: PackagesProvider;
+  provider: ProviderStub;
   revalidate: ReturnType<typeof vi.fn>;
   beforeWrite: ReturnType<typeof vi.fn>;
 } {
-  const revalidate = vi.fn(() => ({ ok: true as const, value: capability }));
+  const revalidate = vi.fn(() => Promise.resolve({ ok: true as const, value: capability }));
   const beforeWrite = vi.fn(onBeforeWrite);
-  const provider = {
-    resolvePackageItem: vi.fn(() => ({ ok: true as const, value: capability })),
+  const provider = makeProvider({
+    resolvePackageItem: vi.fn(() => Promise.resolve({ ok: true as const, value: capability })),
     revalidatePackageItem: revalidate,
     withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => {
       beforeWrite();
@@ -112,6 +119,6 @@ function makeProvider(
     }),
     loadPackages: vi.fn(),
     markPackageUpdatingForCapability: vi.fn((currentCapability: ResolvedPackageItem) => currentCapability),
-  } as unknown as PackagesProvider;
+  });
   return { provider, revalidate, beforeWrite };
 }

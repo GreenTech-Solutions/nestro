@@ -83,6 +83,18 @@ describe('status diagnostics report', () => {
     expect(report.length).toBeLessThan(2500);
   });
 
+  it('masks short generic credentials and keeps closing brackets', () => {
+    const report = formatStatusReport(snapshot({
+      updateFailures: [{
+        packageFilePaths: [],
+        detail: 'failed (token=abc) with [password=hunter2] and api-key: k1\tnext',
+      }],
+    }));
+
+    expect(report).toContain('failed (token=[REDACTED]) with [password=[REDACTED]] and api-key: [REDACTED] next');
+    expect(report).not.toMatch(/hunter2|token=abc|k1/);
+  });
+
   it('sorts failures by the stable owner-qualified label order', () => {
     const report = formatStatusReport(snapshot({
       updateFailures: [
@@ -114,6 +126,37 @@ describe('status diagnostics report', () => {
     expect(report).not.toContain('Package read failures');
     expect(report).not.toContain('Update check failures');
     expect(report).not.toContain('Security audit failures');
+  });
+});
+
+describe('status report ANSI stripping', () => {
+  function formatDetail(detail: string): string {
+    return formatStatusReport(snapshot({
+      updateFailures: [{ packageFilePaths: [], detail }],
+    }));
+  }
+
+  it('strips CSI sequences', () => {
+    const report = formatDetail('a\u001b[31mred\u001b[0m b\u001b[1;32;4mgreen\u001b[m c');
+    expect(report).toContain('Details: ared bgreen c');
+    expect(report).not.toContain('\u001b');
+    expect(report).not.toContain('[31m');
+    expect(report).not.toContain('[0m');
+  });
+
+  it('strips 8-bit CSI sequences', () => {
+    const report = formatDetail('a\u009b31mred\u009b0m b');
+    expect(report).toContain('Details: ared b');
+  });
+
+  it('strips OSC sequences terminated by BEL or ST', () => {
+    const report = formatDetail(
+      'a\u001b]0;window title\u0007b\u001b]8;;https://example.test\u001b\\link\u001b]8;;\u001b\\c',
+    );
+    expect(report).toContain('Details: ablinkc');
+    expect(report).not.toContain('window title');
+    expect(report).not.toContain(']0;');
+    expect(report).not.toContain(']8;;');
   });
 });
 

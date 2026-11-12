@@ -5,11 +5,26 @@ export interface ShellTaskCommand {
   args: (string | vscode.ShellQuotedString)[];
 }
 
+export type ShellTaskOutcome
+  = | { readonly kind: 'ended'; readonly exitCode: number | undefined }
+    | { readonly kind: 'cancelled' };
+
+interface ShellTaskWaitState {
+  readonly bufferedProcessEvents: vscode.TaskProcessEndEvent[];
+  readonly bufferedTaskEvents: vscode.TaskEndEvent[];
+  readonly listeners: vscode.Disposable[];
+  readonly resolve: (outcome: ShellTaskOutcome) => void;
+  readonly reject: (error: unknown) => void;
+  execution: vscode.TaskExecution | undefined;
+  settled: boolean;
+  cancelled: boolean;
+}
+
 export async function runShellTaskAndWait(
   shellCommand: ShellTaskCommand,
   taskName: string,
   cwd?: string,
-): Promise<number | undefined> {
+): Promise<ShellTaskOutcome> {
   const task = new vscode.Task(
     { type: 'shell' },
     vscode.TaskScope.Workspace,
@@ -26,75 +41,104 @@ export async function runShellTaskAndWait(
     panel: vscode.TaskPanelKind.New,
   };
 
-  let execution: vscode.TaskExecution | undefined;
-  const bufferedProcessEvents: vscode.TaskProcessEndEvent[] = [];
-  const bufferedTaskEvents: vscode.TaskEndEvent[] = [];
+  return await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: taskName, cancellable: true },
+    (_progress, token) => waitForShellTask(task, token),
+  );
+}
 
-  const completion = new Promise<number | undefined>((resolve, reject) => {
-    let settled = false;
-    let processListener: vscode.Disposable;
-    let taskListener: vscode.Disposable;
-
-    const finish = (exitCode: number | undefined): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      processListener.dispose();
-      taskListener.dispose();
-      resolve(exitCode);
+function waitForShellTask(task: vscode.Task, token: vscode.CancellationToken): Promise<ShellTaskOutcome> {
+  return new Promise((resolve, reject) => {
+    const state: ShellTaskWaitState = {
+      bufferedProcessEvents: [],
+      bufferedTaskEvents: [],
+      listeners: [],
+      resolve,
+      reject,
+      execution: undefined,
+      settled: false,
+      cancelled: false,
     };
-
-    processListener = vscode.tasks.onDidEndTaskProcess((event) => {
-      if (execution === undefined) {
-        bufferedProcessEvents.push(event);
-        return;
-      }
-
-      if (event.execution !== execution) {
-        return;
-      }
-
-      finish(event.exitCode);
-    });
-
-    taskListener = vscode.tasks.onDidEndTask((event) => {
-      if (execution === undefined) {
-        bufferedTaskEvents.push(event);
-        return;
-      }
-
-      if (event.execution !== execution) {
-        return;
-      }
-
-      finish(undefined);
-    });
-
-    void (async (): Promise<void> => {
-      try {
-        execution = await vscode.tasks.executeTask(task);
-      }
-      catch (error) {
-        processListener.dispose();
-        taskListener.dispose();
-        throw error;
-      }
-
-      const processEvent = bufferedProcessEvents.find(event => event.execution === execution);
-      if (processEvent !== undefined) {
-        finish(processEvent.exitCode);
-        return;
-      }
-
-      if (bufferedTaskEvents.some(event => event.execution === execution)) {
-        finish(undefined);
-      }
-    })().catch(reject);
+    if (token.isCancellationRequested) {
+      settleShellTask(state, { kind: 'cancelled' });
+      return;
+    }
+    state.listeners.push(
+      vscode.tasks.onDidEndTaskProcess(event => handleProcessEnd(state, event)),
+      vscode.tasks.onDidEndTask(event => handleTaskEnd(state, event)),
+      token.onCancellationRequested(() => cancelShellTask(state)),
+    );
+    void startShellTask(task, state).catch(error => rejectShellTask(state, error));
   });
+}
 
-  return await completion;
+async function startShellTask(task: vscode.Task, state: ShellTaskWaitState): Promise<void> {
+  state.execution = await vscode.tasks.executeTask(task);
+  if (state.cancelled) {
+    state.execution.terminate();
+    return;
+  }
+  const processEvent = state.bufferedProcessEvents.find(event => event.execution === state.execution);
+  if (processEvent !== undefined) {
+    finishProcessEnd(state, processEvent.exitCode);
+    return;
+  }
+  if (state.bufferedTaskEvents.some(event => event.execution === state.execution)) {
+    finishProcessEnd(state, undefined);
+  }
+}
+
+function handleProcessEnd(state: ShellTaskWaitState, event: vscode.TaskProcessEndEvent): void {
+  if (state.execution === undefined) {
+    state.bufferedProcessEvents.push(event);
+    return;
+  }
+  if (event.execution === state.execution) {
+    finishProcessEnd(state, event.exitCode);
+  }
+}
+
+function handleTaskEnd(state: ShellTaskWaitState, event: vscode.TaskEndEvent): void {
+  if (state.execution === undefined) {
+    state.bufferedTaskEvents.push(event);
+    return;
+  }
+  if (event.execution === state.execution) {
+    finishProcessEnd(state, undefined);
+  }
+}
+
+function finishProcessEnd(state: ShellTaskWaitState, exitCode: number | undefined): void {
+  settleShellTask(state, { kind: 'ended', exitCode });
+}
+
+function cancelShellTask(state: ShellTaskWaitState): void {
+  state.cancelled = true;
+  const execution = state.execution;
+  settleShellTask(state, { kind: 'cancelled' });
+  execution?.terminate();
+}
+
+function settleShellTask(state: ShellTaskWaitState, outcome: ShellTaskOutcome): void {
+  if (state.settled) {
+    return;
+  }
+  state.settled = true;
+  disposeShellTaskListeners(state);
+  state.resolve(outcome);
+}
+
+function rejectShellTask(state: ShellTaskWaitState, error: unknown): void {
+  if (state.settled) {
+    return;
+  }
+  state.settled = true;
+  disposeShellTaskListeners(state);
+  state.reject(error);
+}
+
+function disposeShellTaskListeners(state: ShellTaskWaitState): void {
+  state.listeners.forEach(listener => listener.dispose());
 }
 
 export function formatShellTaskCommandForLog(shellCommand: ShellTaskCommand): string {
