@@ -23,6 +23,7 @@ export type { PackageFileDependencyUpdates } from './packageTransforms';
 export { selectVersionsForPicker } from './registryClient';
 export { classifyVersionReleaseAge, resolveUpdateReleaseAge } from './releaseAge';
 export type { ReleaseAgeState } from './releaseAge';
+export { runWithRegistryConfigMemo } from './registry/configSourceMemo';
 export { runRootOperations, startRootOperations } from './rootOperation';
 export type { RootOperationResult } from './rootOperation';
 export { formatShellTaskCommandForLog, formatShellTaskFailureMessage, runShellTaskAndWait } from './shellTask';

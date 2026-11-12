@@ -411,6 +411,121 @@ describe('UpdateOrchestrationService', () => {
       expect(result.kind).toBe('completed');
       expect(dependencies.fetchPackageMetadata).not.toHaveBeenCalled();
     });
+
+    it('fetches release metadata up to the coordinator cap and aligns all package results', async () => {
+      const packageFilePath = '/workspace/package.json';
+      const identities = Array.from({ length: 10 }, (_, index) => identity('package-' + index, packageFilePath));
+      const latestVersions = new Map(identities.map(({ packageName }) => [packageName, '2.0.0']));
+      const metadataOutcome: PackageMetadataOutcome = { kind: 'unavailable' } as unknown as PackageMetadataOutcome;
+      const pendingReleases: Array<() => void> = [];
+      let active = 0;
+      const fetchPackageMetadata = vi.fn(() => {
+        active += 1;
+        let resolve!: (outcome: PackageMetadataOutcome) => void;
+        const request = new Promise<PackageMetadataOutcome>((resolveRequest) => {
+          resolve = resolveRequest;
+        });
+        const settled = request.finally(() => {
+          active -= 1;
+        });
+        pendingReleases.push(() => resolve(metadataOutcome));
+        return settled;
+      });
+      const dependencies = createDependencies({
+        metadataCoordinator: new OperationCoordinator(4),
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(latestVersions),
+        fetchPackageMetadata,
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+      const check = service.check(createRequest({
+        identities,
+        minimumReleaseAgeDays: 7,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+      }));
+      const releaseBatch = (): void => {
+        pendingReleases.splice(0).forEach(release => release());
+      };
+
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(4));
+      expect(active).toBe(4);
+      releaseBatch();
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(8));
+      expect(active).toBe(4);
+      releaseBatch();
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(10));
+      expect(active).toBe(2);
+      releaseBatch();
+
+      const result = await check;
+      expect(result.kind).toBe('completed');
+      if (expectCompleted(result)) {
+        expect(result.data.size).toBe(10);
+      }
+      expect(active).toBe(0);
+    });
+
+    it('fetches duplicate package names once when their registry keys match', async () => {
+      const identities = [
+        identity('react', '/workspace/apps/web/package.json'),
+        identity('react', '/workspace/packages/site/package.json'),
+      ];
+      const dependencies = createDependencies({
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map([['react', '2.0.0']])),
+        resolveMetadataRegistryKey: vi.fn().mockResolvedValue('registry-key'),
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+
+      const result = await service.check(createRequest({
+        identities,
+        packageFiles: identities.map(({ packageFilePath }) => packageFilePath),
+        minimumReleaseAgeDays: 7,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+      }));
+
+      expect(result.kind).toBe('completed');
+      expect(dependencies.fetchPackageMetadata).toHaveBeenCalledOnce();
+    });
+
+    it('does not start queued release metadata requests after cancellation', async () => {
+      const packageFilePath = '/workspace/package.json';
+      const identities = Array.from({ length: 10 }, (_, index) => identity('package-' + index, packageFilePath));
+      const controller = new AbortController();
+      const pendingReleases: Array<() => void> = [];
+      const settledRequests: Promise<void>[] = [];
+      const metadataOutcome: PackageMetadataOutcome = { kind: 'unavailable' } as unknown as PackageMetadataOutcome;
+      const fetchPackageMetadata = vi.fn(() => {
+        let resolve!: (outcome: PackageMetadataOutcome) => void;
+        const request = new Promise<PackageMetadataOutcome>((resolveRequest) => {
+          resolve = resolveRequest;
+        });
+        const settled = request.finally(() => undefined);
+        pendingReleases.push(() => resolve(metadataOutcome));
+        settledRequests.push(settled.then(() => undefined));
+        return settled;
+      });
+      const dependencies = createDependencies({
+        metadataCoordinator: new OperationCoordinator(4),
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(
+          new Map(identities.map(({ packageName }) => [packageName, '2.0.0'])),
+        ),
+        fetchPackageMetadata,
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+      const check = service.check(createRequest({
+        identities,
+        minimumReleaseAgeDays: 7,
+        signal: controller.signal,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+      }));
+
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(4));
+      controller.abort();
+      await expect(check).resolves.toEqual({ kind: 'discarded', reason: 'cancelled' });
+      pendingReleases.splice(0).forEach(release => release());
+      await Promise.all(settledRequests);
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(fetchPackageMetadata).toHaveBeenCalledTimes(4);
+    });
   });
 
   describe('withCoordinators', () => {

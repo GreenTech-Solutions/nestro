@@ -169,7 +169,7 @@ describe('PackagesProvider', () => {
     await provider.checkUpdates();
 
     expect(fetchPackageMetadata).toHaveBeenCalledTimes(6);
-    expect(maximumActiveRequests).toBe(METADATA_CONCURRENCY_CAP);
+    expect(maximumActiveRequests).toBe(Math.min(6, METADATA_CONCURRENCY_CAP));
   });
 
   it('keeps an update actionable when metadata resolution or fetch fails', async () => {
