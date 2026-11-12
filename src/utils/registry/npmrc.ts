@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { PACKAGE_MANAGERS } from '../../shared';
 import { getConfigFilePaths, getPackageRoot, readConfigFile } from './configFiles';
 import { expandEnvironmentReferences, NPM_ENV_SYNTAX } from '../envExpansion';
@@ -32,10 +31,11 @@ export interface AuthScope {
 /** The merged npm configuration: user `.npmrc`, project `.npmrc` files, then `npm_config_*` environment overrides. */
 export async function readNpmrcConfig(packageFilePath: string | undefined): Promise<Map<string, string>> {
   const config = new Map<string, string>();
+  const baseDirectory = getPackageRoot(packageFilePath) ?? process.cwd();
   for (const npmrcPath of getConfigFilePaths(packageFilePath, PACKAGE_MANAGERS.npm.dialect.configFile)) {
-    mergeNpmrcConfig(config, await readConfigFile(npmrcPath) ?? '', path.dirname(npmrcPath));
+    mergeNpmrcConfig(config, await readConfigFile(npmrcPath) ?? '', baseDirectory);
   }
-  applyEnvironmentOverrides(config, getPackageRoot(packageFilePath) ?? process.cwd());
+  applyEnvironmentOverrides(config, baseDirectory);
   return config;
 }
 
