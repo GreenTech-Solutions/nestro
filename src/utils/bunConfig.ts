@@ -16,7 +16,9 @@ type BunSection = 'install' | 'install.scopes' | 'other';
 interface BunConfigState {
   section: BunSection | undefined;
   registry: BunRegistryConfiguration | undefined;
+  registrySeen: boolean;
   scopes: Map<string, BunRegistryConfiguration>;
+  seenScopes: Set<string>;
   seenSections: Set<string>;
 }
 
@@ -30,7 +32,9 @@ export function parseBunConfig(contents: string): ParsedBunConfig | undefined {
   const state: BunConfigState = {
     section: undefined,
     registry: undefined,
+    registrySeen: false,
     scopes: new Map(),
+    seenScopes: new Set(),
     seenSections: new Set(),
   };
   for (const rawLine of contents.split(/\r?\n/)) {
@@ -70,26 +74,32 @@ function processBunConfigLine(rawLine: string, state: BunConfigState): boolean {
     if (!BUN_REGISTRY_KEYS.has(assignment.key)) {
       return true;
     }
-    if (state.registry !== undefined) {
+    if (state.registrySeen) {
       return false;
     }
+    state.registrySeen = true;
     const parsed = parseRegistryValue(assignment.value);
     if (parsed === undefined) {
       return false;
     }
-    state.registry = parsed;
+    if (parsed !== null) {
+      state.registry = parsed;
+    }
     return true;
   }
 
   const scope = assignment.key.slice(1);
-  if (!isValidScope(assignment.key) || state.scopes.has(scope)) {
+  if (!isValidScope(assignment.key) || state.seenScopes.has(scope)) {
     return false;
   }
+  state.seenScopes.add(scope);
   const parsed = parseRegistryValue(assignment.value);
   if (parsed === undefined) {
     return false;
   }
-  state.scopes.set(scope, parsed);
+  if (parsed !== null) {
+    state.scopes.set(scope, parsed);
+  }
   return true;
 }
 
@@ -119,24 +129,26 @@ function parseBunAssignment(
   }
   if (scopeAssignment) {
     const parsedKey = parseTomlString(key);
-    return parsedKey === undefined || parsedKey.nextIndex !== key.length
+    return parsedKey === undefined || parsedKey.value === null || parsedKey.nextIndex !== key.length
       ? undefined
       : { key: parsedKey.value, value };
   }
   return /^[A-Za-z][A-Za-z0-9_-]*$/.test(key) ? { key, value } : undefined;
 }
 
-function parseRegistryValue(value: string): BunRegistryConfiguration | undefined {
+function parseRegistryValue(value: string): BunRegistryConfiguration | null | undefined {
   if (value.startsWith('{')) {
     const fields = parseInlineTable(value);
     if (fields === undefined) {
       return undefined;
     }
     const url = fields.get('url');
-    if (url === undefined || fields.has('token') === (fields.has('username') || fields.has('password'))) {
+    const hasUsername = fields.has('username');
+    const hasPassword = fields.has('password');
+    if (url === undefined || (fields.has('token') && (hasUsername || hasPassword))) {
       return undefined;
     }
-    if (fields.has('username') !== fields.has('password')) {
+    if (hasUsername !== hasPassword) {
       return undefined;
     }
     return normalizeRegistryConfiguration(
@@ -148,9 +160,10 @@ function parseRegistryValue(value: string): BunRegistryConfiguration | undefined
   }
 
   const parsed = parseTomlString(value);
-  return parsed === undefined || parsed.nextIndex !== value.length
-    ? undefined
-    : normalizeRegistryConfiguration(parsed.value);
+  if (parsed === undefined || parsed.nextIndex !== value.length) {
+    return undefined;
+  }
+  return parsed.value === null ? null : normalizeRegistryConfiguration(parsed.value);
 }
 
 function normalizeRegistryConfiguration(

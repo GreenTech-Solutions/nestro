@@ -169,7 +169,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     expectRegistryUrl('https://npmrc-scope.example.com/npm/@acme%2Fpkg');
   });
 
-  it('uses all supported Bun scope entry shapes and expands both environment forms', () => {
+  it('matches Bun 1.4.4 environment expansion for scope credentials', () => {
     vi.stubEnv('BUN_PASSWORD', 'secret');
     vi.stubEnv('BUN_TOKEN', 'token');
 
@@ -183,9 +183,32 @@ describe('fetchPackageMetadataFromRegistry()', () => {
       scopes: new Map([
         ['plain', { registryUrl: 'https://plain.example.com/', authToken: undefined, authIdent: 'alice:secret' }],
         ['basic', { registryUrl: 'https://basic.example.com/', authToken: undefined, authIdent: 'alice:secret' }],
-        ['token', { registryUrl: 'https://token.example.com/', authToken: 'token', authIdent: undefined }],
+        ['token', { registryUrl: 'https://token.example.com/', authToken: '${BUN_TOKEN}', authIdent: undefined }],
       ]),
     });
+  });
+
+  it('matches Bun 1.4.4 by omitting unset credentials from registry requests', async () => {
+    vi.stubEnv('NESTRO_BUN_UNSET', undefined);
+    mockNpmrcFiles({
+      '/workspace/bunfig.toml': [
+        '[install]',
+        'registry = { url = "https://bun.example.com/npm/", token = "$NESTRO_BUN_UNSET" }',
+        '[install.scopes]',
+        '"@acme" = { url = "https://scope.example.com/npm/", username = "alice", password = "$NESTRO_BUN_UNSET" }',
+      ].join('\n'),
+    });
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+    mockRegistryResponse(JSON.stringify({ 'dist-tags': {}, versions: { '1.0.0': {} } }));
+
+    await fetchPackageMetadataFromRegistry('react', '/workspace/package.json', undefined, 'bun');
+    await fetchPackageMetadataFromRegistry('@acme/pkg', '/workspace/package.json', undefined, 'bun');
+
+    const calls = vi.mocked(https.get).mock.calls;
+    expect(calls[0]?.[0]).toBe('https://bun.example.com/npm/react');
+    expect(calls[0]?.[1]).not.toMatchObject({ headers: { Authorization: expect.any(String) } });
+    expect(calls[1]?.[0]).toBe('https://scope.example.com/npm/@acme%2Fpkg');
+    expect(calls[1]?.[1]).not.toMatchObject({ headers: { Authorization: expect.any(String) } });
   });
 
   it('ignores unrelated Bun configuration while resolving metadata', async () => {
@@ -223,9 +246,12 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     }
   });
 
-  it('rejects unresolved variables and malformed Bun registry shapes', () => {
-    delete process.env.NESTRO_BUN_UNSET;
-    expect(parseBunConfig('[install]\nregistry = "$NESTRO_BUN_UNSET"')).toBeUndefined();
+  it('drops unset Bun values and rejects malformed registry shapes', () => {
+    vi.stubEnv('NESTRO_BUN_UNSET', undefined);
+    expect(parseBunConfig('[install]\nregistry = "$NESTRO_BUN_UNSET"')).toEqual({
+      registry: undefined,
+      scopes: new Map(),
+    });
     expect(parseBunConfig('\uFEFF[install]\nregistry = "https://registry.example.com"')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = https://registry.example.com')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com", token = "x", username = "a", password = "b" }')).toBeUndefined();
@@ -239,7 +265,14 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     expect(parseBunConfig('[install]\nregistry')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry =')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = {}')).toBeUndefined();
-    expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/" }')).toBeUndefined();
+    expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/" }')).toEqual({
+      registry: {
+        registryUrl: 'https://registry.example.com/',
+        authToken: undefined,
+        authIdent: undefined,
+      },
+      scopes: new Map(),
+    });
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/", username = "alice" }')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/", unknown = "value" }')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = { url "https://registry.example.com/" }')).toBeUndefined();
@@ -247,6 +280,7 @@ describe('fetchPackageMetadataFromRegistry()', () => {
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/" token = "value" }')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/", }')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/", token = "bad\\q" }')).toBeUndefined();
+    expect(parseBunConfig('[install]\nregistry = { url = "https://registry.example.com/", token = "$NESTRO_BUN_UNSET", token = "value" }')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = "unterminated')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = "not-a-url"')).toBeUndefined();
     expect(parseBunConfig('[install]\nregistry = "https://alice@example.com"')).toBeUndefined();
