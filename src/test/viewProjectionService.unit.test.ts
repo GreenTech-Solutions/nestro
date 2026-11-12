@@ -11,7 +11,7 @@ import type { PackageTreeEntry } from '../providers/treeBuilder';
 import type { ViewContextMap, ViewProjectionSnapshot } from '../providers/viewProjectionService';
 import type { WorkspaceCapabilities } from '../providers/PackagesProvider';
 import { CONTEXT_VALUE_TOKENS } from '../shared';
-import type { UpdateType } from '../utils';
+import type { AuditSeverity, UpdateType } from '../utils';
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   hasPackageFiles: false,
@@ -40,13 +40,26 @@ const FULL_CAPABILITIES: WorkspaceCapabilities = {
 function createEntry(
   packageName: string,
   updateType: UpdateType = 'none',
-  overrides: { readonly dev?: boolean; readonly packageFilePath?: string; readonly latest?: string } = {},
+  overrides: {
+    readonly dev?: boolean;
+    readonly packageFilePath?: string;
+    readonly latest?: string;
+    readonly vulnerabilitySeverity?: AuditSeverity;
+  } = {},
 ): PackageTreeEntry {
   const packageFilePath = overrides.packageFilePath ?? '/workspace/package.json';
   const dev = overrides.dev ?? false;
   const latest = updateType === 'none' ? undefined : overrides.latest ?? '2.0.0';
   return {
-    item: buildPackageItem({ name: packageName, currentVersion: '1.0.0', latest, updateType, vulnerabilitySeverity: undefined, packageFilePath, dev }),
+    item: buildPackageItem({
+      name: packageName,
+      currentVersion: '1.0.0',
+      latest,
+      updateType,
+      vulnerabilitySeverity: overrides.vulnerabilitySeverity,
+      packageFilePath,
+      dev,
+    }),
     dev,
     packageFilePath,
   };
@@ -138,7 +151,14 @@ describe('computeViewProjection', () => {
       const viaAll = computeViewProjection(baseSnapshot({ entries, filterType: 'all' }));
       const viaBreaking = computeViewProjection(baseSnapshot({ entries, filterType: 'breaking' }));
       expect(viaBreaking.packageTree.filterCounts).toEqual(viaAll.packageTree.filterCounts);
-      expect(viaAll.packageTree.filterCounts).toEqual({ all: 3, hasUpdates: 2, patch: 1, minor: 0, breaking: 1 });
+      expect(viaAll.packageTree.filterCounts).toEqual({
+        all: 3,
+        hasUpdates: 2,
+        patch: 1,
+        minor: 0,
+        breaking: 1,
+        vulnerable: 0,
+      });
     });
   });
 
@@ -306,7 +326,59 @@ describe('computeViewProjection', () => {
         icon: 'warning',
         color: 'charts.red',
         actionable: false,
+        command: { command: 'nestro.openAuditReport', title: 'Open security audit report' },
       }]);
+    });
+
+    it('offers the vulnerable filter for direct rows and opens the report after filtering', () => {
+      const entries = Array.from({ length: 370 }, (_, index) => createEntry(
+        `package-${index}`,
+        'none',
+        index < 4 ? { vulnerabilitySeverity: 'high' } : {},
+      ));
+      const ready = computeViewProjection(baseSnapshot({
+        entries,
+        auditState: 'done',
+        lastAuditCount: 13,
+      }));
+      expect(ready.statusRows[0]).toEqual({
+        label: 'Audit complete',
+        description: '13 vulnerable packages, 4 in the list',
+        icon: 'warning',
+        color: 'charts.red',
+        actionable: false,
+        command: { command: 'nestro.showVulnerablePackages', title: 'Show vulnerable packages' },
+      });
+
+      const filtered = computeViewProjection(baseSnapshot({
+        entries,
+        filterType: 'vulnerable',
+        auditState: 'done',
+        lastAuditCount: 13,
+      }));
+      expect(filtered.statusRows[0].command).toEqual({
+        command: 'nestro.openAuditReport',
+        title: 'Open security audit report',
+      });
+      expect(filtered.statusRows[1]).toMatchObject({
+        label: 'Filter: Vulnerable',
+        description: '4 of 370',
+      });
+    });
+
+    it('adds the visible direct-row count to an incomplete audit description', () => {
+      const projection = computeViewProjection(baseSnapshot({
+        entries: [createEntry('react', 'none', { vulnerabilitySeverity: 'high' })],
+        auditState: 'incomplete',
+        lastAuditCount: 13,
+        lastAuditSuccessfulRootCount: 1,
+        failedAuditPaths: ['/workspace/package.json'],
+      }));
+      expect(projection.statusRows[0]).toMatchObject({
+        description: '13 vulnerable packages, 1 in the list from successful audit roots; 1 package root failed',
+        actionable: false,
+        command: { command: 'nestro.showVulnerablePackages', title: 'Show vulnerable packages' },
+      });
     });
 
     it('reports an incomplete audit, distinguishing zero successful roots from partial success', () => {

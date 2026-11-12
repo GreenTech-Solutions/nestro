@@ -1,5 +1,5 @@
 export type { AuditResult } from './audit/outcome';
-export { mergeSeverity } from './audit/types';
+export { compareSeverity, mergeSeverity } from './audit/types';
 export type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 export { runNpmAudit, runPackageAudit } from './auditClient';
 export { cloneAuditAdvisory, inferPathAttribution, mergeAuditAdvisories } from './auditReport';

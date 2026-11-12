@@ -220,6 +220,34 @@ describe('PackagesProvider', () => {
     provider.dispose();
   });
 
+  it('clears the vulnerable filter when a new audit starts', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+    setProviderState(provider, {
+      allEntries: [{
+        item: buildPackageItem({
+          name: 'react',
+          currentVersion: '18.0.0',
+          vulnerabilitySeverity: 'high',
+          packageFilePath: '/workspace/package.json',
+        }),
+        dev: false,
+        packageFilePath: '/workspace/package.json',
+      }],
+      auditState: 'done',
+      lastAuditCount: 1,
+    });
+
+    filterManager.showVulnerable();
+    expect(filterManager.current).toBe('vulnerable');
+
+    const audit = provider.runAudit();
+    expect(filterManager.current).toBe('all');
+    await audit;
+    provider.dispose();
+  });
+
   it('publishes nestro.hasSearchQuery only while a search query is active, and resets it on dispose', async () => {
     const filterManager = new FilterManager('all');
     const provider = new PackagesProvider(filterManager);

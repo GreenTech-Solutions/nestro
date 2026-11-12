@@ -260,6 +260,10 @@
         "title": "%commands.nestro.showFilterPicker.title%"
       },
       {
+        "command": "nestro.showVulnerablePackages",
+        "title": "%commands.nestro.showVulnerablePackages.title%"
+      },
+      {
         "command": "nestro.searchPackages",
         "title": "%commands.nestro.searchPackages.title%",
         "category": "Nestro",
@@ -288,6 +292,10 @@
       "commandPalette": [
         {
           "command": "nestro.setFilter",
+          "when": "false"
+        },
+        {
+          "command": "nestro.showVulnerablePackages",
           "when": "false"
         },
         {

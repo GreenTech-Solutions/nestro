@@ -40,6 +40,7 @@
   "commands.nestro.copyPackageName.title": "Copy Package Name",
   "commands.nestro.setFilter.title": "Set Filter",
   "commands.nestro.showFilterPicker.title": "Select Filter",
+  "commands.nestro.showVulnerablePackages.title": "Show Vulnerable Packages",
   "commands.nestro.searchPackages.title": "Search Packages",
   "commands.nestro.clearSearchQuery.title": "Clear Search Query",
   "commands.nestro.openSettings.title": "Settings",

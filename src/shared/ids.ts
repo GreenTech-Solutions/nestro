@@ -16,6 +16,7 @@ export const COMMAND_IDS = {
   copyPackageName: 'nestro.copyPackageName',
   setFilter: 'nestro.setFilter',
   showFilterPicker: 'nestro.showFilterPicker',
+  showVulnerablePackages: 'nestro.showVulnerablePackages',
   searchPackages: 'nestro.searchPackages',
   clearSearchQuery: 'nestro.clearSearchQuery',
   openSettings: 'nestro.openSettings',

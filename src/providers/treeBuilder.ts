@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getFilterLabel } from './FilterManager';
-import type { FilterCounts, FilterType } from './FilterManager';
+import type { FilterCounts, FilterType, PackageFilter } from './FilterManager';
 import { GroupItem } from './GroupItem';
 import { MessageItem } from './MessageItem';
 import { PackageItem } from './PackageItem';
@@ -9,6 +9,7 @@ import { MAX_DESCRIPTION_SEARCH_LENGTH } from '../config';
 import { getPathInfo } from './packageLabelPaths';
 import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels } from './packageLabels';
 import type { WorkspaceFolderDescriptor } from './packageLabels';
+import { compareSeverity } from '../utils';
 import type { UpdateType } from '../utils';
 
 const UPDATE_ORDER: Record<UpdateType, number> = {
@@ -32,7 +33,7 @@ export interface PackageGroupProjection {
 }
 
 export interface PackageTreeProjection {
-  readonly filterType: FilterType;
+  readonly filterType: PackageFilter;
   readonly search: string;
   readonly allPackageFilePaths: readonly string[];
   readonly searchMatchedEntries: readonly PackageTreeEntry[];
@@ -45,7 +46,7 @@ export interface PackageTreeProjection {
 
 export function buildTree(
   entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
+  filterType: PackageFilter,
   search: string,
   workspaceFolders?: readonly WorkspaceFolderDescriptor[],
   allPackageFilePaths?: readonly string[],
@@ -65,7 +66,7 @@ export function buildTree(
 
 export function projectPackageTree(
   entries: readonly PackageTreeEntry[],
-  filterType: FilterType,
+  filterType: PackageFilter,
   search = '',
 ): PackageTreeProjection {
   const normalizedSearch = search.toLocaleLowerCase();
@@ -76,9 +77,17 @@ export function projectPackageTree(
   const filterCounts = buildFilterCounts(searchMatchedEntries);
   const visibleEntries = filterType === 'all'
     ? [...searchMatchedEntries]
-    : searchMatchedEntries.filter(entry => matchesUpdateFilter(entry, filterType));
+    : filterType === 'vulnerable'
+      ? searchMatchedEntries.filter(entry => entry.item.vulnerabilitySeverity !== undefined)
+      : searchMatchedEntries.filter(entry => matchesUpdateFilter(entry, filterType));
   if (filterType === 'hasUpdates') {
     visibleEntries.sort((left, right) => UPDATE_ORDER[left.item.updateType] - UPDATE_ORDER[right.item.updateType]);
+  }
+  else if (filterType === 'vulnerable') {
+    visibleEntries.sort((left, right) => compareSeverity(
+      left.item.vulnerabilitySeverity ?? 'info',
+      right.item.vulnerabilitySeverity ?? 'info',
+    ));
   }
   const visibleOutdatedEntries = visibleEntries.filter(isActionableUpdate);
   const groups = buildGroupProjections(visibleEntries);
@@ -104,7 +113,7 @@ export function getFilterCounts(
 
 /** Compact `treeView.description` for the active filter/search state; `undefined` when both are at their defaults. */
 export function formatViewDescription(
-  filterType: FilterType,
+  filterType: PackageFilter,
   search: string,
   counts: FilterCounts,
 ): string | undefined {
@@ -204,8 +213,12 @@ function buildFilterCounts(entries: readonly PackageTreeEntry[]): FilterCounts {
     patch: 0,
     minor: 0,
     breaking: 0,
+    vulnerable: 0,
   };
   for (const entry of entries) {
+    if (entry.item.vulnerabilitySeverity !== undefined) {
+      counts.vulnerable += 1;
+    }
     if (!isActionableUpdate(entry)) {
       continue;
     }

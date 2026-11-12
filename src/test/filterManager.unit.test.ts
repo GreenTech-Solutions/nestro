@@ -35,6 +35,18 @@ describe('FilterManager', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('shows the vulnerable filter once when requested repeatedly', () => {
+    const manager = new FilterManager('all');
+    const listener = vi.fn();
+    manager.onDidChange(listener);
+
+    manager.showVulnerable();
+    manager.showVulnerable();
+
+    expect(manager.current).toBe('vulnerable');
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it('updates the filter from the picker selection', async () => {
     const manager = new FilterManager('all');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
@@ -48,9 +60,36 @@ describe('FilterManager', () => {
       patch: 0,
       minor: 0,
       breaking: 1,
+      vulnerable: 0,
     });
 
     expect(manager.current).toBe('breaking');
+  });
+
+  it('keeps the vulnerable filter out of the picker and replaces it with a normal filter', async () => {
+    const manager = new FilterManager('all');
+    manager.showVulnerable();
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+      label: 'Patch',
+      filterType: 'patch',
+    } as vscode.QuickPickItem & { filterType: 'patch' });
+
+    await manager.showPicker({
+      all: 2,
+      hasUpdates: 1,
+      patch: 1,
+      minor: 0,
+      breaking: 0,
+      vulnerable: 1,
+    });
+
+    const [items] = vi.mocked(vscode.window.showQuickPick).mock.calls[0] as [
+      (vscode.QuickPickItem & { filterType: string; iconPath: vscode.ThemeIcon })[],
+      unknown,
+    ];
+    expect(items.map(item => item.filterType)).toEqual(FILTER_TYPES);
+    expect(items.every(item => item.iconPath.id !== 'circle-filled')).toBe(true);
+    expect(manager.current).toBe('patch');
   });
 
   it('stores a normalized package search query', () => {
@@ -123,6 +162,7 @@ describe('FilterManager', () => {
       patch: 1,
       minor: 1,
       breaking: 1,
+      vulnerable: 0,
     }, 'patch');
 
     expect(items.map(item => item.label)).toEqual([

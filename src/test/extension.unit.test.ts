@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { makeContext } from './fixtures';
 import { mockNestroConfiguration } from './fixtures/config';
 import { activate, deactivate } from '../extension';
-import { PackagesProvider } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
 import {
   copyPackageNameCommand,
   installUpdateCommand,
@@ -44,6 +44,7 @@ vi.mock('../providers', () => ({
   FilterManager: vi.fn(function (this: Record<string, unknown>, initialFilter: string) {
     this.current = initialFilter;
     this.set = vi.fn();
+    this.showVulnerable = vi.fn();
     this.showPicker = vi.fn().mockResolvedValue(undefined);
     this.dispose = vi.fn();
     this.onDidChange = vi.fn();
@@ -170,6 +171,20 @@ describe('activate()', () => {
     }
   });
 
+  it('registers a command that shows vulnerable packages', () => {
+    activate(makeContext());
+    const handlers = new Map(vi.mocked(vscode.commands.registerCommand).mock.calls.map(
+      ([id, handler]) => [id, handler] as const,
+    ));
+    const filterManager = vi.mocked(FilterManager).mock.instances[0] as unknown as {
+      showVulnerable: ReturnType<typeof vi.fn>;
+    };
+
+    handlers.get('nestro.showVulnerablePackages')?.();
+
+    expect(filterManager.showVulnerable).toHaveBeenCalledTimes(1);
+  });
+
   it('delegates package-scoped command handlers to their command function with the clicked item', () => {
     activate(makeContext());
     const item = { packageName: 'react' } as unknown as vscode.TreeItem;
@@ -224,6 +239,7 @@ describe('activate()', () => {
     ['null', null],
     ['an empty string', ''],
     ['an arbitrary string', 'not-a-filter'],
+    ['the audit-only filter', 'vulnerable'],
     ['a number', 42],
     ['a plain object', {}],
     ['an array', []],

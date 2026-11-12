@@ -105,8 +105,8 @@ suite('nestro.setFilter argument guard', function () {
 });
 
 suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 20 documented entries', () => {
-    assert.strictEqual(getManifest().contributes.commands.length, 20);
+  test('contributes.commands has exactly the 21 documented entries', () => {
+    assert.strictEqual(getManifest().contributes.commands.length, 21);
   });
 
   // Global commands gate on capability contexts published only after the provider's first

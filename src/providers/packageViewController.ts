@@ -67,6 +67,14 @@ export class PackageViewController implements vscode.Disposable {
     if (this.state.disposed) {
       return;
     }
+    if (
+      this.filterManager.current === 'vulnerable'
+      && this.state.auditState !== 'done'
+      && this.state.auditState !== 'incomplete'
+    ) {
+      this.filterManager.set('all');
+      return;
+    }
     const projection = computeViewProjection(this.buildViewProjectionSnapshot());
     this.applyTreeViewState(projection);
     this.publishViewContexts(projection.contexts);
