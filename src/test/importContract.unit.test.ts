@@ -7,19 +7,23 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const srcRoot = path.join(repoRoot, 'src');
 
 /** Subsystem directories under `src/` that own a barrel. */
-const SUBSYSTEMS = ['providers', 'utils', 'clients', 'commands', 'tools'] as const;
+const SUBSYSTEMS = ['shared', 'config', 'providers', 'utils', 'clients', 'commands', 'tools'] as const;
 type Subsystem = typeof SUBSYSTEMS[number];
 
 /**
  * Layer order: a subsystem may freely import a lower-ranked subsystem's barrel.
- * `tools` has no rank — it is fully isolated and checked separately (rule d).
+ * `shared` is the bottom layer and imports no subsystem (checked separately).
+ * `config` sits directly above `shared` and below `utils`: `utils` reads settings, so `config` can import `shared` only.
+ * `tools` has no rank — it may import only the `shared` barrel and is checked separately.
  * `commands` and `extension.ts` sit above every ranked subsystem.
  */
 const LAYER_RANK: Record<Exclude<Subsystem, 'tools'>, number> = {
-  utils: 1,
-  clients: 2,
-  providers: 3,
-  commands: 4,
+  shared: 0,
+  config: 1,
+  utils: 2,
+  clients: 3,
+  providers: 4,
+  commands: 5,
 };
 
 /**
@@ -33,71 +37,6 @@ interface AllowlistEntry {
 }
 
 const ALLOWLIST: readonly AllowlistEntry[] = [
-  {
-    file: 'src/clients/ClientManager.ts',
-    target: '../utils/logger',
-    reason: 'clients never imports the utils barrel: it re-exports packageManager.ts, which imports ClientManager from clients, so routing through the barrel would recreate the clients-utils-clients cycle this rule exists to avoid.',
-  },
-  {
-    file: 'src/clients/projectResolver.ts',
-    target: '../utils/logger',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/projectResolver.ts',
-    target: '../utils/packageManagerKind',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts; PackageManager is defined in utils so clients and utils share one source of truth.',
-  },
-  {
-    file: 'src/clients/NpmClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/PnpmClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/BunClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/BunClient.ts',
-    target: '../utils/bunAuditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/YarnClient.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/YarnClient.ts',
-    target: '../utils/yarnAuditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/operandValidation.ts',
-    target: '../utils/packageNameValidation',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts; the metadata clients in utils share the one package-name validator.',
-  },
-  {
-    file: 'src/clients/Client.ts',
-    target: '../utils/auditClient',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/clients/Client.ts',
-    target: '../utils/shellTask',
-    reason: 'same barrel-cycle avoidance as ClientManager.ts.',
-  },
-  {
-    file: 'src/utils/packageManager.ts',
-    target: '../clients',
-    reason: 'detectPackageManager()/buildInstallCommand() only delegate to ClientManager; the module is documented and tested as part of utils, and relocating it to clients would ripple through every command/provider caller and test for no behavior change.',
-  },
   {
     file: 'src/utils/auditReportFormatter.ts',
     target: '../providers',
@@ -185,7 +124,7 @@ describe('import contract', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('keeps `tools` isolated from every other subsystem', () => {
+  it('keeps `tools` isolated from every subsystem except the `shared` barrel', () => {
     const offenders: string[] = [];
     for (const file of allProductionFiles.filter(f => subsystemOf(f) === 'tools')) {
       const source = readFileSync(path.join(repoRoot, file), 'utf8');
@@ -193,10 +132,29 @@ describe('import contract', () => {
         if (!specifier.startsWith('.')) {
           continue;
         }
-        const target = subsystemOf(resolveSpecifier(file, specifier));
-        if (target !== undefined && target !== 'tools') {
+        const resolved = resolveSpecifier(file, specifier);
+        const target = subsystemOf(resolved);
+        const isSharedBarrel = target === 'shared' && resolved === 'src/shared';
+        if (target !== undefined && target !== 'tools' && !isSharedBarrel) {
           offenders.push(`${file} -> ${specifier}`);
         }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps `shared` free of vscode, other subsystems and non-Node packages', () => {
+    const offenders: string[] = [];
+    for (const file of allProductionFiles.filter(f => subsystemOf(f) === 'shared')) {
+      const source = readFileSync(path.join(repoRoot, file), 'utf8');
+      for (const specifier of importSpecifiers(source)) {
+        if (specifier.startsWith('node:')) {
+          continue;
+        }
+        if (specifier.startsWith('.') && subsystemOf(resolveSpecifier(file, specifier)) === 'shared') {
+          continue;
+        }
+        offenders.push(`${file} -> ${specifier}`);
       }
     }
     expect(offenders).toEqual([]);

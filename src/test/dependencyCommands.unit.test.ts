@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { pinVersionCommand } from '../commands/pinVersion';
 import { removePackageCommand } from '../commands/removePackage';
 import { switchDepTypeCommand } from '../commands/switchDepType';
-import { PackageItem, PackagesProvider } from '../providers';
+import { installUpdateCommand, updateAllVisibleCommand } from '../commands/installUpdate';
+import { runInstallCommand } from '../commands/runInstall';
+import { PackageItem } from '../providers/PackageItem';
 import {
   DependencyTypeConflictError,
+  logger,
   setVersionPin,
   showError,
   switchDependencyType,
@@ -38,11 +43,12 @@ const identityMocks = vi.hoisted(() => {
       dev: boolean;
       versionPrefix?: string;
     }) => item.packageFilePath === '' ? undefined : makeCapability(item)),
-    resolvePinManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
-    resolveUnambiguousManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
+    resolveManifestEntry: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
     revalidateCommandPackageItem: vi.fn((capability: ReturnType<typeof makeCapability>) => capability),
   };
 });
+
+vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>(), realpath: (value: string) => Promise.resolve(value) }));
 
 vi.mock('../commands/packageIdentity', () => identityMocks);
 
@@ -73,7 +79,7 @@ vi.mock('../clients', async () => {
   return {
     ...actual,
     ClientManager: vi.fn(function (this: { getClient: ReturnType<typeof vi.fn> }) {
-      this.getClient = vi.fn(() => Promise.resolve(new actual.NpmClient('/workspace')));
+      this.getClient = vi.fn(() => Promise.resolve(new actual.PackageManagerClient('npm', '/workspace')));
     }),
   };
 });
@@ -85,17 +91,12 @@ describe('switchDepTypeCommand()', () => {
 
   it('moves the package between dependency buckets and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -109,7 +110,7 @@ describe('switchDepTypeCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -119,17 +120,13 @@ describe('switchDepTypeCommand()', () => {
 
   it('moves a devDependency back to dependencies', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      true,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: true,
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -141,7 +138,7 @@ describe('switchDepTypeCommand()', () => {
     const provider = makeProvider();
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -154,7 +151,7 @@ describe('switchDepTypeCommand()', () => {
     const provider = makeProvider();
 
     await switchDepTypeCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -168,17 +165,12 @@ describe('switchDepTypeCommand()', () => {
   ] as const)('shows an error without reloading when switching fails with %s', async (_label, rejection, expectedMessage) => {
     vi.mocked(switchDependencyType).mockRejectedValueOnce(rejection);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -190,17 +182,12 @@ describe('switchDepTypeCommand()', () => {
     const conflict = new DependencyTypeConflictError('react', '^18.0.0', '^18.0.0', '~17.0.0');
     vi.mocked(switchDependencyType).mockRejectedValueOnce(conflict);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await switchDepTypeCommand(item, provider);
 
@@ -232,22 +219,17 @@ describe('pinVersionCommand()', () => {
 
   it('pins a caret-prefixed package and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
-    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledTimes(1);
-    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'allow');
+    expect(identityMocks.resolveManifestEntry).not.toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'react', 'dependencies', '^18.0.0', true);
     expect(provider.withWriteSuppressed).toHaveBeenCalledTimes(1);
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
@@ -255,17 +237,11 @@ describe('pinVersionCommand()', () => {
 
   it('unpins a bare package and refreshes the tree', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '18.0.0',
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -274,38 +250,28 @@ describe('pinVersionCommand()', () => {
 
   it('pins a caret-prefixed devDependency using the devDependencies section explicitly', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'vitest',
-      '^2.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      true,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'vitest',
+      currentVersion: '^2.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: true,
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
-    expect(identityMocks.resolvePinManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider);
-    expect(identityMocks.resolveUnambiguousManifestEntry).not.toHaveBeenCalled();
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'allow');
+    expect(identityMocks.resolveManifestEntry).not.toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(setVersionPin).toHaveBeenCalledWith('/workspace/package.json', 'vitest', 'devDependencies', '^2.0.0', true);
   });
 
   it('pins a caret-prefixed workspace: range without corrupting the protocol', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'internal-lib',
-      'workspace:^1.2.3',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+    const item = buildPackageItem({
+      name: 'internal-lib',
+      currentVersion: 'workspace:^1.2.3',
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -320,17 +286,11 @@ describe('pinVersionCommand()', () => {
     ['>=1.2.3 <2.0.0', 'compound version range'],
   ] as const)('leaves the file untouched and reports why for unsupported spec %s', async (currentVersion, reason) => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'pkg',
+    const item = buildPackageItem({
+      name: 'pkg',
       currentVersion,
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '',
-    );
+      packageFilePath: '/workspace/package.json',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -343,12 +303,12 @@ describe('pinVersionCommand()', () => {
   it('stops before pinning when identity or manifest validation fails', async () => {
     identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined);
     const provider = makeProvider();
-    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' });
 
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
 
-    identityMocks.resolvePinManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockResolvedValueOnce(undefined as never);
     await pinVersionCommand(item, provider);
     expect(setVersionPin).not.toHaveBeenCalled();
   });
@@ -358,7 +318,7 @@ describe('pinVersionCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await pinVersionCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -372,17 +332,12 @@ describe('pinVersionCommand()', () => {
   ] as const)('shows an error without reloading when pinning fails with %s', async (_label, rejection, expectedMessage) => {
     vi.mocked(setVersionPin).mockRejectedValueOnce(rejection);
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      versionPrefix: '^',
+    });
 
     await pinVersionCommand(item, provider);
 
@@ -415,17 +370,13 @@ describe('removePackageCommand()', () => {
 
   it('runs the package manager remove command and reloads packages after success', async () => {
     const provider = makeProvider();
-    const item = new PackageItem(
-      'react',
-      '^18.0.0',
-      undefined,
-      'none',
-      false,
-      undefined,
-      '/workspace/package.json',
-      false,
-      '^',
-    );
+    const item = buildPackageItem({
+      name: 'react',
+      currentVersion: '^18.0.0',
+      packageFilePath: '/workspace/package.json',
+      dev: false,
+      versionPrefix: '^',
+    });
     const execution = {} as vscode.TaskExecution;
     executeTaskMock.mockImplementationOnce(() => {
       setTimeout(() => {
@@ -458,7 +409,7 @@ describe('removePackageCommand()', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined as never);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       makeProvider(),
     );
 
@@ -470,7 +421,7 @@ describe('removePackageCommand()', () => {
     mockNextTaskExit(1);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -489,7 +440,7 @@ describe('removePackageCommand()', () => {
     mockNextTaskExit(undefined);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -503,9 +454,36 @@ describe('removePackageCommand()', () => {
     expect(provider.loadPackages).toHaveBeenCalledTimes(1);
   });
 
+  it('clears remove progress and skips the error when the user cancels the task', async () => {
+    const provider = makeProvider();
+    const execution = { id: 'cancelled-remove', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const removal = removePackageCommand(
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
+      provider,
+    );
+
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await removal;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, undefined);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled remove task "Remove react".');
+  });
+
   it('removes a devDependency and prompts with the matching confirmation wording', async () => {
     const provider = makeProvider();
-    const item = new PackageItem('eslint', '^8.0.0', undefined, 'none', false, undefined, '/workspace/package.json', true, '^');
+    const item = buildPackageItem({ name: 'eslint', currentVersion: '^8.0.0', packageFilePath: '/workspace/package.json', dev: true, versionPrefix: '^' });
     const execution = {} as vscode.TaskExecution;
     executeTaskMock.mockImplementationOnce(() => {
       setTimeout(() => {
@@ -529,15 +507,16 @@ describe('removePackageCommand()', () => {
   });
 
   it('rejects removal when the manifest entry is ambiguous or the final row is stale', async () => {
-    const item = new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json');
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' });
     const provider = makeProvider();
-    identityMocks.resolveUnambiguousManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockResolvedValueOnce(undefined as never);
+    identityMocks.resolveManifestEntry.mockImplementationOnce(capability => capability);
 
     await removePackageCommand(item, provider);
+    expect(identityMocks.resolveManifestEntry).toHaveBeenCalledWith(expect.any(Object), provider, 'reject');
     expect(executeTaskMock).not.toHaveBeenCalled();
     expect(provider.markPackageUpdating).not.toHaveBeenCalled();
 
-    identityMocks.resolveUnambiguousManifestEntry.mockImplementationOnce(capability => capability);
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
     await removePackageCommand(item, provider);
     expect(executeTaskMock).not.toHaveBeenCalled();
@@ -549,7 +528,7 @@ describe('removePackageCommand()', () => {
     provider.markPackageUpdatingForCapability = vi.fn(() => undefined);
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       provider,
     );
 
@@ -560,7 +539,7 @@ describe('removePackageCommand()', () => {
     const provider = makeProvider();
 
     await removePackageCommand(
-      new PackageItem('orphan', '^1.0.0', undefined, 'none', false, undefined, '', false, '^'),
+      buildPackageItem({ name: 'orphan', currentVersion: '^1.0.0', packageFilePath: '', versionPrefix: '^' }),
       provider,
     );
 
@@ -574,7 +553,7 @@ describe('removePackageCommand()', () => {
     executeTaskMock.mockRejectedValueOnce('remove boom');
 
     await removePackageCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false }),
       provider,
     );
 
@@ -604,7 +583,7 @@ describe('removePackageCommand()', () => {
     const provider = makeProvider();
 
     await removePackageCommand(
-      new PackageItem('--global', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json', false, '^'),
+      buildPackageItem({ name: '--global', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json', dev: false, versionPrefix: '^' }),
       provider,
     );
 
@@ -621,24 +600,104 @@ describe('removePackageCommand()', () => {
   });
 });
 
-function makeProvider(): PackagesProvider {
-  const provider = {
-    withWriteSuppressed: vi.fn(async (fn: () => Promise<unknown>) => await fn()) as PackagesProvider['withWriteSuppressed'],
-    loadPackages: vi.fn(),
-    invalidateUpdateCache: vi.fn(),
-    markPackageUpdating: vi.fn(),
-  } as unknown as PackagesProvider;
-  provider.refreshPackageBaselineForCapability = vi.fn(capability => Promise.resolve(capability));
-  provider.markPackageUpdated = vi.fn();
-  provider.markPackageUpdatedForCapability = vi.fn((capability, version) => {
-    provider.markPackageUpdated(capability.identity, version);
+describe('cancelled update commands', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskListeners();
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
   });
-  provider.markPackageUpdatingForCapability = vi.fn((capability, installing) => {
-    provider.markPackageUpdating(capability.identity, installing);
-    return capability;
+
+  it('clears update progress, reloads state, and skips the error when the task is cancelled', async () => {
+    const item = buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '19.0.0', updateType: 'breaking', packageFilePath: '/workspace/package.json', dev: false, versionPrefix: '^' });
+    const provider = makeProvider();
+    const execution = { id: 'cancelled-update', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const update = installUpdateCommand(item, provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await update;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith({
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies',
+    }, undefined);
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled update task "Update react".');
   });
-  return provider;
-}
+
+  it('clears install progress and skips the error when the task is cancelled', async () => {
+    const provider = makeProvider();
+    const identity = {
+      packageName: 'react',
+      packageFilePath: '/workspace/package.json',
+      section: 'dependencies' as const,
+    };
+    provider.getPackageIdentitiesForFile = vi.fn(() => [identity]);
+    const execution = { id: 'cancelled-install', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([
+      { fsPath: '/workspace/package.json', path: '/workspace/package.json' },
+    ] as vscode.Uri[]);
+    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(Buffer.from('{}'));
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const install = runInstallCommand(provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await install;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(provider.markPackageUpdating).toHaveBeenLastCalledWith(identity, undefined);
+    expect(showError).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith('Cancelled install task "Install Dependencies".');
+  });
+
+  it('stops Update All with a cancellation message and no error toast', async () => {
+    const first = Object.assign(
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', latest: '19.0.0', updateType: 'breaking', packageFilePath: '/workspace/package.json', versionPrefix: '^', releaseAge: { kind: 'accepted' } }),
+      { releaseAge: { kind: 'held-back', version: '19.0.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
+    );
+    const second = Object.assign(
+      buildPackageItem({ name: 'vite', currentVersion: '^5.0.0', latest: '5.1.0', updateType: 'minor', packageFilePath: '/workspace/package.json', versionPrefix: '^', releaseAge: { kind: 'accepted' } }),
+      { releaseAge: { kind: 'held-back', version: '5.1.0', eligibleAt: '2026-11-12T00:00:00.000Z' } },
+    );
+    const provider = makeProvider();
+    provider.getVisibleOutdatedPackages = vi.fn(() => [first, second]);
+    provider.reissuePackageCapability = vi.fn(capability => Promise.resolve(capability));
+    const execution = { id: 'cancelled-update-all', terminate: vi.fn() } as unknown as vscode.TaskExecution;
+    const cancellation = mockProgressCancellation();
+    vi.mocked(vscode.window.showWarningMessage)
+      .mockResolvedValueOnce('Update All' as never)
+      .mockResolvedValueOnce('Update Risky Packages' as never);
+    executeTaskMock.mockResolvedValueOnce(execution);
+
+    const update = updateAllVisibleCommand(provider);
+    await vi.waitFor(() => expect(executeTaskMock).toHaveBeenCalledTimes(1));
+    cancellation.cancel();
+    await update;
+
+    expect(execution.terminate).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Package update was cancelled'),
+    );
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('The selected updates are inside the minimum release-age window'),
+      { modal: true },
+      'Update Risky Packages',
+    );
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(provider.invalidateUpdateCache).toHaveBeenCalledTimes(1);
+    expect(provider.loadPackages).toHaveBeenCalledTimes(1);
+  });
+});
 
 function mockTaskListeners(): void {
   taskProcessEndListener = undefined;
@@ -667,4 +726,26 @@ function mockNextTaskExit(exitCode: number | undefined): void {
     }, 0);
     return Promise.resolve(execution);
   });
+}
+
+function mockProgressCancellation(): { cancel: () => void; dispose: ReturnType<typeof vi.fn> } {
+  let cancelListener: ((event: void) => unknown) | undefined;
+  const dispose = vi.fn();
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (listener: (event: void) => unknown) => {
+      cancelListener = listener;
+      return { dispose };
+    },
+  };
+  vi.mocked(vscode.window.withProgress).mockImplementationOnce((_options, task) => (
+    task({ report: vi.fn() }, token)
+  ));
+  return {
+    cancel: () => {
+      token.isCancellationRequested = true;
+      cancelListener?.(undefined);
+    },
+    dispose,
+  };
 }

@@ -27,6 +27,7 @@ jobs:
       actions: read
       attestations: read
       contents: read
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       artifact-id: ${{ steps.artifact.outputs.id }}
@@ -42,6 +43,8 @@ jobs:
           sparse-checkout: |
             .github/scripts
             .github/release-contract.json
+            .github/publish-tool
+            .nvmrc
           sparse-checkout-cone-mode: false
       - name: Verify the candidate workflow run
         shell: bash
@@ -86,15 +89,18 @@ jobs:
           VSIX_PATH: ${{ steps.manifest.outputs.vsix-path }}
           SOURCE_SHA: ${{ steps.manifest.outputs.source-sha }}
         run: bash reviewed-source/.github/scripts/release/verify-attestation.sh
-      - name: Publish to the Visual Studio Marketplace
-        uses: HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12 # v2.1.0
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Set up Node.js for the publishing tool
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          extensionFile: ${{ steps.manifest.outputs.vsix-path }}
-          pat: ${{ env.VSCE_PAT }}
-          registryUrl: https://marketplace.visualstudio.com
-          skipDuplicate: true
+          node-version-file: reviewed-source/.nvmrc
+          package-manager-cache: false
+      - name: Install the pinned publishing tool
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix reviewed-source/.github/publish-tool
+      - name: Publish to the Visual Studio Marketplace
+        shell: bash
+        env:
+          VSIX_PATH: ${{ steps.manifest.outputs.vsix-path }}
+        run: bash reviewed-source/.github/scripts/release/publish-marketplace.sh
       - name: Publish to Open VSX
         uses: HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12 # v2.1.0
         env:
@@ -105,7 +111,7 @@ jobs:
           registryUrl: https://open-vsx.org
           skipDuplicate: true
       - name: Compare post-publish registry copies
-        # Registry bytes are checked after both publish actions.
+        # Registry bytes are checked after both registry publishes.
         shell: bash
         env:
           CANDIDATE_VSIX: ${{ steps.manifest.outputs.vsix-path }}

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CLEAN_EXTENSION_IDENTITY } from './fixtures';
-import { VSIX_STATIC_ALLOWLIST } from '../tools/vsixPolicy';
+import { VSIX_STATIC_ALLOWLIST } from '../tools/vsixRules';
 
 interface ExtensionManifest {
   readonly name: string;

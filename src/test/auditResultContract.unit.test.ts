@@ -1,30 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FilterManager, PackagesProvider, StatusItem } from '../providers';
+import { FilterManager, PackagesProvider } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
 import {
-  AUDIT_PROCESS_MAX_BUFFER_BYTES,
   getWorkspacePackageFilePaths,
   readAllWorkspaceDependencies,
 } from '../utils';
+import { createAuditProcessMocks } from './fixtures/auditProcess';
 
 // End-to-end guard: the audit runner, the package manager client and the tree status row are
 // wired together with only the child process mocked, so an unrecognized audit result can
 // never reach the user as "No vulnerabilities".
 
 const runBoundedProcessMock = vi.hoisted(() => vi.fn());
+const { mockAuditProcess } = createAuditProcessMocks(runBoundedProcessMock, 'npm');
 
 vi.mock('../utils/processRunner', () => ({
   runBoundedProcess: runBoundedProcessMock,
 }));
 
 vi.mock('../clients', async () => {
-  const { NpmClient } = await vi.importActual<typeof import('../clients/NpmClient')>('../clients/NpmClient');
+  const { PackageManagerClient } = await vi.importActual<typeof import('../clients/PackageManagerClient')>('../clients/PackageManagerClient');
   return {
     ClientManager: vi.fn(function (this: {
-      getClient: () => Promise<InstanceType<typeof NpmClient>>;
-      createClient: () => InstanceType<typeof NpmClient>;
+      getClient: () => Promise<InstanceType<typeof PackageManagerClient>>;
+      createClient: () => InstanceType<typeof PackageManagerClient>;
     }) {
-      this.getClient = () => Promise.resolve(new NpmClient('/workspace'));
-      this.createClient = () => new NpmClient('/workspace');
+      this.getClient = () => Promise.resolve(new PackageManagerClient('npm', '/workspace'));
+      this.createClient = () => new PackageManagerClient('npm', '/workspace');
     }),
     // Every known package file resolves to one project rooted at its own directory —
     // this suite's fixtures are all single-manifest, so real project-graph dedupe is
@@ -43,8 +45,10 @@ vi.mock('../clients', async () => {
 });
 
 vi.mock('../utils', async () => {
+  const { runWithYarnFamilyMemoPassthrough } = await import('./fixtures/yarnFamilyMemo');
   const auditClient = await vi.importActual<typeof import('../utils/auditClient')>('../utils/auditClient');
   const auditReport = await vi.importActual<typeof import('../utils/auditReport')>('../utils/auditReport');
+  const dependencySpec = await vi.importActual<typeof import('../utils/dependencySpec')>('../utils/dependencySpec');
   const { logger } = await vi.importActual<typeof import('../utils/logger')>('../utils/logger');
   const localization = await vi.importActual<typeof import('../utils/localization')>('../utils/localization');
   // Real scheduler primitives: runAudit() now schedules project audits through
@@ -56,46 +60,21 @@ vi.mock('../utils', async () => {
   return {
     ...auditClient,
     ...auditReport,
+    ...dependencySpec,
     ...operationCoordinator,
     ...rootOperation,
     ...localization,
     fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map()),
     getPackageDirectory: vi.fn((packageFilePath: string) => packageFilePath.replace(/\/package\.json$/, '')),
     getUpdateType: vi.fn(() => 'none'),
+    resolveYarnFamily: vi.fn().mockResolvedValue({ family: 'unknown', source: 'version-probe' }),
     getWorkspacePackageFilePaths: vi.fn(),
     logger,
     readAllWorkspaceDependencies: vi.fn(),
-    readWorkspaceDependencies: vi.fn(),
+    runWithYarnFamilyMemo: vi.fn(runWithYarnFamilyMemoPassthrough),
     showError: vi.fn(),
   };
 });
-
-function mockAuditProcess(err: unknown, stdout: string): void {
-  runBoundedProcessMock.mockImplementationOnce(() => {
-    if (err === null) {
-      return Promise.resolve({ kind: 'exit', stdout, stderr: '', exitCode: 0 });
-    }
-    const properties = typeof err === 'object' && err !== null
-      ? err as { code?: unknown; stdout?: unknown; stderr?: unknown }
-      : {};
-    const output = typeof properties.stdout === 'string' ? properties.stdout : stdout;
-    const stderr = typeof properties.stderr === 'string' ? properties.stderr : '';
-    if (properties.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      return Promise.resolve({ kind: 'overflow', maxBufferBytes: AUDIT_PROCESS_MAX_BUFFER_BYTES });
-    }
-    if (typeof properties.code === 'number') {
-      return Promise.resolve({ kind: 'exit', stdout: output, stderr, exitCode: properties.code });
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    return Promise.resolve({
-      kind: 'spawn-error',
-      reason: properties.code === 'ENOENT' ? 'command-not-found' : 'process-failed',
-      detail: `npm could not run: ${message}`,
-      message,
-      cause: err,
-    });
-  });
-}
 
 function npmReport(vulnerabilities: Record<string, unknown>, total: number): string {
   return JSON.stringify({

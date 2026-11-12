@@ -48,9 +48,8 @@
     "provenance": 1
   },
   "secrets": {
-    "marketplace": "VSCE_PAT",
     "openVsx": "OVSX_PAT",
-    "rejectedAliases": ["VSCE_TOKEN", "OPEN_VSX_TOKEN"]
+    "rejectedAliases": ["VSCE_PAT", "VSCE_TOKEN", "OPEN_VSX_TOKEN"]
   },
   "vsixBudget": {
     "baselineCompressedBytes": 901406,

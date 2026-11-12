@@ -1,12 +1,13 @@
 import path from 'node:path';
-import type { PackageManager } from './packageManagerKind';
-import { detectPackageManager } from './packageManager';
 import { nativeCliMetadataAdapter } from './nativeMetadataClient';
 import { fetchPackageMetadataFromRegistry, resolvePackageRegistryUrl } from './registryClient';
 import type { MetadataOutcome } from './metadataRunner';
+import { runWithYarnFamilyMemo } from './yarnFamily';
 import { yarnClassicMetadataAdapter, yarnModernMetadataAdapter } from './yarnMetadataClient';
+import { PACKAGE_MANAGER_NAMES } from '../shared';
+import type { PackageManager } from '../shared';
 
-export type MetadataAdapterTier = 'native-cli' | 'config-aware-https' | 'public-npm';
+export type MetadataAdapterTier = 'native-cli' | 'config-aware-https';
 
 export interface PublishTimesProvided {
   kind: 'provided';
@@ -40,16 +41,16 @@ export interface MetadataAdapter {
   fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome>;
 }
 
-const packageManagers: readonly PackageManager[] = ['npm', 'pnpm', 'yarn', 'bun'];
+type PackageManagerDetector = (cwd: string | undefined) => Promise<PackageManager>;
+
 const tierOrder: Readonly<Record<MetadataAdapterTier, number>> = {
   'native-cli': 0,
   'config-aware-https': 1,
-  'public-npm': 2,
 };
 
 export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
   tier: 'config-aware-https',
-  packageManagers,
+  packageManagers: PACKAGE_MANAGER_NAMES,
   fetchMetadata: request => fetchPackageMetadataFromRegistry(
     request.packageName,
     request.packageFilePath,
@@ -61,12 +62,15 @@ export const configAwareHttpsMetadataAdapter: MetadataAdapter = {
 export class MetadataAdapterRegistry {
   private readonly adapters: readonly MetadataAdapter[];
 
-  constructor(adapters: readonly MetadataAdapter[] = [
-    nativeCliMetadataAdapter,
-    yarnClassicMetadataAdapter,
-    yarnModernMetadataAdapter,
-    configAwareHttpsMetadataAdapter,
-  ]) {
+  constructor(
+    private readonly detectPackageManager: PackageManagerDetector,
+    adapters: readonly MetadataAdapter[] = [
+      nativeCliMetadataAdapter,
+      yarnClassicMetadataAdapter,
+      yarnModernMetadataAdapter,
+      configAwareHttpsMetadataAdapter,
+    ],
+  ) {
     this.adapters = [...adapters].sort((left, right) => tierOrder[left.tier] - tierOrder[right.tier]);
   }
 
@@ -78,10 +82,14 @@ export class MetadataAdapterRegistry {
     return this.adapters.filter(adapter => adapter.packageManagers.includes(packageManager));
   }
 
-  async fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome> {
+  fetchMetadata(request: MetadataRequest): Promise<PackageMetadataOutcome> {
+    return runWithYarnFamilyMemo(() => this.fetchMetadataInMemo(request));
+  }
+
+  private async fetchMetadataInMemo(request: MetadataRequest): Promise<PackageMetadataOutcome> {
     let packageManager: PackageManager;
     try {
-      packageManager = await detectPackageManager(
+      packageManager = await this.detectPackageManager(
         request.packageFilePath === undefined ? undefined : path.dirname(request.packageFilePath),
       );
     }
@@ -133,17 +141,17 @@ function hasPrivateRegistryMarker(outcome: PackageMetadataOutcome): boolean {
   return outcome.privateRegistry === true;
 }
 
-export const metadataAdapterRegistry = new MetadataAdapterRegistry();
-
 export async function fetchPackageMetadata(
+  detectPackageManager: PackageManagerDetector,
   packageName: string,
   packageFilePath?: string,
   signal?: AbortSignal,
 ): Promise<PackageMetadataOutcome> {
-  return await metadataAdapterRegistry.fetchMetadata({ packageName, packageFilePath, signal });
+  return await new MetadataAdapterRegistry(detectPackageManager).fetchMetadata({ packageName, packageFilePath, signal });
 }
 
 export async function resolveMetadataRegistryKey(
+  detectPackageManager: PackageManagerDetector,
   packageName: string,
   packageFilePath?: string,
 ): Promise<string | undefined> {

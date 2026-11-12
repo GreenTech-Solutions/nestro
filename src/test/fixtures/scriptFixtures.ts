@@ -1,20 +1,12 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import type { ShellTaskCommand } from '../../utils';
 import { removeFixturePath } from './removeFixturePath';
 
 const TEMP_DIR_PREFIX = 'nestro-task-script-';
-
-const EXIT_WITH_CODE_SCRIPT = 'process.exit(Number(process.argv[2]));\n';
-
-/**
- * Bounded so a run that never gets terminated still exits on its own instead
- * of leaving an orphaned Node process behind; every test that starts this
- * script terminates it well before the bound is reached.
- */
-const SLEEP_SCRIPT = 'setTimeout(() => process.exit(0), 30000);\n';
+const SCRIPT_DIRECTORY = resolve(__dirname, '../../../src/test/fixtures/scripts');
 
 export interface ScriptFixture {
   readonly dir: string;
@@ -22,18 +14,15 @@ export interface ScriptFixture {
   readonly sleepPath: string;
 }
 
-/**
- * Writes the Node scripts the task-lifecycle integration tests run as real
- * shell tasks. Node is already a runtime dependency of the test environment,
- * so these run cross-platform without invoking a package manager or reaching
- * a registry.
- */
+/** Copies the Node scripts used by task-lifecycle tests into a unique temporary directory. */
 export async function createScriptFixture(): Promise<ScriptFixture> {
   const dir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
   const exitWithCodePath = join(dir, 'exit-with-code.js');
   const sleepPath = join(dir, 'sleep.js');
-  await writeFile(exitWithCodePath, EXIT_WITH_CODE_SCRIPT, 'utf8');
-  await writeFile(sleepPath, SLEEP_SCRIPT, 'utf8');
+  await Promise.all([
+    copyFile(join(SCRIPT_DIRECTORY, 'exit-with-code.js'), exitWithCodePath),
+    copyFile(join(SCRIPT_DIRECTORY, 'sleep.js'), sleepPath),
+  ]);
   return { dir, exitWithCodePath, sleepPath };
 }
 

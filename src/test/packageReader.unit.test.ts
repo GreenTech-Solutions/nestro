@@ -1,17 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import {
   DependencyTypeConflictError,
-  extractVersionPrefix,
-  getWorkspacePackageFilePath,
   pinAllWorkspaceDependencyVersions,
   readAllWorkspaceDependencies,
-  readWorkspaceDependencies,
   setVersionPin,
   switchDependencyType,
   updateDependencyVersionsInFile,
-  updateWorkspaceDependencyVersions,
+  VersionPinConflictError,
 } from '../utils';
+import { extractVersionPrefix } from '../utils/packageTransforms';
 
 describe('extractVersionPrefix()', () => {
   it.each([
@@ -23,50 +21,6 @@ describe('extractVersionPrefix()', () => {
     ['workspace:^', ''],
   ])('extracts %s as %s', (versionString, expectedPrefix) => {
     expect(extractVersionPrefix(versionString)).toBe(expectedPrefix);
-  });
-});
-
-describe('getWorkspacePackageFilePath()', () => {
-  afterEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
-  });
-
-  it('joins the first workspace folder with package.json', () => {
-    expect(getWorkspacePackageFilePath()).toBe('/workspace/package.json');
-  });
-
-  it('returns undefined when no workspace folder is open', () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
-
-    expect(getWorkspacePackageFilePath()).toBeUndefined();
-  });
-});
-
-describe('readWorkspaceDependencies()', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(vscode.workspace.findFiles).mockResolvedValue([]);
-  });
-
-  it('projects entries to name/current/dev/versionPrefix, dropping the file path', async () => {
-    vi.mocked(vscode.workspace.findFiles).mockResolvedValueOnce([
-      vscode.Uri.file('/workspace/package.json'),
-    ]);
-    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
-      dependencies: { react: '^18.0.0' },
-      devDependencies: { vite: '5.0.0' },
-    })));
-
-    await expect(readWorkspaceDependencies()).resolves.toEqual([
-      { name: 'react', current: '^18.0.0', dev: false, versionPrefix: '^' },
-      { name: 'vite', current: '5.0.0', dev: true, versionPrefix: '' },
-    ]);
   });
 });
 
@@ -182,32 +136,10 @@ describe('readAllWorkspaceDependencies()', () => {
   });
 });
 
-describe('updateWorkspaceDependencyVersions()', () => {
+describe('updateDependencyVersionsInFile()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(vscode.workspace.fs.writeFile).mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: [{ uri: { fsPath: '/workspace' } }],
-    });
-  });
-
-  it('preserves the existing version prefix when updating package.json', async () => {
-    vi.mocked(vscode.workspace.fs.readFile).mockResolvedValueOnce(Buffer.from(JSON.stringify({
-      dependencies: { react: '^17.0.0' },
-    }, undefined, 2)));
-
-    await updateWorkspaceDependencyVersions([{ name: 'react', version: '18.0.0', section: 'dependencies' }]);
-
-    const written = Buffer.from(vi.mocked(vscode.workspace.fs.writeFile).mock.calls[0][1]).toString('utf8');
-    expect(JSON.parse(written)).toEqual({
-      dependencies: { react: '^18.0.0' },
-    });
-    expect(written).toContain('\n  "dependencies":');
-    expect(written).toContain('\n    "react": "^18.0.0"');
   });
 
   it('updates dependencies in a specific package file', async () => {
@@ -264,17 +196,6 @@ describe('updateWorkspaceDependencyVersions()', () => {
     });
     expect(written).toContain('\n    "dependencies":');
     expect(written).toContain('\n        "react": "^18.0.0"');
-  });
-
-  it('throws when no workspace folder is open', async () => {
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', {
-      configurable: true,
-      value: undefined,
-    });
-
-    await expect(updateWorkspaceDependencyVersions([
-      { name: 'react', version: '18.0.0', section: 'dependencies' },
-    ])).rejects.toThrow('No workspace folder found.');
   });
 
   it('updates only the requested section when a package exists in dependencies and devDependencies', async () => {
@@ -417,7 +338,7 @@ describe('pinAllWorkspaceDependencyVersions()', () => {
 
     await expect(pinAllWorkspaceDependencyVersions()).resolves.toEqual({
       count: 1,
-      skippedFiles: ['b/package.json'],
+      skippedFiles: ['/workspace/b/package.json'],
     });
 
     expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(1);
@@ -791,7 +712,7 @@ describe('setVersionPin()', () => {
     }, undefined, 2)));
 
     await expect(setVersionPin('/workspace/package.json', 'missing', 'dependencies', '1.2.3', true))
-      .rejects.toThrow('Package action is no longer available. Refresh the package list and try again.');
+      .rejects.toThrow(VersionPinConflictError);
     expect(vscode.workspace.fs.writeFile).not.toHaveBeenCalled();
   });
 });

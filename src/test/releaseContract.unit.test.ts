@@ -6,12 +6,10 @@ import {
   bundleFileName,
   bundleMemberNames,
   bundleUploadPaths,
-  candidateKey,
   COMPRESSED_SIZE_BUDGET_BYTES,
   loadReleaseContract,
   PACKAGED_FILE_COUNT_BUDGET,
   parseReleaseContract,
-  registryDownloadUrl,
   RELEASE_CONTRACT,
   RELEASE_CONTRACT_PATH,
   VSIX_FILE_PATTERN,
@@ -53,9 +51,8 @@ describe('release contract', () => {
     });
     expect(RELEASE_CONTRACT.artifactPrefixes).toEqual({ releaseCandidate: 'release-candidate-', verifyEvidence: 'verify-evidence-' });
     expect(RELEASE_CONTRACT.secrets).toEqual({
-      marketplace: 'VSCE_PAT',
       openVsx: 'OVSX_PAT',
-      rejectedAliases: ['VSCE_TOKEN', 'OPEN_VSX_TOKEN'],
+      rejectedAliases: ['VSCE_PAT', 'VSCE_TOKEN', 'OPEN_VSX_TOKEN'],
     });
     expect(COMPRESSED_SIZE_BUDGET_BYTES).toBe(1126757);
     expect(PACKAGED_FILE_COUNT_BUDGET).toBe(26);
@@ -133,18 +130,6 @@ describe('release contract', () => {
     }
   });
 
-  it('resolves candidate keys and rejects unknown ones', () => {
-    expect(candidateKey('sbomSha256')).toBe('sbomSha256');
-    expect(() => candidateKey('sbomSha512')).toThrow('not a candidate key');
-  });
-
-  it('expands registry download paths', () => {
-    const values = { name: 'nestro', publisher: 'acme', version: '1.2.3' };
-    expect(registryDownloadUrl('marketplace', values))
-      .toBe('https://marketplace.visualstudio.com/_apis/public/gallery/publishers/acme/vsextensions/nestro/1.2.3/vspackage');
-    expect(registryDownloadUrl('openVsx', values)).toBe('https://open-vsx.org/api/acme/nestro/1.2.3/file/acme.nestro-1.2.3.vsix');
-  });
-
   it('reports a missing file with the contract path', () => {
     expect(() => loadReleaseContract(resolve(repositoryRoot, 'src'))).toThrow(RELEASE_CONTRACT_PATH);
   });
@@ -204,7 +189,7 @@ describe('release contract', () => {
       value.registries.marketplace.url = 'https://marketplace.visualstudio.com/items';
     })],
     ['a lowercase secret name', contractWith((value) => {
-      value.secrets.marketplace = 'vsce_pat';
+      value.secrets.openVsx = 'ovsx_pat';
     })],
     ['a signer outside the workflows directory', contractWith((value) => {
       value.workflows.signerPath = 'scripts/ci.yml';

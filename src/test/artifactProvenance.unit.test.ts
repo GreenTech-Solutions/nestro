@@ -6,10 +6,8 @@ import {
   findArtifactProvenanceViolation,
   findArtifactSbomViolation,
   findNormalizedManifestViolation,
-  isWellFormedArtifactProvenance,
-  isWellFormedArtifactSbom,
+  parseExtensionIdentity,
   parseNormalizedManifest,
-  parsePackagedIdentity,
   readRuntimeDependencies,
   selectDeliveredRuntimeFiles,
 } from '../tools';
@@ -107,8 +105,8 @@ describe('artifact provenance contract', () => {
     } as const;
     const valid = sbom();
 
-    expect(isWellFormedArtifactSbom(valid, expectation)).toBe(true);
-    expect(isWellFormedArtifactSbom({ ...valid, serialNumber: 'bad' }, expectation)).toBe(false);
+    expect(findArtifactSbomViolation(valid, expectation)).toBeUndefined();
+    expect(findArtifactSbomViolation({ ...valid, serialNumber: 'bad' }, expectation)).toBeDefined();
     expect(findArtifactSbomViolation(null, expectation)).toBe('SBOM must be an object');
     expect(findArtifactSbomViolation({ ...valid, extra: true }, expectation)).toContain('unexpected');
     expect(findArtifactSbomViolation({ ...valid, version: 2 }, expectation)).toContain('CycloneDX');
@@ -192,8 +190,8 @@ describe('artifact provenance contract', () => {
 
   it('fails closed for malformed provenance and packaged metadata', () => {
     const valid = provenance();
-    expect(isWellFormedArtifactProvenance(valid)).toBe(true);
-    expect(isWellFormedArtifactProvenance({ ...valid, sourceSha: 'bad' })).toBe(false);
+    expect(findArtifactProvenanceViolation(valid)).toBeUndefined();
+    expect(findArtifactProvenanceViolation({ ...valid, sourceSha: 'bad' })).toBeDefined();
     expect(findArtifactProvenanceViolation(null)).toBe('provenance must be an object');
     expect(findArtifactProvenanceViolation({ ...valid, extra: true })).toContain('unexpected');
     expect(findArtifactProvenanceViolation({ ...valid, eventName: 'invalid' })).toContain('malformed');
@@ -211,9 +209,9 @@ describe('artifact provenance contract', () => {
     expect(() => buildArtifactProvenance({ ...provenanceInput(), manifestSha256: 'bad' })).toThrow('SHA-256');
     expect(() => buildArtifactProvenance({ ...provenanceInput(), sbomSha256: 'bad' })).toThrow('SHA-256');
 
-    expect(() => parsePackagedIdentity(new TextEncoder().encode('{'))).toThrow('not valid JSON');
-    expect(() => parsePackagedIdentity(new TextEncoder().encode('null'))).toThrow('non-empty');
-    expect(parsePackagedIdentity(new TextEncoder().encode('{"name":"nestro","version":"1.0.0","publisher":"acme"}')))
+    expect(() => parseExtensionIdentity(new TextEncoder().encode('{'))).toThrow('not valid JSON');
+    expect(() => parseExtensionIdentity(new TextEncoder().encode('null'))).toThrow('non-empty');
+    expect(parseExtensionIdentity(new TextEncoder().encode('{"name":"nestro","version":"1.0.0","publisher":"acme"}')))
       .toEqual({ name: 'nestro', version: '1.0.0', publisher: 'acme' });
     expect(() => readRuntimeDependencies(null)).toThrow('must be an object');
     expect(readRuntimeDependencies({})).toEqual({ dependencies: {}, optionalDependencies: {} });

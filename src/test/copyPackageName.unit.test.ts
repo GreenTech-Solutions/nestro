@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { buildPackageItem } from './fixtures';
 import { copyPackageNameCommand } from '../commands/copyPackageName';
-import { PackageItem } from '../providers';
 
 describe('copyPackageNameCommand()', () => {
   beforeEach(() => {
@@ -9,7 +9,7 @@ describe('copyPackageNameCommand()', () => {
   });
 
   it('copies the package name to the clipboard', () => {
-    copyPackageNameCommand(new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'));
+    copyPackageNameCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }));
 
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith('react');
   });

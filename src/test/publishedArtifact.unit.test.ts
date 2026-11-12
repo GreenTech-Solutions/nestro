@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { archiveEntry, buildZipFixture, CLEAN_TRACKED_SOURCE_PATHS, cleanVsixFixtureEntries, SYMLINK_FILE_MODE } from './fixtures';
 import type { ZipFixtureEntry } from './fixtures/vsixFixtures';
-import { COMPRESSED_SIZE_BUDGET_BYTES, evaluateVsixPolicy, PACKAGED_FILE_COUNT_BUDGET, registryDownloadUrl } from '../tools';
+import { COMPRESSED_SIZE_BUDGET_BYTES, evaluateVsixPolicy, PACKAGED_FILE_COUNT_BUDGET } from '../tools';
 
 const repositoryRoot = resolve(import.meta.dirname, '../..');
 const scriptDirectory = resolve(repositoryRoot, '.github/scripts/release');
@@ -192,7 +192,10 @@ describe.skipIf(!hasPython)('post-publish comparison script', () => {
 
 describe.skipIf(!hasShellTools)('post-publish comparison download step', () => {
   const candidate = toArchive(cleanVsixFixtureEntries());
-  const expectedUrls = (['marketplace', 'openVsx'] as const).map(registry => registryDownloadUrl(registry, { name: 'nestro', publisher: 'greentech-solutions', version: '9.9.9' }));
+  const expectedUrls = [
+    'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/greentech-solutions/vsextensions/nestro/9.9.9/vspackage',
+    'https://open-vsx.org/api/greentech-solutions/nestro/9.9.9/file/greentech-solutions.nestro-9.9.9.vsix',
+  ];
 
   function runStep(served: { readonly marketplace: Archive; readonly openVsx: Archive }, version = '9.9.9'): Outcome & { readonly curlLog: string } {
     return inTempDirectory((directory) => {

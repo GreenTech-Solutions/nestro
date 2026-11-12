@@ -1,5 +1,7 @@
-import { normalizeArtifactOutDir } from './verifyVsix';
+import { normalizeArtifactOutDir } from './artifactOutDir';
 import { writeCiEvidence } from './ciEvidence';
+import { runCliAsEntry } from './cliBootstrap';
+import { describeError } from '../shared';
 
 export function parseCiEvidenceArgs(argv: readonly string[]): string {
   if (argv.length !== 2 || argv[0] !== '--out-dir') {
@@ -21,15 +23,11 @@ export async function mainCiEvidence(argv: readonly string[], cwd: string, env: 
     return 0;
   }
   catch (error) {
-    process.stderr.write(`CI evidence failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`CI evidence failed: ${describeError(error)}\n`);
     return 1;
   }
 }
 
 /* v8 ignore start -- process bootstrap */
-if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
-  void mainCiEvidence(process.argv.slice(2), process.cwd(), process.env).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
-}
+runCliAsEntry(typeof module === 'undefined' ? undefined : module, () => mainCiEvidence(process.argv.slice(2), process.cwd(), process.env));
 /* v8 ignore stop */

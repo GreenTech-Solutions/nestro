@@ -1,3 +1,5 @@
+
+import { isRecord, parsePlainNumericSemver } from '../shared';
 export type ReleaseBump = 'major' | 'minor' | 'patch';
 
 export interface RawCommit {
@@ -78,16 +80,11 @@ const PREPARE_PLUGIN_NAMES = [
   '@semantic-release/release-notes-generator',
 ] as const;
 
-const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/u;
 const RELEASE_BUMPS: readonly ReleaseBump[] = ['major', 'minor', 'patch'];
 
 const NOOP_LOGGER: SemanticReleaseLogger = {
   log: () => undefined,
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function findPrepareReleaseConfigViolations(value: unknown): string[] {
   if (!isRecord(value)) {
@@ -235,13 +232,11 @@ export async function generateReleaseNotes(
 }
 
 export function computeNextVersion(previousVersion: string, bump: ReleaseBump): string {
-  const match = VERSION_PATTERN.exec(previousVersion);
-  if (match === null) {
+  const parsedVersion = parsePlainNumericSemver(previousVersion);
+  if (parsedVersion === undefined) {
     throw new Error(`previous version must be a plain major.minor.patch semver, got "${previousVersion}"`);
   }
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
+  const { major, minor, patch } = parsedVersion;
   if (bump === 'major') {
     return `${major + 1}.0.0`;
   }

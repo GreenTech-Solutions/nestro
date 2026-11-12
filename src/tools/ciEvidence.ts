@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import { COMMIT_SHA_PATTERN, POSITIVE_INTEGER_PATTERN, readDigestSidecar } from './evidenceFiles';
+import type { CiEvidence } from './evidenceFiles';
 import { bundleFileName, RELEASE_CONTRACT } from './releaseContract';
-
-const SHA256_LINE_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\r?\n?$/u;
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/u;
-const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/u;
+import { compareCodeUnits, sha256Hex } from '../shared';
 
 export interface CiEvidenceEnvironment {
   readonly sourceSha: string | undefined;
@@ -13,18 +11,6 @@ export interface CiEvidenceEnvironment {
   readonly runAttempt: string | undefined;
   readonly eventName: string | undefined;
   readonly pullRequestHeadSha: string | undefined;
-}
-
-export interface CiEvidence {
-  readonly schemaVersion: number;
-  readonly sourceSha: string;
-  readonly runId: string;
-  readonly runAttempt: string;
-  readonly eventName: string;
-  readonly pullRequestHeadSha: string | null;
-  readonly vsixFile: string;
-  readonly vsixSha256: string;
-  readonly releaseEligible: false;
 }
 
 function requireCommitSha(value: string | undefined, label: string): string {
@@ -48,14 +34,6 @@ function requireEventName(value: string | undefined): 'pull_request' | 'push' | 
   return value;
 }
 
-function parseDigestFile(contents: string, expectedFile: string): string {
-  const match = SHA256_LINE_PATTERN.exec(contents);
-  if (match === null || match[2] !== expectedFile) {
-    throw new Error(`digest sidecar must contain exactly "<sha256>  ${expectedFile}"`);
-  }
-  return match[1];
-}
-
 export async function createCiEvidence(
   artifactDir: string,
   environment: CiEvidenceEnvironment,
@@ -66,13 +44,13 @@ export async function createCiEvidence(
     throw new Error(`artifact directory must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = basename(vsixFiles[0]);
-  const expectedEntries = [vsixFile, bundleFileName('manifest', vsixFile), bundleFileName('digest', vsixFile)].sort((left, right) => left.localeCompare(right));
-  if (entries.slice().sort((left, right) => left.localeCompare(right)).join('\n') !== expectedEntries.join('\n')) {
+  const expectedEntries = [vsixFile, bundleFileName('manifest', vsixFile), bundleFileName('digest', vsixFile)].sort(compareCodeUnits);
+  if (entries.slice().sort(compareCodeUnits).join('\n') !== expectedEntries.join('\n')) {
     throw new Error('artifact directory must contain exactly the VSIX, normalized manifest and SHA-256 sidecar');
   }
   const vsixBytes = await readFile(join(artifactDir, vsixFile));
-  const sidecarDigest = parseDigestFile(await readFile(join(artifactDir, bundleFileName('digest', vsixFile)), 'utf8'), vsixFile);
-  const actualDigest = createHash('sha256').update(vsixBytes).digest('hex');
+  const sidecarDigest = await readDigestSidecar(artifactDir, vsixFile);
+  const actualDigest = sha256Hex(vsixBytes);
   if (sidecarDigest !== actualDigest) {
     throw new Error(`VSIX digest mismatch: sidecar ${sidecarDigest}, actual ${actualDigest}`);
   }

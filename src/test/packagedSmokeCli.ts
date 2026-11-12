@@ -1,28 +1,16 @@
-import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import {
-  ARTIFACT_PROVENANCE_FILE,
-  ARTIFACT_SBOM_FILE,
-  findArtifactProvenanceViolation,
-  findArtifactSbomViolation,
-  findNormalizedManifestViolation,
-  parsePackagedIdentity,
-  readRuntimeDependencies,
-  selectDeliveredRuntimeFiles,
-} from '../tools';
-import type { ArtifactProvenance } from '../tools';
-import { readVsixArchive } from '../tools';
+import { readEvidenceFile, verifyEvidenceBundle } from '../tools';
 import {
   downloadAndUnzipVSCode,
   runTests,
   runVSCodeCommand,
 } from '@vscode/test-electron';
 import { removeFixturePath } from './fixtures/removeFixturePath';
+import { describeError } from '../shared';
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/u;
-const DIGEST_PATTERN = /^([0-9a-f]{64}) {2}([^\r\n]+)\n$/u;
 const SOCKET_FILE_NAME_LENGTH = '1.12-main.sock'.length;
 const SOCKET_PATH_LIMITS: Readonly<Record<string, number>> = { darwin: 103, linux: 107 };
 
@@ -30,18 +18,6 @@ interface PackagedSmokeOptions {
   readonly artifactDir: string;
   readonly expectedSha: string;
   readonly channel: 'minimum' | 'stable';
-}
-
-interface Evidence {
-  readonly schemaVersion: number;
-  readonly sourceSha: string;
-  readonly runId: string;
-  readonly runAttempt: string;
-  readonly eventName: 'push' | 'pull_request' | 'workflow_dispatch';
-  readonly pullRequestHeadSha: string | null;
-  readonly vsixFile: string;
-  readonly vsixSha256: string;
-  readonly releaseEligible: unknown;
 }
 
 interface VSCodeCommandRunner {
@@ -92,131 +68,18 @@ export function parsePackagedSmokeArgs(argv: readonly string[]): PackagedSmokeOp
   return { artifactDir: argv[1], expectedSha: argv[3], channel: argv[5] };
 }
 
-function parseEvidence(value: unknown): Evidence {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('evidence.json must be an object');
-  }
-  const evidence = value as Partial<Evidence> & { readonly [key: string]: unknown };
-  const expectedKeys = [
-    'eventName',
-    'pullRequestHeadSha',
-    'releaseEligible',
-    'runAttempt',
-    'runId',
-    'schemaVersion',
-    'sourceSha',
-    'vsixFile',
-    'vsixSha256',
-  ];
-  if (JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify(expectedKeys.slice().sort())
-    || evidence.schemaVersion !== 1
-    || typeof evidence.sourceSha !== 'string'
-    || typeof evidence.runId !== 'string'
-    || typeof evidence.runAttempt !== 'string'
-    || (evidence.eventName !== 'push' && evidence.eventName !== 'pull_request' && evidence.eventName !== 'workflow_dispatch')
-    || (evidence.pullRequestHeadSha !== null && typeof evidence.pullRequestHeadSha !== 'string')
-    || typeof evidence.vsixFile !== 'string'
-    || typeof evidence.vsixSha256 !== 'string'
-    || evidence.releaseEligible !== false) {
-    throw new Error('evidence.json does not match schema version 1');
-  }
-  return evidence as Evidence;
-}
-
 export async function verifyDownloadedEvidence(artifactDir: string, expectedSha: string): Promise<string> {
   const canonicalDir = await realpath(artifactDir);
-  const entries = await readdir(canonicalDir);
-  const vsixFiles = entries.filter(entry => entry.endsWith('.vsix'));
+  const vsixFiles = (await readdir(canonicalDir)).filter(entry => entry.endsWith('.vsix'));
   if (vsixFiles.length !== 1) {
     throw new Error(`downloaded artifact must contain exactly one VSIX, found ${vsixFiles.length}`);
   }
   const vsixFile = basename(vsixFiles[0]);
-  const expectedEntries = [
-    vsixFile,
-    `${vsixFile}.manifest.txt`,
-    `${vsixFile}.sha256`,
-    'evidence.json',
-    ARTIFACT_SBOM_FILE,
-    ARTIFACT_PROVENANCE_FILE,
-  ].sort((left, right) => left.localeCompare(right));
-  if (entries.slice().sort((left, right) => left.localeCompare(right)).join('\n') !== expectedEntries.join('\n')) {
-    throw new Error('downloaded artifact must contain exactly the six-member provenance bundle');
-  }
-  const evidence = parseEvidence(JSON.parse(await readFile(join(canonicalDir, 'evidence.json'), 'utf8')));
+  const evidence = await readEvidenceFile(canonicalDir);
   if (evidence.sourceSha !== expectedSha || evidence.releaseEligible !== false || evidence.vsixFile !== vsixFile) {
     throw new Error('downloaded evidence identity does not match the exact tested SHA or evidence-only contract');
   }
-  const hasConsistentEventIdentity = evidence.eventName === 'push'
-    ? evidence.pullRequestHeadSha === null
-    : evidence.pullRequestHeadSha !== null && FULL_SHA_PATTERN.test(evidence.pullRequestHeadSha);
-  if (!hasConsistentEventIdentity) {
-    throw new Error('downloaded evidence must carry a push identity without a head SHA, or a pull request or workflow dispatch identity with a full head SHA');
-  }
-  const vsixBytes = await readFile(join(canonicalDir, vsixFile));
-  const archiveEntries = readVsixArchive(vsixBytes);
-  const manifestContents = await readFile(join(canonicalDir, `${vsixFile}.manifest.txt`), 'utf8');
-  const manifestViolation = findNormalizedManifestViolation(manifestContents, archiveEntries);
-  if (manifestViolation !== undefined) {
-    throw new Error(manifestViolation);
-  }
-  const packageEntry = archiveEntries.find(entry => entry.path === 'extension/package.json');
-  if (packageEntry === undefined) {
-    throw new Error('downloaded VSIX must contain extension/package.json');
-  }
-  const identity = parsePackagedIdentity(packageEntry.bytes);
-  const runtimeFiles = selectDeliveredRuntimeFiles(archiveEntries);
-  const packagedManifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(packageEntry.bytes)) as unknown;
-  const runtimeDependencies = readRuntimeDependencies(packagedManifest);
-  const sbomBytes = await readFile(join(canonicalDir, ARTIFACT_SBOM_FILE));
-  const sbom = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(sbomBytes)) as unknown;
-  const sbomViolation = findArtifactSbomViolation(sbom, {
-    identity,
-    artifactFile: vsixFile,
-    artifactSha256: evidence.vsixSha256,
-    runtimeFiles,
-    dependencies: runtimeDependencies.dependencies,
-    optionalDependencies: runtimeDependencies.optionalDependencies,
-  });
-  if (sbomViolation !== undefined) {
-    throw new Error(sbomViolation);
-  }
-  const provenanceBytes = await readFile(join(canonicalDir, ARTIFACT_PROVENANCE_FILE));
-  let provenance: unknown;
-  try {
-    provenance = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(provenanceBytes)) as unknown;
-  }
-  catch (error) {
-    throw new Error(`provenance.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-  }
-  const provenanceViolation = findArtifactProvenanceViolation(provenance);
-  if (provenanceViolation !== undefined) {
-    throw new Error(provenanceViolation);
-  }
-  const provenanceDocument = provenance as ArtifactProvenance;
-  const manifestSha256 = createHash('sha256').update(new TextEncoder().encode(manifestContents)).digest('hex');
-  const sbomSha256 = createHash('sha256').update(sbomBytes).digest('hex');
-  if (provenanceDocument.sourceSha !== evidence.sourceSha
-    || provenanceDocument.ciRunId !== evidence.runId
-    || provenanceDocument.ciRunAttempt !== evidence.runAttempt
-    || provenanceDocument.eventName !== evidence.eventName
-    || provenanceDocument.artifact.file !== vsixFile
-    || provenanceDocument.artifact.sha256 !== evidence.vsixSha256
-    || provenanceDocument.artifact.manifestFile !== `${vsixFile}.manifest.txt`
-    || provenanceDocument.artifact.manifestSha256 !== manifestSha256
-    || provenanceDocument.artifact.sbomFile !== ARTIFACT_SBOM_FILE
-    || provenanceDocument.artifact.sbomSha256 !== sbomSha256
-    || provenanceDocument.attestation.subjectName !== vsixFile
-    || provenanceDocument.attestation.subjectDigest !== `sha256:${evidence.vsixSha256}`) {
-    throw new Error('downloaded provenance does not link the exact evidence, VSIX, manifest, SBOM and attestation subject');
-  }
-  const sidecar = DIGEST_PATTERN.exec(await readFile(join(canonicalDir, `${vsixFile}.sha256`), 'utf8'));
-  if (sidecar === null || sidecar[2] !== vsixFile) {
-    throw new Error(`digest sidecar must contain exactly "<sha256>  ${vsixFile}"`);
-  }
-  const actualDigest = createHash('sha256').update(vsixBytes).digest('hex');
-  if (sidecar[1] !== actualDigest || evidence.vsixSha256 !== actualDigest) {
-    throw new Error('downloaded VSIX digest does not match its sidecar and evidence identity');
-  }
+  await verifyEvidenceBundle(canonicalDir, evidence);
   return join(canonicalDir, vsixFile);
 }
 
@@ -377,7 +240,7 @@ export function buildVsixInstallArgs(
 if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
   void runPackagedSmoke(parsePackagedSmokeArgs(process.argv.slice(2)), process.cwd())
     .catch((error: unknown) => {
-      process.stderr.write(`Packaged smoke failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`Packaged smoke failed: ${describeError(error)}\n`);
       process.exitCode = 1;
     });
 }

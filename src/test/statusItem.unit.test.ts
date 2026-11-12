@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as vscode from 'vscode';
-import { StatusItem } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
 
 describe('StatusItem', () => {
   it('is a non-collapsible leaf row with the shared status contextValue and themed icon', () => {

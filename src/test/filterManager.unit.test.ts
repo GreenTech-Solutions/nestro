@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { createFilterQuickPickItems, FILTER_TYPES, FilterManager, getFilterLabel, isFilterType } from '../providers';
+import { createFilterQuickPickItems, FILTER_TYPES, getFilterLabel } from '../providers/FilterManager';
+import { FilterManager, isFilterType } from '../providers';
 
 describe('FilterManager', () => {
   beforeEach(() => {

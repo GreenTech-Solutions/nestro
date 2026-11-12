@@ -1,35 +1,26 @@
 import * as path from 'path';
 import { realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { logger } from '../utils/logger';
-import type { PackageManager } from '../utils/packageManagerKind';
+import { logger } from '../utils';
+import {
+  compareCodeUnits,
+  DEFAULT_PACKAGE_MANAGER,
+  isPathWithin,
+  parsePackageManagerField,
+} from '../shared';
+import type { PackageManager } from '../shared';
+import {
+  realpathWorkspaceFolder,
+  resolveCanonicalOwningWorkspaceFolder,
+  withCanonicalWorkspaceFolderScope,
+} from './canonicalWorkspaceFolders';
+import { findLockfile } from './lockfileDetection';
 
 export type { PackageManager };
 
 interface PackageJsonManifest {
   packageManager?: string;
 }
-
-interface LockfileDescriptor {
-  fileName: string;
-  pattern: string;
-  packageManager: PackageManager;
-}
-
-/**
- * Lock file precedence used everywhere a directory is checked for a package-manager
- * signal: pnpm, then Yarn, then Bun, then npm. The first match wins.
- */
-const LOCKFILES: readonly LockfileDescriptor[] = [
-  { fileName: 'pnpm-lock.yaml', pattern: '**/pnpm-lock.yaml', packageManager: 'pnpm' },
-  { fileName: 'yarn.lock', pattern: '**/yarn.lock', packageManager: 'yarn' },
-  { fileName: 'bun.lock', pattern: '**/bun.lock', packageManager: 'bun' },
-  { fileName: 'bun.lockb', pattern: '**/bun.lockb', packageManager: 'bun' },
-  { fileName: 'package-lock.json', pattern: '**/package-lock.json', packageManager: 'npm' },
-  { fileName: 'npm-shrinkwrap.json', pattern: '**/npm-shrinkwrap.json', packageManager: 'npm' },
-];
-
-const packageManagerNames: readonly PackageManager[] = ['npm', 'pnpm', 'yarn', 'bun'];
 
 /** One ancestor-directory package-manager signal: a `packageManager` field or a lock file. */
 export interface PackageManagerSignal {
@@ -69,61 +60,20 @@ export interface AuditProjectResolution {
   readonly rejected: readonly RejectedAuditManifest[];
 }
 
-export function parsePackageManager(value: string | undefined): PackageManager | undefined {
-  return packageManagerNames.find(name => name === value);
-}
-
-export async function detectPackageManagerFromManifest(cwd: string | undefined): Promise<PackageManager | undefined> {
-  if (cwd !== undefined) {
-    try {
-      const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
-      const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-      const packageManager = manifest.packageManager?.split('@')[0];
-      return parsePackageManager(packageManager);
-    }
-    catch {
-      return undefined;
-    }
+async function detectPackageManagerFromManifest(cwd: string): Promise<PackageManager | undefined> {
+  try {
+    const raw = await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, 'package.json')));
+    const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
+    return parsePackageManagerField(manifest.packageManager)?.packageManager;
   }
-
-  const files = await vscode.workspace.findFiles('**/package.json', '**/node_modules/**', 1);
-  if (files.length === 0) {
+  catch {
     return undefined;
   }
-
-  const raw = await vscode.workspace.fs.readFile(files[0]);
-  const manifest = JSON.parse(Buffer.from(raw).toString('utf8')) as PackageJsonManifest;
-  const packageManager = manifest.packageManager?.split('@')[0];
-  return parsePackageManager(packageManager);
 }
 
 async function detectLockfileSignalInDirectory(cwd: string): Promise<{ packageManager: PackageManager; fileName: string } | undefined> {
-  for (const lockfile of LOCKFILES) {
-    try {
-      await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(cwd, lockfile.fileName)));
-      return { packageManager: lockfile.packageManager, fileName: lockfile.fileName };
-    }
-    catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Workspace-wide lock file scan used only when no `cwd` is known at all (e.g. no
- * workspace folder is open yet). Every caller that has a `cwd` resolves an ancestor
- * signal through `detectPackageManagerSignalFromAncestors()` instead, which is why this
- * never takes a `cwd` parameter of its own.
- */
-export async function detectPackageManagerFromLockfile(): Promise<PackageManager | undefined> {
-  for (const lockfile of LOCKFILES) {
-    const files = await vscode.workspace.findFiles(lockfile.pattern, '**/node_modules/**', 1);
-    if (files.length > 0) {
-      return lockfile.packageManager;
-    }
-  }
-  return undefined;
+  const lockfile = await findLockfile(cwd);
+  return lockfile === undefined ? undefined : { packageManager: lockfile.packageManager, fileName: lockfile.fileName };
 }
 
 async function detectPackageManagerSignalAt(cwd: string): Promise<{ packageManager: PackageManager; lockfileFileName: string | undefined } | undefined> {
@@ -189,12 +139,6 @@ function getAncestorDirectories(cwd: string, workspaceFolderPath: string | undef
   return directories;
 }
 
-function isPathContained(basePath: string, candidatePath: string): boolean {
-  const relative = path.relative(basePath, candidatePath);
-  return relative === ''
-    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
 type CanonicalRootResult
   = | { ok: true; root: string; workspaceFolder: string }
     // `unresolvable-path` means `realpath` itself failed; `workspace-escape` means it
@@ -211,9 +155,9 @@ async function canonicalizeRoot(candidateDir: string, workspaceFolderPath: strin
   try {
     const [root, canonicalWorkspaceFolder] = await Promise.all([
       realpath(candidateDir),
-      realpath(workspaceFolderPath),
+      realpathWorkspaceFolder(workspaceFolderPath),
     ]);
-    if (!isPathContained(canonicalWorkspaceFolder, root)) {
+    if (!isPathWithin(canonicalWorkspaceFolder, root)) {
       return { ok: false, reason: 'workspace-escape' };
     }
     return { ok: true, root, workspaceFolder: workspaceFolderPath };
@@ -239,16 +183,8 @@ async function resolveLockfilePath(
     return path.join(canonicalRoot, lockfileFileName);
   }
 
-  for (const lockfile of LOCKFILES.filter(candidate => candidate.packageManager === packageManager)) {
-    try {
-      await vscode.workspace.fs.readFile(vscode.Uri.file(path.join(canonicalRoot, lockfile.fileName)));
-      return path.join(canonicalRoot, lockfile.fileName);
-    }
-    catch {
-      continue;
-    }
-  }
-  return undefined;
+  const lockfile = await findLockfile(canonicalRoot, packageManager);
+  return lockfile === undefined ? undefined : path.join(canonicalRoot, lockfile.fileName);
 }
 
 interface ResolvedManifestProject {
@@ -277,7 +213,7 @@ async function resolveManifestProject(
 
   const canonical = await canonicalizeRoot(candidateRoot, workspaceFolderPath);
   if (canonical.ok) {
-    const packageManager = ancestorSignal?.packageManager ?? 'npm';
+    const packageManager = ancestorSignal?.packageManager ?? DEFAULT_PACKAGE_MANAGER;
     const lockfilePath = await resolveLockfilePath(canonical.root, packageManager, ancestorSignal?.lockfileFileName);
     return {
       ok: true,
@@ -303,7 +239,7 @@ async function resolveManifestProject(
   }
 
   const ownSignal = await detectPackageManagerSignalAt(manifestDir);
-  const packageManager = ownSignal?.packageManager ?? 'npm';
+  const packageManager = ownSignal?.packageManager ?? DEFAULT_PACKAGE_MANAGER;
   const lockfilePath = await resolveLockfilePath(ownCanonical.root, packageManager, ownSignal?.lockfileFileName);
   return {
     ok: true,
@@ -332,7 +268,7 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
   // order. The caller's list ultimately comes from `vscode.workspace.findFiles()`, whose
   // order is not contractually guaranteed (N7); the final `projects`/`rejected` sort
   // below only stabilizes the shape of the output, not which manifest wins the claim.
-  const sortedPackageFilePaths = [...packageFilePaths].sort((a, b) => a.localeCompare(b));
+  const sortedPackageFilePaths = [...packageFilePaths].sort(compareCodeUnits);
 
   for (const packageFilePath of sortedPackageFilePaths) {
     const manifestDir = path.dirname(packageFilePath);
@@ -375,60 +311,55 @@ export async function resolveAuditProjects(packageFilePaths: readonly string[]):
   const projects = [...byRoot.values()]
     .map(({ project, originManifests }): AuditProject => ({
       ...project,
-      originManifests: [...originManifests].sort((a, b) => a.localeCompare(b)),
+      originManifests: [...originManifests].sort(compareCodeUnits),
     }))
-    .sort((a, b) => a.projectRoot.localeCompare(b.projectRoot));
+    .sort((a, b) => compareCodeUnits(a.projectRoot, b.projectRoot));
 
   return {
     projects,
-    rejected: [...rejected].sort((a, b) => a.packageFilePath.localeCompare(b.packageFilePath)),
+    rejected: [...rejected].sort((a, b) => compareCodeUnits(a.packageFilePath, b.packageFilePath)),
   };
 }
 
-/**
- * Resolves the key a mutation command locks on: the same canonical project root
- * `resolveAuditProjects()` computes, so manifests sharing one lock file are one graph
- * for both. Falls back to the manifest's own directory rather than skipping the lock.
- */
-/** Deepest workspace folder whose realpath contains `canonicalDir`, matched by canonical path rather than a lexical prefix. */
-async function resolveCanonicalOwningWorkspaceFolder(canonicalDir: string): Promise<string | undefined> {
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  const canonicalFolders = await Promise.all(folders.map(async (folder) => {
-    try {
-      return await realpath(folder.uri.fsPath);
-    }
-    catch {
-      return undefined;
-    }
-  }));
-  const owners = canonicalFolders
-    .filter((folderPath): folderPath is string => folderPath !== undefined && isPathContained(folderPath, canonicalDir))
-    .sort((left, right) => right.length - left.length);
-  return owners[0];
+function unresolvableKeyError(packageFilePath: string): Error {
+  return new Error(`Cannot lock ${packageFilePath}: its canonical path could not be resolved.`);
 }
 
-export async function resolveMutationCoordinatorKey(packageFilePath: string): Promise<string> {
-  const manifestDir = path.dirname(packageFilePath);
-
+async function resolveCoordinatorKey(packageFilePath: string): Promise<string> {
   let canonicalPackageFilePath: string;
   try {
     canonicalPackageFilePath = await realpath(packageFilePath);
   }
   catch (err) {
-    logger.error(`Could not resolve a canonical path for ${packageFilePath}; locking on its directory instead.`, err);
-    return manifestDir;
+    logger.error(`Could not resolve a canonical path for ${packageFilePath}.`, err);
+    throw unresolvableKeyError(packageFilePath);
   }
 
-  const owningWorkspaceFolder = await resolveCanonicalOwningWorkspaceFolder(path.dirname(canonicalPackageFilePath));
+  const canonicalDir = path.dirname(canonicalPackageFilePath);
+  const owningWorkspaceFolder = await resolveCanonicalOwningWorkspaceFolder(canonicalDir);
   if (owningWorkspaceFolder === undefined) {
-    logger.warn(`No workspace folder canonically owns ${packageFilePath}; locking on its directory instead.`);
-    return manifestDir;
+    logger.warn(`No workspace folder canonically owns ${packageFilePath}; locking on its canonical directory instead.`);
+    return canonicalDir;
   }
 
   const resolution = await resolveManifestProject(canonicalPackageFilePath, owningWorkspaceFolder);
-  if (!resolution.ok) {
-    logger.warn(`Falling back to ${manifestDir} as the coordination key: ${resolution.detail}`);
-    return manifestDir;
+  if (resolution.ok) {
+    return resolution.project.projectRoot;
   }
-  return resolution.project.projectRoot;
+  if (resolution.reason === 'unresolvable-path') {
+    logger.error(`Cannot lock ${packageFilePath}: ${resolution.detail}`);
+    throw unresolvableKeyError(packageFilePath);
+  }
+  logger.warn(`Falling back to ${canonicalDir} as the coordination key: ${resolution.detail}`);
+  return canonicalDir;
+}
+
+/**
+ * Resolves the key a mutation command locks on: the same canonical project root
+ * `resolveAuditProjects()` computes, so manifests sharing one lock file are one graph
+ * for both. Rejects when a canonical path cannot be resolved rather than issuing a raw
+ * key, so one project never holds two keys.
+ */
+export function resolveMutationCoordinatorKey(packageFilePath: string): Promise<string> {
+  return withCanonicalWorkspaceFolderScope(() => resolveCoordinatorKey(packageFilePath));
 }

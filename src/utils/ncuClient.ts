@@ -1,11 +1,8 @@
-import {
-  DEFAULT_MINIMUM_RELEASE_AGE_DAYS,
-  readMinimumReleaseAgeDays,
-} from './releaseAge';
+import { NCU_TIMEOUT_MS } from '../config';
+import { DEFAULT_MINIMUM_RELEASE_AGE_DAYS, readMinimumReleaseAgeDays } from '../shared';
+import type { UpdateTarget } from '../shared';
 
-export type NcuUpdateTarget = 'latest' | 'greatest' | 'minor' | 'patch';
-
-const NCU_TIMEOUT_MS = 60_000;
+export type NcuUpdateTarget = UpdateTarget;
 
 type Run = (options: {
   packageFile: string;

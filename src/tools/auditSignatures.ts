@@ -5,6 +5,8 @@
  * silently (unpublished packages, registries with no signing keys); only auditing zero packages is rejected.
  */
 
+import { describeError, describeStderr, isRecord } from '../shared';
+
 /** Subcommand and flags the guard runs. `--json` is what makes the contract checkable. */
 export const SIGNATURE_AUDIT_ARGS = ['audit', 'signatures', '--json'] as const;
 
@@ -67,16 +69,6 @@ export interface SignatureAuditCliDependencies {
   readonly writeError: (line: string) => void;
 }
 
-/**
- * Spawned from `PATH` on purpose: pnpm 11 self-switches to the repository's `packageManager`
- * pin, and CI installs that same pinned version, so both paths audit the declared version.
- * On Windows the launcher is a `.cmd` shim, which can only start through a shell (Node refuses
- * a shim without one since CVE-2024-27980); the arguments are the fixed `SIGNATURE_AUDIT_ARGS`.
- */
-export function resolvePnpmLauncher(platform: string): { readonly executable: 'pnpm'; readonly shell: boolean } {
-  return { executable: 'pnpm', shell: platform === 'win32' };
-}
-
 /** Rejects any argument: the guard takes none, and a typo must not silently change the run. */
 export function parseSignatureAuditArgs(argv: readonly string[]): void {
   if (argv.length > 0) {
@@ -84,21 +76,8 @@ export function parseSignatureAuditArgs(argv: readonly string[]): void {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function describeStderr(stderr: string): string {
-  const trimmed = stderr.trim();
-  return trimmed === '' ? '' : `; stderr: ${trimmed}`;
 }
 
 /**
@@ -107,16 +86,16 @@ function describeStderr(stderr: string): string {
  * instead of a generic "unknown schema".
  */
 function isAdvisoryReport(json: unknown): boolean {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return false;
   }
-  const hasSummary = isPlainObject(json.metadata);
-  return (isPlainObject(json.advisories) && hasSummary)
-    || (isPlainObject(json.vulnerabilities) && (hasSummary || typeof json.auditReportVersion === 'number'));
+  const hasSummary = isRecord(json.metadata);
+  return (isRecord(json.advisories) && hasSummary)
+    || (isRecord(json.vulnerabilities) && (hasSummary || typeof json.auditReportVersion === 'number'));
 }
 
 function recognizeSignatureReport(json: unknown): SignatureAuditReport | undefined {
-  if (!isPlainObject(json)) {
+  if (!isRecord(json)) {
     return undefined;
   }
   const { audited, invalid, missing, verified } = json;
@@ -128,7 +107,7 @@ function recognizeSignatureReport(json: unknown): SignatureAuditReport | undefin
 
 /** Best-effort one-line description of a finding; a malformed entry is still reported, never dropped. */
 function describeFinding(entry: unknown): string {
-  if (!isPlainObject(entry)) {
+  if (!isRecord(entry)) {
     return JSON.stringify(entry);
   }
   const name = typeof entry.name === 'string' ? entry.name : '<unknown>';
@@ -146,37 +125,79 @@ function reject(reason: SignatureAuditRejectionReason, detail: string): Signatur
   return { kind: 'rejected', reason, detail };
 }
 
+type SignatureAuditDocument
+  = | { kind: 'json'; exitCode: number; json: unknown }
+    | { kind: 'rejected'; outcome: SignatureAuditRejectedOutcome };
+
+function parseSignatureAuditDocument(execution: SignatureAuditExecution): SignatureAuditDocument {
+  const { command, exitCode, stderr, stdout } = execution;
+  if (exitCode === undefined) {
+    return {
+      kind: 'rejected',
+      outcome: reject('process-failed', `${command} never reported an exit code${describeStderr(stderr)}`),
+    };
+  }
+
+  const output = stdout.trim();
+  if (output === '') {
+    return {
+      kind: 'rejected',
+      outcome: reject(
+        'empty-output',
+        `${command} wrote no report to stdout (exit code ${exitCode})${describeStderr(stderr)}`,
+      ),
+    };
+  }
+
+  try {
+    return { kind: 'json', exitCode, json: JSON.parse(output) as unknown };
+  }
+  catch (error) {
+    return {
+      kind: 'rejected',
+      outcome: reject(
+        'malformed-json',
+        `${command} wrote ${output.length} byte(s) to stdout that are not JSON `
+        + `(exit code ${exitCode}): ${describeError(error)}`,
+      ),
+    };
+  }
+}
+
+function rejectSignatureFindings(
+  command: string,
+  exitCode: number,
+  report: SignatureAuditReport,
+): SignatureAuditRejectedOutcome | undefined {
+  if (report.invalid.length > 0) {
+    return reject(
+      'invalid-signatures',
+      `${command} reported ${report.invalid.length} package(s) with an invalid registry signature `
+      + `(exit code ${exitCode}): ${describeFindings(report.invalid)}`,
+    );
+  }
+  if (report.missing.length > 0) {
+    return reject(
+      'missing-signatures',
+      `${command} reported ${report.missing.length} package(s) with no registry signature `
+      + `(exit code ${exitCode}): ${describeFindings(report.missing)}`,
+    );
+  }
+  return undefined;
+}
+
 /**
  * Classifies one signature audit run. Every branch but the last is a rejection,
  * so an unexpected report shape or an unexpected exit code can never be read as
  * "verified".
  */
 export function evaluateSignatureAudit(execution: SignatureAuditExecution): SignatureAuditOutcome {
-  const { command, exitCode, stderr, stdout } = execution;
-
-  if (exitCode === undefined) {
-    return reject('process-failed', `${command} never reported an exit code${describeStderr(stderr)}`);
+  const document = parseSignatureAuditDocument(execution);
+  if (document.kind === 'rejected') {
+    return document.outcome;
   }
-
-  const output = stdout.trim();
-  if (output === '') {
-    return reject(
-      'empty-output',
-      `${command} wrote no report to stdout (exit code ${exitCode})${describeStderr(stderr)}`,
-    );
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(output);
-  }
-  catch (error) {
-    return reject(
-      'malformed-json',
-      `${command} wrote ${output.length} byte(s) to stdout that are not JSON `
-      + `(exit code ${exitCode}): ${describeError(error)}`,
-    );
-  }
+  const { command } = execution;
+  const { exitCode, json } = document;
 
   if (isAdvisoryReport(json)) {
     return reject(
@@ -197,25 +218,12 @@ export function evaluateSignatureAudit(execution: SignatureAuditExecution): Sign
     );
   }
 
-  if (report.invalid.length > 0) {
-    return reject(
-      'invalid-signatures',
-      `${command} reported ${report.invalid.length} package(s) with an invalid registry signature `
-      + `(exit code ${exitCode}): ${describeFindings(report.invalid)}`,
-    );
+  // Findings precede count checks so failed packument reads retain package identities.
+  const findingRejection = rejectSignatureFindings(command, exitCode, report);
+  if (findingRejection !== undefined) {
+    return findingRejection;
   }
 
-  if (report.missing.length > 0) {
-    return reject(
-      'missing-signatures',
-      `${command} reported ${report.missing.length} package(s) with no registry signature `
-      + `(exit code ${exitCode}): ${describeFindings(report.missing)}`,
-    );
-  }
-
-  // Placed after the invalid/missing checks on purpose: a failed packument request can push an
-  // entry onto `invalid` without incrementing `audited`, so checking the sum first would mask a
-  // real signature failure behind a generic arithmetic mismatch.
   const classified = report.verified + report.missing.length + report.invalid.length;
   if (classified !== report.audited) {
     return reject(

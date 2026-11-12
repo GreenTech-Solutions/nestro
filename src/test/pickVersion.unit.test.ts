@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { makeProvider } from './fixtures/providerStub';
+import { buildPackageItem } from './fixtures';
 import { pickVersionCommand } from '../commands/pickVersion';
 import { runResolvedPackageVersion } from '../commands/installUpdate';
-import { PackageItem, PackagesProvider } from '../providers';
+import { PACKAGE_IDENTITY_REJECTED_MESSAGE } from '../providers';
+import { PackageItem } from '../providers/PackageItem';
 import { fetchPackageMetadata, showError } from '../utils';
 import type { PackageMetadataOutcome } from '../utils';
 
@@ -58,6 +61,7 @@ vi.mock('../utils', async () => {
       warn: vi.fn(),
     },
     parseDependencySpec,
+    resolveYarnFamily: vi.fn().mockResolvedValue({ family: 'unknown', source: 'version-probe' }),
     showError: vi.fn(),
     selectVersionsForPicker: vi.fn(selectVersionsForPickerActual),
   };
@@ -100,14 +104,16 @@ describe('pickVersionCommand()', () => {
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
     await pickVersionCommand(
-      new PackageItem('react', '^18.0.0', undefined, 'none', false, undefined, '/workspace/package.json'),
+      buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '/workspace/package.json' }),
       makeProvider(),
     );
     expect(fetchPackageMetadata).toHaveBeenCalledWith(
+      expect.any(Function),
       'react',
       '/workspace/package.json',
       expect.any(AbortSignal),
     );
+    await expect(vi.mocked(fetchPackageMetadata).mock.calls[0][0](undefined)).resolves.toBe('npm');
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();
@@ -129,7 +135,7 @@ describe('pickVersionCommand()', () => {
       get: vi.fn((key: string, defaultValue: unknown) => key === 'includePreReleases' ? false : defaultValue),
     } as unknown as vscode.WorkspaceConfiguration);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
 
     expect(selectVersionsForPicker).toHaveBeenCalledWith(
       ['19.0.0', '18.0.0'],
@@ -154,7 +160,7 @@ describe('pickVersionCommand()', () => {
       },
     });
 
-    await pickVersionCommand(new PackageItem('react', '2.0.0-rc.1', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '2.0.0-rc.1', packageFilePath: '' }), makeProvider());
 
     const labels = quickPick.items.map(item => item.label);
     expect(labels).toEqual(expect.arrayContaining(['2.0.0', '1.0.0', '★ 2.0.0-rc.1']));
@@ -177,7 +183,7 @@ describe('pickVersionCommand()', () => {
       },
     });
 
-    await pickVersionCommand(new PackageItem('react', '^2.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^2.0.0', packageFilePath: '' }), makeProvider());
 
     expect(quickPick.items.map(item => item.label)).toContain('2.0.0-rc.1');
     const { selectVersionsForPicker } = await import('../utils');
@@ -210,7 +216,7 @@ describe('pickVersionCommand()', () => {
         },
       });
 
-      await pickVersionCommand(new PackageItem('react', '^1.0.0', undefined, 'none'), makeProvider());
+      await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^1.0.0', packageFilePath: '', releaseAge: { kind: 'accepted' } }), makeProvider());
 
       const heldBack = quickPick.items.find(item => item.label === '2.0.0');
       expect(heldBack?.description).not.toContain('2026-06-02T00:00:00.000Z');
@@ -234,7 +240,7 @@ describe('pickVersionCommand()', () => {
       },
     });
 
-    await pickVersionCommand(new PackageItem('react', '^1.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^1.0.0', packageFilePath: '', releaseAge: { kind: 'accepted' } }), makeProvider());
 
     expect(quickPick.title).toContain('release age unknown; update is not blocked');
     expect(quickPick.items.every(item => !item.description?.includes('Release age unknown'))).toBe(true);
@@ -244,7 +250,7 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     quickPick.selectedItems = [quickPick.items[1]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();
@@ -257,7 +263,7 @@ describe('pickVersionCommand()', () => {
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
     vi.mocked(fetchPackageMetadata).mockRejectedValueOnce('registry unavailable');
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '' }), makeProvider());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Failed to fetch versions for react.');
     expect(quickPick.hide).toHaveBeenCalledTimes(1);
@@ -269,7 +275,7 @@ describe('pickVersionCommand()', () => {
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
     vi.mocked(fetchPackageMetadata).mockResolvedValueOnce({ kind: 'timeout', timeoutMs: 15000 });
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '' }), makeProvider());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Failed to fetch versions for react.');
     expect(quickPick.hide).toHaveBeenCalledTimes(1);
@@ -286,7 +292,7 @@ describe('pickVersionCommand()', () => {
       message: 'Malformed bunfig.toml at /workspace/bunfig.toml.',
     });
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '' }), makeProvider());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       'Failed to fetch versions for react: Malformed bunfig.toml at /workspace/bunfig.toml.',
@@ -300,7 +306,7 @@ describe('pickVersionCommand()', () => {
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
 
     expect(quickPick.hide).toHaveBeenCalledTimes(1);
     expect(quickPick.dispose).toHaveBeenCalledTimes(1);
@@ -309,10 +315,31 @@ describe('pickVersionCommand()', () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
+  it('does not update the picker when revalidation resolves after it was hidden', async () => {
+    const quickPick = makeQuickPick();
+    let finishRevalidation: () => void = () => {};
+    vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
+    identityMocks.revalidateCommandPackageItem.mockImplementationOnce(capability => new Promise((resolve) => {
+      finishRevalidation = () => resolve(capability);
+    }) as never);
+
+    const command = pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', operation: undefined }), makeProvider());
+    await vi.waitFor(() => expect(identityMocks.revalidateCommandPackageItem).toHaveBeenCalledTimes(1));
+    quickPick.onDidHide.mock.calls[0][0]();
+    finishRevalidation();
+    await command;
+
+    expect(quickPick.dispose).toHaveBeenCalledTimes(1);
+    expect(quickPick.items).toEqual([]);
+    expect(quickPick.busy).toBe(true);
+    expect(quickPick.placeholder).toBe('Loading versions...');
+    expect(quickPick.onDidAccept).not.toHaveBeenCalled();
+  });
+
   it('does not create a picker when the provider rejects the rendered row', async () => {
     identityMocks.resolveCommandPackageItem.mockResolvedValueOnce(undefined as never);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '' }), makeProvider());
 
     expect(vscode.window.createQuickPick).not.toHaveBeenCalled();
     expect(fetchPackageMetadata).not.toHaveBeenCalled();
@@ -326,7 +353,7 @@ describe('pickVersionCommand()', () => {
       resolveFetch = resolve;
     }));
 
-    const command = pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    const command = pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', operation: undefined, packageFilePath: '' }), makeProvider());
     await Promise.resolve();
     quickPick.onDidHide.mock.calls[0][0]();
     resolveFetch({
@@ -354,7 +381,7 @@ describe('pickVersionCommand()', () => {
       rejectFetch = reject;
     }));
 
-    const command = pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    const command = pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0', packageFilePath: '' }), makeProvider());
     await Promise.resolve();
     quickPick.onDidHide.mock.calls[0][0]();
     rejectFetch(new Error('registry unavailable'));
@@ -368,7 +395,7 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     quickPick.selectedItems = [];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();
@@ -381,14 +408,14 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     quickPick.selectedItems = [{ label: '9.9.9' }];
     quickPick.onDidAccept.mock.calls[0][0]();
     await Promise.resolve();
 
     expect(runResolvedPackageVersion).not.toHaveBeenCalled();
     expect(showError).toHaveBeenCalledWith(
-      'Package action is no longer available. Refresh the package list and try again.',
+      PACKAGE_IDENTITY_REJECTED_MESSAGE,
     );
   });
 
@@ -396,7 +423,7 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     identityMocks.revalidateCommandPackageItem.mockResolvedValueOnce(undefined as never);
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
@@ -409,12 +436,12 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     vi.mocked(runResolvedPackageVersion).mockRejectedValueOnce(new Error('mutation failed'));
     quickPick.selectedItems = [quickPick.items[0]];
     quickPick.onDidAccept.mock.calls[0][0]();
     await vi.waitFor(() => expect(showError).toHaveBeenCalledWith(
-      'Package action is no longer available. Refresh the package list and try again.',
+      PACKAGE_IDENTITY_REJECTED_MESSAGE,
     ));
 
     expect(runResolvedPackageVersion).toHaveBeenCalledTimes(1);
@@ -424,7 +451,7 @@ describe('pickVersionCommand()', () => {
     const quickPick = makeQuickPick();
     vi.mocked(vscode.window.createQuickPick).mockReturnValueOnce(quickPick as unknown as vscode.QuickPick<vscode.QuickPickItem>);
 
-    await pickVersionCommand(new PackageItem('react', '^18.0.0', undefined, 'none'), makeProvider());
+    await pickVersionCommand(buildPackageItem({ name: 'react', currentVersion: '^18.0.0' }), makeProvider());
     // Simulate the user pressing Escape: fires the same onDidHide listener that a real
     // QuickPick.dispose() also fires. Without the `disposed` guard in cleanup(), this would
     // recurse forever since our mock's dispose() re-fires the hide listener, matching real vscode.
@@ -472,8 +499,4 @@ function makeQuickPick(): QuickPickMock {
     selectedItems: [],
     show: vi.fn(),
   };
-}
-
-function makeProvider(): PackagesProvider {
-  return {} as PackagesProvider;
 }

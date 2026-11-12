@@ -1,0 +1,293 @@
+import { describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
+import { setWorkspaceFolders } from './fixtures';
+import { createProvider } from './fixtures/providerStub';
+import { PackageItem } from '../providers/PackageItem';
+import { PackagesProvider, resolvePackageFileLabels } from '../providers';
+import { StatusItem } from '../providers/StatusItem';
+import type { AuditOrchestrationServiceContract } from '../providers/auditOrchestrationService';
+import type { PackageLoadingServiceContract, PackageLoadingSnapshot } from '../providers/packageLoadingService';
+import type { AuditOrchestrationResult } from '../providers/auditOrchestrationService';
+import type {
+  CachedUpdateData,
+  UpdateOrchestrationResult,
+  UpdateOrchestrationServiceContract,
+} from '../providers/updateOrchestrationService';
+import type { AuditSeverity, PackageFileEntry } from '../utils';
+
+vi.mock('../providers/packageLabels', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/packageLabels')>();
+  return {
+    ...actual,
+    resolvePackageFileLabels: vi.fn(actual.resolvePackageFileLabels),
+  };
+});
+
+const updateResult: UpdateOrchestrationResult = {
+  kind: 'completed',
+  data: new Map<string, CachedUpdateData>(),
+  failedPackageFilePaths: [],
+  failures: [],
+  allFailed: false,
+};
+
+const auditResult: AuditOrchestrationResult = {
+  kind: 'completed',
+  auditResults: new Map<string, AuditSeverity>(),
+  auditProjects: [],
+  auditFailures: [],
+  failedAuditPaths: [],
+  successfulAuditRootCount: 1,
+  vulnerablePackageCount: 0,
+};
+
+function createSnapshot(): PackageLoadingSnapshot {
+  const entries: PackageFileEntry[] = [{
+    name: 'react',
+    current: '18.0.0',
+    dev: false,
+    versionPrefix: '',
+    packageFilePath: '/workspace/package.json',
+  }];
+  return {
+    entries,
+    packageFilePaths: ['/workspace/package.json'],
+    readablePackageFilePaths: [],
+    failedPackageReadPaths: [],
+    packageLocationBaselines: new Map(),
+    packageReadFailed: false,
+  };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+interface ProviderHarness {
+  readonly provider: PackagesProvider;
+  readonly load: PackageLoadingServiceContract['load'];
+  readonly readPackageEntries: PackageLoadingServiceContract['readPackageEntries'];
+  readonly discoverPackageFilePaths: PackageLoadingServiceContract['discoverPackageFilePaths'];
+  readonly updateCheck: UpdateOrchestrationServiceContract['check'];
+  readonly auditRun: AuditOrchestrationServiceContract['run'];
+}
+
+function createProviderHarness(load: PackageLoadingServiceContract['load']): ProviderHarness {
+  const readPackageEntries = vi.fn<PackageLoadingServiceContract['readPackageEntries']>(() => Promise.resolve([]));
+  const discoverPackageFilePaths = vi.fn<PackageLoadingServiceContract['discoverPackageFilePaths']>(() => Promise.resolve([]));
+  const packageLoadingService: PackageLoadingServiceContract = {
+    load,
+    readPackageEntries,
+    discoverPackageFilePaths,
+  };
+  const updateCheck = vi.fn<UpdateOrchestrationServiceContract['check']>(() => Promise.resolve(updateResult));
+  const updateService: UpdateOrchestrationServiceContract = {
+    check: updateCheck,
+    invalidateCache: vi.fn(),
+    computeFingerprint: () => Promise.resolve('fingerprint'),
+  };
+  const auditRun = vi.fn<AuditOrchestrationServiceContract['run']>(() => Promise.resolve(auditResult));
+  const provider = createProvider({
+    packageLoadingService,
+    updateOrchestrationService: updateService,
+    auditOrchestrationService: { run: auditRun },
+  });
+  return {
+    provider,
+    load,
+    readPackageEntries,
+    discoverPackageFilePaths,
+    updateCheck,
+    auditRun,
+  };
+}
+
+function getPackageNames(provider: PackagesProvider, parent?: vscode.TreeItem): string[] {
+  return provider.getChildren(parent).flatMap((child) => {
+    if (child instanceof PackageItem) {
+      return [child.packageName];
+    }
+    if (child instanceof StatusItem) {
+      return [];
+    }
+    return getPackageNames(provider, child);
+  });
+}
+
+function readLastContextValue(contextKey: string): unknown {
+  const calls = vi.mocked(vscode.commands.executeCommand).mock.calls as unknown as readonly unknown[][];
+  const contextCalls = calls.filter(call => call[0] === 'setContext' && call[1] === contextKey);
+  return contextCalls.at(-1)?.[2];
+}
+
+function mockCancelledProgress(): void {
+  vi.mocked(vscode.window.withProgress).mockImplementationOnce((_options, task) => task(
+    { report: vi.fn() },
+    {
+      isCancellationRequested: true,
+      onCancellationRequested: vi.fn(() => ({ dispose: vi.fn() })),
+    },
+  ));
+}
+
+describe('PackagesProvider operation lifecycle', () => {
+  it('waits for the current load before checking or auditing packages', async () => {
+    const loadGate = deferred<PackageLoadingSnapshot>();
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => loadGate.promise);
+    const harness = createProviderHarness(load);
+    const loading = harness.provider.loadPackages();
+    const checking = harness.provider.checkUpdates();
+    const auditing = harness.provider.runAudit();
+
+    expect(harness.load).toHaveBeenCalledOnce();
+    expect(harness.readPackageEntries).not.toHaveBeenCalled();
+    expect(harness.discoverPackageFilePaths).not.toHaveBeenCalled();
+    expect(harness.updateCheck).not.toHaveBeenCalled();
+    expect(harness.auditRun).not.toHaveBeenCalled();
+
+    loadGate.resolve(createSnapshot());
+    await Promise.all([loading, checking, auditing]);
+
+    expect(harness.load).toHaveBeenCalledOnce();
+    expect(harness.readPackageEntries).not.toHaveBeenCalled();
+    expect(harness.discoverPackageFilePaths).not.toHaveBeenCalled();
+    expect(harness.updateCheck).toHaveBeenCalledOnce();
+    expect(harness.auditRun).toHaveBeenCalledOnce();
+  });
+
+  it('discards checks and audits cancelled while waiting for the load', async () => {
+    const loadGate = deferred<PackageLoadingSnapshot>();
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => loadGate.promise);
+    const harness = createProviderHarness(load);
+    const checking = harness.provider.checkUpdates();
+    const auditing = harness.provider.runAudit();
+
+    expect(harness.load).toHaveBeenCalledOnce();
+    harness.provider.cancelCheckUpdates();
+    harness.provider.cancelAudit();
+    loadGate.resolve(createSnapshot());
+    await Promise.all([checking, auditing]);
+
+    expect(harness.updateCheck).not.toHaveBeenCalled();
+    expect(harness.auditRun).not.toHaveBeenCalled();
+  });
+
+  it('does not start an audit when its progress token was cancelled before start', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+    mockCancelledProgress();
+
+    await harness.provider.runAudit();
+
+    expect(harness.auditRun).not.toHaveBeenCalled();
+  });
+
+  it('does not start an update check when its progress token was cancelled before start', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+    mockCancelledProgress();
+
+    await harness.provider.checkUpdates();
+
+    expect(harness.updateCheck).not.toHaveBeenCalled();
+  });
+
+  it('resets audit state if VS Code cannot start progress', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+    vi.mocked(vscode.window.withProgress).mockRejectedValueOnce(new Error('progress failed'));
+
+    await expect(harness.provider.runAudit()).rejects.toThrow('progress failed');
+
+    expect(harness.provider.getChildren().some(item => item.label === 'Running audit…')).toBe(false);
+    expect(harness.auditRun).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when cancelling with no audit running', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+
+    harness.provider.cancelAudit();
+
+    expect(harness.auditRun).not.toHaveBeenCalled();
+  });
+
+  it('clears stale rows and reports a failed reload without showing no workspace', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>()
+      .mockResolvedValueOnce(createSnapshot())
+      .mockRejectedValueOnce(new Error('reload failed'));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+
+    expect(getPackageNames(harness.provider)).toEqual(['react']);
+
+    await harness.provider.loadPackages();
+
+    expect(getPackageNames(harness.provider)).toEqual([]);
+    const loadingStatus = harness.provider.getChildren().find(item => (
+      item instanceof StatusItem && item.label === 'Workspace package loading failed'
+    ));
+    expect(loadingStatus?.command?.command).toBe('nestro.openStatusReport');
+    expect(harness.provider.getStatusReport().packageReadFailures).toEqual([
+      expect.objectContaining({ reason: 'package-load-failed', detail: 'reload failed' }),
+    ]);
+    expect(readLastContextValue('nestro.noWorkspace')).toBe(false);
+  });
+
+  it('invalidates owner labels when a reload clears the tracked manifest paths', async () => {
+    const previousFolders = vscode.workspace.workspaceFolders;
+    const nextLoad = deferred<PackageLoadingSnapshot>();
+    const load = vi.fn<PackageLoadingServiceContract['load']>()
+      .mockResolvedValueOnce(createSnapshot())
+      .mockReturnValueOnce(nextLoad.promise);
+    const harness = createProviderHarness(load);
+    try {
+      setWorkspaceFolders([{ name: 'old-workspace', uri: { fsPath: '/workspace' } }]);
+      vi.mocked(resolvePackageFileLabels).mockClear();
+      await harness.provider.loadPackages();
+      expect(resolvePackageFileLabels).toHaveBeenCalledOnce();
+
+      setWorkspaceFolders([{ name: 'new-workspace', uri: { fsPath: '/workspace' } }]);
+      const reloading = harness.provider.loadPackages();
+      harness.provider.markPackageUpdating(
+        {
+          packageName: 'react',
+          packageFilePath: '/workspace/package.json',
+          section: 'dependencies',
+        },
+        { kind: 'install' },
+      );
+      const callsBeforeLoadSettles = vi.mocked(resolvePackageFileLabels).mock.calls.length;
+      nextLoad.resolve(createSnapshot());
+      await reloading;
+
+      expect(callsBeforeLoadSettles).toBe(3);
+    }
+    finally {
+      harness.provider.dispose();
+      setWorkspaceFolders(previousFolders);
+    }
+  });
+
+  it('does not emit tree changes after disposal', async () => {
+    const load = vi.fn<PackageLoadingServiceContract['load']>(() => Promise.resolve(createSnapshot()));
+    const harness = createProviderHarness(load);
+    await harness.provider.loadPackages();
+    const listener = vi.fn();
+    harness.provider.onDidChangeTreeData(listener);
+
+    harness.provider.dispose();
+    listener.mockClear();
+    harness.provider.setFilter('patch');
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
