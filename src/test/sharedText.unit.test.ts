@@ -43,11 +43,21 @@ describe('sanitizeInlineText()', () => {
 });
 
 describe('redactCredentials()', () => {
-  it('drops URL user info only when it carries a password and keeps git SSH users', () => {
+  it('drops HTTP URL user info and keeps git SSH users', () => {
     expect(redactCredentials('https://ci:s3cr3t@registry.internal/npm')).toBe('https://registry.internal/npm');
     expect(redactCredentials('git+ssh://git@github.com/acme/lib.git#v1')).toBe('git+ssh://git@github.com/acme/lib.git#v1');
     expect(redactCredentials('1abc://u:p@host/x')).toBe('1abc://u:p@host/x');
     expect(redactCredentials('(see https://u:p@a@host)')).toBe('(see https://host)');
+  });
+
+  it('drops any HTTP-family URL user info and preserves non-HTTP usernames', () => {
+    const githubToken = `ghp_${'a'.repeat(36)}`;
+
+    expect(redactCredentials(`https://${githubToken}@github.com/o/r.git`)).toBe('https://github.com/o/r.git');
+    expect(redactCredentials('git+https://token@host/x.tgz')).toBe('git+https://host/x.tgz');
+    expect(redactCredentials('HTTPS://tok@host/x')).toBe('HTTPS://host/x');
+    expect(redactCredentials('git+http://token@host/x.tgz')).toBe('git+http://host/x.tgz');
+    expect(redactCredentials('ssh://user@host/repo')).toBe('ssh://user@host/repo');
   });
 
   it('masks Authorization values without eating a closing bracket', () => {

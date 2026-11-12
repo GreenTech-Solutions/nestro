@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CONTEXT_VALUE_TOKENS, PACKAGE_PRESENTATION, sanitizeInlineText } from '../shared';
+import { CONTEXT_VALUE_TOKENS, PACKAGE_PRESENTATION, redactCredentials, sanitizeInlineText } from '../shared';
 import {
   formatAuditSeverityLabel,
   formatHeldBackDate,
@@ -278,7 +278,7 @@ function getReleaseAgeText(state: ReleaseAgeState): string | undefined {
 }
 
 export function sanitizePackageText(value: string): string {
-  return sanitizeInlineText(value);
+  return sanitizeInlineText(redactCredentials(value));
 }
 
 function getVulnerabilityIcon(severity: AuditSeverity): vscode.ThemeIcon {
