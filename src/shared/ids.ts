@@ -55,5 +55,6 @@ export const CONTEXT_VALUE_TOKENS = {
   group: 'group',
   detail: 'detail',
   status: 'status',
+  statusSearchActive: 'status-search-active',
   workspaceFolder: 'workspaceFolder',
 } as const;

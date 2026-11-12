@@ -53,11 +53,23 @@ describe('package row action manifest', () => {
     expect(new Set(packageRowMenus.map(entry => entry.command)).size).toBe(packageRowMenus.length);
   });
 
-  it('matches every row context entry by regex rather than an exact context value', () => {
-    for (const entry of manifest.contributes.menus['view/item/context']) {
+  it('matches every package row action by regex rather than an exact context value', () => {
+    for (const entry of packageRowMenus) {
       expect(entry.when).not.toMatch(/viewItem\s*==/);
       expect(entry.when).toMatch(/viewItem\s*=~/);
     }
+  });
+
+  it('adds an inline clear-search action for the active search status row', () => {
+    const entry = manifest.contributes.menus['view/item/context'].find(
+      candidate => candidate.command === 'nestro.clearSearchQuery',
+    );
+
+    expect(entry).toEqual({
+      command: 'nestro.clearSearchQuery',
+      when: 'view == nestro.packagesView && viewItem == status-search-active',
+      group: 'inline',
+    });
   });
 
   it.each([

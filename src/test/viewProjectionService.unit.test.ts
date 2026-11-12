@@ -10,6 +10,7 @@ import {
 import type { PackageTreeEntry } from '../providers/treeBuilder';
 import type { ViewContextMap, ViewProjectionSnapshot } from '../providers/viewProjectionService';
 import type { WorkspaceCapabilities } from '../providers/PackagesProvider';
+import { CONTEXT_VALUE_TOKENS } from '../shared';
 import type { UpdateType } from '../utils';
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
@@ -366,9 +367,30 @@ describe('computeViewProjection', () => {
       ]);
     });
 
-    it('adds no Filter or Search row for the default all-filter, empty-query state even with entries', () => {
+    it('adds no Filter or Search row when neither action is available in the default state', () => {
       const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch'), createEntry('lodash')];
       expect(computeViewProjection(baseSnapshot({ entries })).statusRows).toEqual([]);
+    });
+
+    it('shows Filter: All and Search packages when both actions are available', () => {
+      const entries = [createEntry('react', 'minor'), createEntry('vue', 'patch'), createEntry('lodash')];
+      const projection = computeViewProjection(baseSnapshot({ entries, workspaceCapabilities: FULL_CAPABILITIES }));
+      expect(projection.statusRows).toEqual([
+        {
+          label: 'Filter: All',
+          description: '3 packages',
+          icon: 'filter',
+          actionable: false,
+          command: { command: 'nestro.showFilterPicker', title: 'Change filter' },
+        },
+        {
+          label: 'Search packages',
+          description: '',
+          icon: 'search',
+          actionable: false,
+          command: { command: 'nestro.searchPackages', title: 'Search by name' },
+        },
+      ]);
     });
 
     it('shows a Filter row with the visible/total counts and the filter-picker command when a filter is active', () => {
@@ -404,6 +426,7 @@ describe('computeViewProjection', () => {
         icon: 'search',
         actionable: false,
         command: { command: 'nestro.searchPackages', title: 'Edit search' },
+        contextValue: CONTEXT_VALUE_TOKENS.statusSearchActive,
       }]);
     });
 
@@ -416,6 +439,7 @@ describe('computeViewProjection', () => {
         icon: 'search',
         actionable: false,
         command: { command: 'nestro.searchPackages', title: 'Edit search' },
+        contextValue: CONTEXT_VALUE_TOKENS.statusSearchActive,
       }]);
     });
 
@@ -451,6 +475,7 @@ describe('computeViewProjection', () => {
           icon: 'search',
           actionable: false,
           command: { command: 'nestro.searchPackages', title: 'Edit search' },
+          contextValue: CONTEXT_VALUE_TOKENS.statusSearchActive,
         },
       ]);
     });

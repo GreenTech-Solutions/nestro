@@ -4,7 +4,7 @@ import type { StatusRowProjection, ViewProjectionSnapshot } from './viewProjecti
 import { projectPackageTree, truncateSearchQuery } from './treeBuilder';
 import type { PackageTreeProjection } from './treeBuilder';
 import { sanitizePackageText } from './packageItemPresentation';
-import { COMMAND_IDS, uniqueStrings } from '../shared';
+import { COMMAND_IDS, CONTEXT_VALUE_TOKENS, uniqueStrings } from '../shared';
 import {
   formatFailedPackageFileCount,
   formatFailedPackageRootCount,
@@ -143,30 +143,41 @@ function projectFilterSearchRows(
   snapshot: ViewProjectionSnapshot,
   packageTree: PackageTreeProjection | undefined,
 ): StatusRowProjection[] {
-  if (snapshot.filterType === 'all' && snapshot.search === '') {
+  const showFilterRow = snapshot.filterType !== 'all' || snapshot.workspaceCapabilities.canFilterPackages;
+  const showSearchRow = snapshot.search !== '' || snapshot.workspaceCapabilities.canSearchPackages;
+  if (!showFilterRow && !showSearchRow) {
     return [];
   }
   const projection = packageTree ?? projectPackageTree(snapshot.entries, snapshot.filterType, snapshot.search);
   const rows: StatusRowProjection[] = [];
-  if (snapshot.filterType !== 'all') {
+  if (showFilterRow) {
     rows.push({
       label: vscode.l10n.t('Filter: {0}', getFilterLabel(snapshot.filterType)),
-      description: formatFilteredPackageCount(
-        projection.filterCounts[snapshot.filterType],
-        projection.filterCounts.all,
-      ),
+      description: snapshot.filterType === 'all'
+        ? formatPackageCount(projection.filterCounts.all)
+        : formatFilteredPackageCount(projection.filterCounts[snapshot.filterType], projection.filterCounts.all),
       icon: 'filter',
       actionable: false,
       command: { command: COMMAND_IDS.showFilterPicker, title: vscode.l10n.t('Change filter') },
     });
   }
-  if (snapshot.search !== '') {
+  if (showSearchRow && snapshot.search === '') {
+    rows.push({
+      label: vscode.l10n.t('Search packages'),
+      description: '',
+      icon: 'search',
+      actionable: false,
+      command: { command: COMMAND_IDS.searchPackages, title: vscode.l10n.t('Search by name') },
+    });
+  }
+  else if (showSearchRow) {
     rows.push({
       label: vscode.l10n.t('Search: "{0}"', truncateSearchQuery(sanitizePackageText(snapshot.search))),
       description: formatPackageCount(projection.filterCounts.all),
       icon: 'search',
       actionable: false,
       command: { command: COMMAND_IDS.searchPackages, title: vscode.l10n.t('Edit search') },
+      contextValue: CONTEXT_VALUE_TOKENS.statusSearchActive,
     });
   }
   return rows;

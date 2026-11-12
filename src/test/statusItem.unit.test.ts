@@ -12,6 +12,12 @@ describe('StatusItem', () => {
     expect(item.command).toBeUndefined();
   });
 
+  it('uses a custom contextValue when provided', () => {
+    const item = new StatusItem('Search: "react"', '1 package', 'search', undefined, false, undefined, 'status-search-active');
+
+    expect(item.contextValue).toBe('status-search-active');
+  });
+
   it('applies the theme color to the icon when one is given', () => {
     const item = new StatusItem('Audit incomplete', '1 package root failed', 'warning', 'charts.yellow');
 

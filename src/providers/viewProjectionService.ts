@@ -45,6 +45,7 @@ export interface StatusRowProjection {
   readonly color?: string;
   readonly actionable: boolean;
   readonly command?: StatusRowCommand;
+  readonly contextValue?: string;
 }
 
 export const VIEW_CONTEXT_KEYS = CONTEXT_KEYS;

@@ -434,6 +434,11 @@
           "command": "nestro.removePackage",
           "when": "view == nestro.packagesView && viewItem =~ /^(package|outdated)/",
           "group": "3_danger@1"
+        },
+        {
+          "command": "nestro.clearSearchQuery",
+          "when": "view == nestro.packagesView && viewItem == status-search-active",
+          "group": "inline"
         }
       ]
     }

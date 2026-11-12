@@ -241,6 +241,15 @@ suite('Manifest Contracts', () => {
     }
   });
 
+  test('clear Search is inline only for the active search status row', () => {
+    const entry = getManifest().contributes.menus['view/item/context']
+      .find(candidate => candidate.command === COMMAND_IDS.clearSearchQuery);
+
+    assert.ok(entry, 'nestro.clearSearchQuery should have a view/item/context menu entry');
+    assert.strictEqual(entry.when, `view == ${VIEW_IDS.packages} && viewItem == status-search-active`);
+    assert.strictEqual(entry.group, 'inline');
+  });
+
   // Row-only and contextual commands have no meaningful effect outside their row/context, so
   // the manifest hides them from the Command Palette with a `when: false` menu entry.
   const PALETTE_GATED_COMMANDS: Readonly<Record<string, string>> = {

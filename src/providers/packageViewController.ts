@@ -130,6 +130,7 @@ export class PackageViewController implements vscode.Disposable {
       row.color,
       row.actionable,
       row.command,
+      row.contextValue,
     ));
   }
 

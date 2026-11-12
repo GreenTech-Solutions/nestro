@@ -44,13 +44,14 @@ const CONTEXT_KEYS_WITHOUT_MANIFEST_READER: readonly string[] = [
   CONTEXT_KEYS.hasAuditableProjects,
 ];
 
-// Row-state tokens the manifest's `viewItem` patterns never match.
+// Row-state tokens the manifest does not match through a `viewItem` regex.
 const TOKENS_WITHOUT_MANIFEST_MATCHER: readonly string[] = [
   CONTEXT_VALUE_TOKENS.pinUnsupported,
   CONTEXT_VALUE_TOKENS.vulnerable,
   CONTEXT_VALUE_TOKENS.group,
   CONTEXT_VALUE_TOKENS.detail,
   CONTEXT_VALUE_TOKENS.status,
+  CONTEXT_VALUE_TOKENS.statusSearchActive,
   CONTEXT_VALUE_TOKENS.workspaceFolder,
 ];
 

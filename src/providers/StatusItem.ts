@@ -17,10 +17,11 @@ export class StatusItem extends vscode.TreeItem {
     color?: string,
     actionable = false,
     command?: StatusItemCommand,
+    contextValue?: string,
   ) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.description = description;
-    this.contextValue = CONTEXT_VALUE_TOKENS.status;
+    this.contextValue = contextValue ?? CONTEXT_VALUE_TOKENS.status;
     this.iconPath = color === undefined
       ? new vscode.ThemeIcon(icon)
       : new vscode.ThemeIcon(icon, new vscode.ThemeColor(color));
