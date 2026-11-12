@@ -2,7 +2,7 @@ import { startRootOperations } from '../utils';
 import type { PackageMetadataOutcome, RootOperationResult } from '../utils';
 import { packageIdentityKey } from './packageIdentity';
 import type { PackageIdentityTuple } from './packageIdentity';
-import type { UpdateOrchestrationDependencies } from './updateOrchestrationTypes';
+import type { UpdateCheckProgress, UpdateOrchestrationDependencies } from './updateOrchestrationTypes';
 
 interface MetadataLookup {
   readonly identity: PackageIdentityTuple;
@@ -15,13 +15,21 @@ export async function fetchMetadataOutcomes(
   coordinationKeys: ReadonlyMap<string, string>,
   signal: AbortSignal,
   dependencies: UpdateOrchestrationDependencies,
+  onProgress?: (progress: UpdateCheckProgress) => void,
 ): Promise<(PackageMetadataOutcome | undefined)[] | undefined> {
   const lookups = await resolveMetadataLookups(identities, coordinationKeys, signal, dependencies);
   if (lookups === undefined || signal.aborted) {
     return undefined;
   }
   const uniqueEntries = uniqueMetadataRequests(lookups);
-  const outcomes = await fetchUniqueMetadataOutcomes(uniqueEntries, signal, dependencies);
+  onProgress?.({ phase: 'release-dates', completed: 0, total: uniqueEntries.length });
+  let completed = 0;
+  const outcomes = await fetchUniqueMetadataOutcomes(uniqueEntries, signal, dependencies, () => {
+    if (!signal.aborted) {
+      completed += 1;
+      onProgress?.({ phase: 'release-dates', completed, total: uniqueEntries.length });
+    }
+  });
   if (outcomes === undefined || signal.aborted) {
     return undefined;
   }
@@ -88,6 +96,7 @@ function fetchUniqueMetadataOutcomes(
   entries: readonly (readonly [string, MetadataLookup])[],
   signal: AbortSignal,
   dependencies: UpdateOrchestrationDependencies,
+  onRequestComplete: () => void,
 ): Promise<readonly RootOperationResult<readonly [string, PackageMetadataOutcome | undefined]>[] | undefined> {
   const outcomeRun = startRootOperations(
     entries,
@@ -104,6 +113,11 @@ function fetchUniqueMetadataOutcomes(
       }
       catch {
         return [key, undefined];
+      }
+      finally {
+        if (!requestSignal.aborted) {
+          onRequestComplete();
+        }
       }
     },
   );

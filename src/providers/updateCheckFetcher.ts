@@ -30,6 +30,13 @@ export async function fetchUpdateVersions(
 
   coordination.failures.forEach(() => request.onRootFailure?.());
   const entries = createFetchEntries(request.packageFiles, coordination.keys);
+  request.onProgress?.({
+    phase: 'versions',
+    completedFiles: 0,
+    totalFiles: entries.length,
+    packageCount: request.identities.length,
+    lastPackageFilePath: undefined,
+  });
   const outcomes = await fetchLatestVersionOutcomes(request, dependencies, entries);
   if (outcomes === undefined || request.signal.aborted) {
     return undefined;
@@ -90,17 +97,34 @@ function fetchLatestVersionOutcomes(
   dependencies: UpdateOrchestrationDependencies,
   entries: readonly (readonly [string, string])[],
 ): Promise<readonly RootOperationResult<ReadonlyMap<string, string>>[] | undefined> {
+  let completedFiles = 0;
   const fetchRun = startRootOperations(
     entries,
     ([, coordinationKey]) => coordinationKey,
     dependencies.checkCoordinator,
     request.signal,
-    ([packageFilePath]) => dependencies.fetchAllLatestVersions(
-      packageFilePath,
-      request.target,
-      request.includePreReleases,
-      request.minimumReleaseAgeDays,
-    ),
+    async ([packageFilePath]) => {
+      try {
+        return await dependencies.fetchAllLatestVersions(
+          packageFilePath,
+          request.target,
+          request.includePreReleases,
+          request.minimumReleaseAgeDays,
+        );
+      }
+      finally {
+        if (!request.signal.aborted) {
+          completedFiles += 1;
+          request.onProgress?.({
+            phase: 'versions',
+            completedFiles,
+            totalFiles: entries.length,
+            packageCount: request.identities.length,
+            lastPackageFilePath: packageFilePath,
+          });
+        }
+      }
+    },
   );
   return fetchRun.result;
 }

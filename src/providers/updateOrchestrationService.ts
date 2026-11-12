@@ -29,6 +29,7 @@ function detectPackageManager(cwd: string | undefined) {
 export { computeUpdateFingerprint } from './updateFingerprint';
 export type {
   CachedUpdateData,
+  UpdateCheckProgress,
   UpdateFingerprintPolicy,
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
@@ -171,6 +172,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
           fetched.coordinationKeys,
           request.signal,
           this.dependencies,
+          request.onProgress,
         );
     if (metadataOutcomes === undefined || request.signal.aborted) {
       return { kind: 'discarded', reason: 'cancelled' };

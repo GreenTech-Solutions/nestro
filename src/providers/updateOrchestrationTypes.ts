@@ -12,6 +12,16 @@ export interface UpdateFingerprintPolicy {
   readonly minimumReleaseAgeDays: number;
 }
 
+export type UpdateCheckProgress
+  = | {
+    readonly phase: 'versions';
+    readonly completedFiles: number;
+    readonly totalFiles: number;
+    readonly packageCount: number;
+    readonly lastPackageFilePath: string | undefined;
+  }
+  | { readonly phase: 'release-dates'; readonly completed: number; readonly total: number };
+
 export interface UpdateOrchestrationRequest {
   readonly identities: readonly PackageIdentityTuple[];
   readonly currentVersions: ReadonlyMap<string, string>;
@@ -30,6 +40,7 @@ export interface UpdateOrchestrationRequest {
   readonly onCheckStarted?: () => void;
   readonly onRootFailure?: () => void;
   readonly onDiscarded?: () => void;
+  readonly onProgress?: (progress: UpdateCheckProgress) => void;
 }
 
 export interface UpdateRootFailure {
