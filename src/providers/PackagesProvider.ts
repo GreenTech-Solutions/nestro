@@ -36,8 +36,8 @@ export { PACKAGE_IDENTITY_REJECTED_MESSAGE } from './packageIdentity';
 export type { PackageIdentityResolution, ResolvedPackageItem };
 export type { WorkspaceCapabilities } from './workspaceCapabilityResolver';
 
-/** Native metadata lookups spawn package-manager processes, so keep their fan-out conservative. */
-export const METADATA_CONCURRENCY_CAP = 4;
+/** Release-date lookups spawn one package-manager process each; this caps them per update check. */
+export const METADATA_CONCURRENCY_CAP = 8;
 
 export class PackagesProvider implements vscode.TreeDataProvider<vscode.TreeItem>, vscode.Disposable {
   readonly onDidChangeTreeData: vscode.Event<void>;

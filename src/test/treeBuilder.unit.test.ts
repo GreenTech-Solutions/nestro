@@ -237,6 +237,7 @@ describe('buildTree', () => {
       patch: 0,
       minor: 1,
       breaking: 0,
+      vulnerable: 0,
     });
     expect(allGroups[0].description).toBe('2 packages · 1 outdated');
     expect(allGroups[0].children.map(child => child.label)).toEqual(['react-busy', 'react-ready']);
@@ -261,7 +262,7 @@ describe('buildTree', () => {
 });
 
 describe('formatViewDescription', () => {
-  const counts = { all: 5, hasUpdates: 2, patch: 1, minor: 1, breaking: 0 };
+  const counts = { all: 5, hasUpdates: 2, patch: 1, minor: 1, breaking: 0, vulnerable: 0 };
 
   it('returns undefined when the filter is all and the search is empty', () => {
     expect(formatViewDescription('all', '', counts)).toBeUndefined();
@@ -788,6 +789,7 @@ describe('getFilterCounts', () => {
       patch: 0,
       minor: 1,
       breaking: 1,
+      vulnerable: 0,
     });
   });
 });
@@ -829,6 +831,7 @@ describe('projectPackageTree', () => {
       patch: 0,
       minor: 1,
       breaking: 1,
+      vulnerable: 1,
     });
     expect(all.groups.map(group => ({
       dev: group.dev,

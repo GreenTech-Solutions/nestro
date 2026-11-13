@@ -1,11 +1,9 @@
 import { startRootOperations } from '../utils';
-import type { PackageMetadataOutcome, RootOperationResult } from '../utils';
+import type { RootOperationResult } from '../utils';
 import {
   addPackageUpdatesByIdentity,
   groupPackageIdentitiesByFile,
-  packageIdentityKey,
 } from './packageIdentity';
-import type { PackageIdentityTuple } from './packageIdentity';
 import type { UpdateOrchestrationDependencies, UpdateOrchestrationRequest, UpdateRootFailure } from './updateOrchestrationTypes';
 
 interface CoordinationKeyResults {
@@ -21,12 +19,6 @@ export interface UpdateVersionFetchResult {
   readonly firstFailure: unknown;
 }
 
-interface MetadataLookup {
-  readonly identity: PackageIdentityTuple;
-  readonly key: string;
-  readonly coordinationKey: string;
-}
-
 export async function fetchUpdateVersions(
   request: UpdateOrchestrationRequest,
   dependencies: UpdateOrchestrationDependencies,
@@ -38,30 +30,19 @@ export async function fetchUpdateVersions(
 
   coordination.failures.forEach(() => request.onRootFailure?.());
   const entries = createFetchEntries(request.packageFiles, coordination.keys);
+  request.onProgress?.({
+    phase: 'versions',
+    completedFiles: 0,
+    totalFiles: entries.length,
+    packageCount: request.identities.length,
+    lastPackageFilePath: undefined,
+  });
   const outcomes = await fetchLatestVersionOutcomes(request, dependencies, entries);
   if (outcomes === undefined || request.signal.aborted) {
     return undefined;
   }
 
   return collectVersionFetchResults(request, coordination, entries, outcomes);
-}
-
-export async function fetchMetadataOutcomes(
-  identities: readonly PackageIdentityTuple[],
-  coordinationKeys: ReadonlyMap<string, string>,
-  signal: AbortSignal,
-  dependencies: UpdateOrchestrationDependencies,
-): Promise<(PackageMetadataOutcome | undefined)[] | undefined> {
-  const lookups = await resolveMetadataLookups(identities, coordinationKeys, signal, dependencies);
-  if (lookups === undefined || signal.aborted) {
-    return undefined;
-  }
-  const uniqueEntries = uniqueMetadataRequests(lookups);
-  const outcomes = await fetchUniqueMetadataOutcomes(uniqueEntries, signal, dependencies);
-  if (outcomes === undefined || signal.aborted) {
-    return undefined;
-  }
-  return alignMetadataOutcomes(identities, lookups, uniqueEntries, outcomes);
 }
 
 async function resolveCheckCoordinationKeys(
@@ -116,17 +97,34 @@ function fetchLatestVersionOutcomes(
   dependencies: UpdateOrchestrationDependencies,
   entries: readonly (readonly [string, string])[],
 ): Promise<readonly RootOperationResult<ReadonlyMap<string, string>>[] | undefined> {
+  let completedFiles = 0;
   const fetchRun = startRootOperations(
     entries,
     ([, coordinationKey]) => coordinationKey,
     dependencies.checkCoordinator,
     request.signal,
-    ([packageFilePath]) => dependencies.fetchAllLatestVersions(
-      packageFilePath,
-      request.target,
-      request.includePreReleases,
-      request.minimumReleaseAgeDays,
-    ),
+    async ([packageFilePath]) => {
+      try {
+        return await dependencies.fetchAllLatestVersions(
+          packageFilePath,
+          request.target,
+          request.includePreReleases,
+          request.minimumReleaseAgeDays,
+        );
+      }
+      finally {
+        if (!request.signal.aborted) {
+          completedFiles += 1;
+          request.onProgress?.({
+            phase: 'versions',
+            completedFiles,
+            totalFiles: entries.length,
+            packageCount: request.identities.length,
+            lastPackageFilePath: packageFilePath,
+          });
+        }
+      }
+    },
   );
   return fetchRun.result;
 }
@@ -167,113 +165,4 @@ function collectVersionFetchResults(
     failures: orderedFailures,
     firstFailure: orderedFailures[0]?.error,
   };
-}
-
-async function resolveMetadataLookups(
-  identities: readonly PackageIdentityTuple[],
-  coordinationKeys: ReadonlyMap<string, string>,
-  signal: AbortSignal,
-  dependencies: UpdateOrchestrationDependencies,
-): Promise<MetadataLookup[] | undefined> {
-  const lookupRun = startRootOperations(
-    identities,
-    identity => identity.packageFilePath,
-    dependencies.checkCoordinator,
-    signal,
-    identity => dependencies.metadataCoordinator.runExclusive(
-      identity.packageFilePath,
-      async (): Promise<MetadataLookup> => {
-        let registryKey: string | undefined;
-        try {
-          registryKey = await dependencies.resolveMetadataRegistryKey(
-            identity.packageName,
-            identity.packageFilePath,
-          );
-        }
-        catch {
-          registryKey = undefined;
-        }
-        const coordinationKey = coordinationKeys.get(identity.packageFilePath);
-        if (coordinationKey === undefined) {
-          throw new Error('Update metadata requires a canonical coordinator key.');
-        }
-        return { identity, key: buildMetadataLookupKey(identity, registryKey), coordinationKey };
-      },
-    ),
-  );
-  const results = await lookupRun.result;
-  if (signal.aborted) {
-    return undefined;
-  }
-  return identities.map((identity, index) => {
-    const result = results[index];
-    if (result?.status === 'success') {
-      return result.value;
-    }
-    const coordinationKey = coordinationKeys.get(identity.packageFilePath);
-    if (coordinationKey === undefined) {
-      throw new Error('Update metadata requires a canonical coordinator key.');
-    }
-    return { identity, key: buildMetadataLookupKey(identity, undefined), coordinationKey };
-  });
-}
-
-function uniqueMetadataRequests(lookups: readonly MetadataLookup[]): [string, MetadataLookup][] {
-  const uniqueRequests = new Map<string, MetadataLookup>();
-  lookups.forEach((lookup) => {
-    if (!uniqueRequests.has(lookup.key)) {
-      uniqueRequests.set(lookup.key, lookup);
-    }
-  });
-  return [...uniqueRequests.entries()];
-}
-
-function fetchUniqueMetadataOutcomes(
-  entries: readonly (readonly [string, MetadataLookup])[],
-  signal: AbortSignal,
-  dependencies: UpdateOrchestrationDependencies,
-): Promise<readonly RootOperationResult<readonly [string, PackageMetadataOutcome | undefined]>[] | undefined> {
-  const outcomeRun = startRootOperations(
-    entries,
-    ([, lookup]) => lookup.coordinationKey,
-    dependencies.checkCoordinator,
-    signal,
-    ([key, lookup], requestSignal) => dependencies.metadataCoordinator.runExclusive(
-      `${lookup.coordinationKey}\u0000${lookup.key}`,
-      async (): Promise<readonly [string, PackageMetadataOutcome | undefined]> => {
-        try {
-          return [key, await dependencies.fetchPackageMetadata(
-            lookup.identity.packageName,
-            lookup.identity.packageFilePath,
-            requestSignal,
-          )];
-        }
-        catch {
-          return [key, undefined];
-        }
-      },
-    ),
-  );
-  return outcomeRun.result;
-}
-
-function alignMetadataOutcomes(
-  identities: readonly PackageIdentityTuple[],
-  lookups: readonly MetadataLookup[],
-  uniqueEntries: readonly (readonly [string, MetadataLookup])[],
-  outcomes: readonly RootOperationResult<readonly [string, PackageMetadataOutcome | undefined]>[],
-): (PackageMetadataOutcome | undefined)[] {
-  const outcomesByKey = new Map<string, PackageMetadataOutcome | undefined>();
-  outcomes.forEach((result, index) => {
-    const key = uniqueEntries[index]?.[0];
-    if (key !== undefined) {
-      outcomesByKey.set(key, result.status === 'success' ? result.value[1] : undefined);
-    }
-  });
-  const keyByIdentity = new Map(lookups.map(({ identity, key }) => [packageIdentityKey(identity), key]));
-  return identities.map(identity => outcomesByKey.get(keyByIdentity.get(packageIdentityKey(identity)) ?? ''));
-}
-
-function buildMetadataLookupKey(identity: PackageIdentityTuple, registryKey: string | undefined): string {
-  return [identity.packageName, registryKey ?? `unresolved:${identity.packageFilePath}`].join('\u0000');
 }

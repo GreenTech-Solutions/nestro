@@ -149,6 +149,8 @@ exports.run = async function run() {
     await sleep(PARAMS.auditWaitMs);
     await runCommand('notifications.clearAll');
     await sleep(300);
+    await runCommand(commandId('showVulnerablePackages'));
+    await sleep(500);
     markReady('audit');
     await waitForDone('audit');
   }

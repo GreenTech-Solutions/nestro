@@ -43,21 +43,22 @@ describe('cafile resolution', () => {
     vi.unstubAllEnvs();
   });
 
-  it('finds a relative cafile next to the project .npmrc', async () => {
-    mockFiles({ '/workspace/.npmrc': 'cafile=./certs/ca.pem', '/workspace/certs/ca.pem': PEM });
-
-    const configuration = await resolveRegistryConfiguration('react', '/workspace/package.json', 'npm');
-
-    expect(configuration.ca).toBe(PEM);
-    expect(readFile).toHaveBeenCalledWith('/workspace/certs/ca.pem', 'utf8');
-  });
-
-  it('resolves a relative cafile against the .npmrc that declares it, not the package directory', async () => {
-    mockFiles({ '/workspace/.npmrc': 'cafile=ca.pem', '/workspace/ca.pem': PEM });
+  it('resolves a relative cafile against the package directory', async () => {
+    mockFiles({ '/workspace/.npmrc': 'cafile=./certs/ca.pem', '/workspace/apps/web/certs/ca.pem': PEM });
 
     const configuration = await resolveRegistryConfiguration('react', '/workspace/apps/web/package.json', 'npm');
 
     expect(configuration.ca).toBe(PEM);
+    expect(readFile).toHaveBeenCalledWith('/workspace/apps/web/certs/ca.pem', 'utf8');
+  });
+
+  it('resolves a relative cafile from a parent .npmrc against the package directory', async () => {
+    mockFiles({ '/workspace/.npmrc': 'cafile=ca.pem', '/workspace/packages/app/ca.pem': PEM });
+
+    const configuration = await resolveRegistryConfiguration('react', '/workspace/packages/app/package.json', 'npm');
+
+    expect(configuration.ca).toBe(PEM);
+    expect(readFile).toHaveBeenCalledWith('/workspace/packages/app/ca.pem', 'utf8');
   });
 
   it('expands ~/ against the home directory', async () => {
@@ -77,19 +78,20 @@ describe('cafile resolution', () => {
   });
 
   it('resolves a relative cafile from the environment against the package directory', async () => {
-    vi.stubEnv('npm_config_cafile', 'env-ca.pem');
-    mockFiles({ '/workspace/apps/web/env-ca.pem': PEM });
+    vi.stubEnv('npm_config_cafile', './ca.pem');
+    mockFiles({ '/workspace/apps/web/ca.pem': PEM });
 
     const configuration = await resolveRegistryConfiguration('react', '/workspace/apps/web/package.json', 'npm');
 
     expect(configuration.ca).toBe(PEM);
   });
 
-  it('resolves a relative Yarn Classic cafile against the .yarnrc that declares it', async () => {
-    mockFiles({ '/workspace/.yarnrc': 'cafile "./ca.pem"', '/workspace/ca.pem': PEM });
+  it('resolves a relative Yarn Classic cafile against the package directory', async () => {
+    mockFiles({ '/workspace/.yarnrc': 'cafile "ca.pem"', '/workspace/packages/app/ca.pem': PEM });
 
-    const configuration = await resolveRegistryConfiguration('react', '/workspace/package.json', 'yarn');
+    const configuration = await resolveRegistryConfiguration('react', '/workspace/packages/app/package.json', 'yarn');
 
     expect(configuration.ca).toBe(PEM);
+    expect(readFile).toHaveBeenCalledWith('/workspace/packages/app/ca.pem', 'utf8');
   });
 });

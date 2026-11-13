@@ -1,6 +1,6 @@
 import { formatViewDescription, projectPackageTree } from './treeBuilder';
 import type { PackageTreeEntry, PackageTreeProjection } from './treeBuilder';
-import type { FilterType } from './FilterManager';
+import type { PackageFilter } from './FilterManager';
 import type { WorkspaceCapabilities } from './PackagesProvider';
 import { projectStatusRows } from './statusRowProjection';
 import { formatPackageUpdatesAvailable } from '../utils';
@@ -15,7 +15,7 @@ export type AuditState = 'idle' | 'running' | 'done' | 'incomplete' | 'failed';
 /** Plain-data snapshot of every provider field the view projection reads; owns no VS Code state. */
 export interface ViewProjectionSnapshot {
   readonly entries: readonly PackageTreeEntry[];
-  readonly filterType: FilterType;
+  readonly filterType: PackageFilter;
   readonly search: string;
   readonly loading: boolean;
   readonly workspaceCapabilities: WorkspaceCapabilities;
@@ -45,6 +45,7 @@ export interface StatusRowProjection {
   readonly color?: string;
   readonly actionable: boolean;
   readonly command?: StatusRowCommand;
+  readonly contextValue?: string;
 }
 
 export const VIEW_CONTEXT_KEYS = CONTEXT_KEYS;

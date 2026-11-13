@@ -57,7 +57,9 @@ describe('PackagesProvider', () => {
     expect(tree[0].label).toBe('Last update check');
     expect(tree[1]).toBeInstanceOf(StatusItem);
     expect(tree[1].label).toBe('Filter: Has Updates');
-    expect(tree[2]).toBeInstanceOf(GroupItem);
+    expect(tree[2]).toBeInstanceOf(StatusItem);
+    expect(tree[2].label).toBe('Search packages');
+    expect(tree[3]).toBeInstanceOf(GroupItem);
     expect(groups).toHaveLength(1);
     expect(groups[0].children.map(child => child.label)).toEqual(['react']);
   });
@@ -72,7 +74,10 @@ describe('PackagesProvider', () => {
     const tree = provider.getChildren();
     const groups = tree.filter((item): item is GroupItem => item instanceof GroupItem);
     expect(tree[0]).toBeInstanceOf(StatusItem);
-    expect(tree[1]).toBeInstanceOf(GroupItem);
+    expect(tree[1]).toBeInstanceOf(StatusItem);
+    expect(tree[1].label).toBe('Filter: All');
+    expect(tree[2]).toBeInstanceOf(StatusItem);
+    expect(tree[2].label).toBe('Search packages');
     expect(groups.flatMap(group => group.children.map(child => child.label))).toEqual(['react', 'eslint']);
   });
 
@@ -187,8 +192,8 @@ describe('PackagesProvider', () => {
 
     await provider.loadPackages();
     await provider.checkUpdates();
-    expect(provider.getChildren().some(item => item instanceof StatusItem
-      && (item.label === 'Filter: Has Updates' || (typeof item.label === 'string' && item.label.startsWith('Search: '))))).toBe(false);
+    const defaultRows = provider.getChildren().filter((item): item is StatusItem => item instanceof StatusItem);
+    expect(defaultRows.map(item => item.label)).toEqual(['Last update check', 'Filter: All', 'Search packages']);
 
     filterManager.set('hasUpdates');
     const filterRow = provider.getChildren().find(
@@ -205,12 +210,41 @@ describe('PackagesProvider', () => {
     expect(searchRow).toBeInstanceOf(StatusItem);
     expect(searchRow?.description).toBe('1 package');
     expect(searchRow?.command).toEqual({ command: 'nestro.searchPackages', title: 'Edit search' });
+    expect(searchRow?.contextValue).toBe('status-search-active');
 
     filterManager.clearSearch();
     filterManager.set('all');
-    expect(provider.getChildren().some(item => item instanceof StatusItem
-      && (item.label === 'Filter: Has Updates' || item.label === 'Search: "react"'))).toBe(false);
+    expect(provider.getChildren().filter((item): item is StatusItem => item instanceof StatusItem)
+      .map(item => item.label)).toEqual(['Last update check', 'Filter: All', 'Search packages']);
 
+    provider.dispose();
+  });
+
+  it('clears the vulnerable filter when a new audit starts', async () => {
+    const filterManager = new FilterManager('all');
+    const provider = new PackagesProvider(filterManager);
+    await provider.loadPackages();
+    setProviderState(provider, {
+      allEntries: [{
+        item: buildPackageItem({
+          name: 'react',
+          currentVersion: '18.0.0',
+          vulnerabilitySeverity: 'high',
+          packageFilePath: '/workspace/package.json',
+        }),
+        dev: false,
+        packageFilePath: '/workspace/package.json',
+      }],
+      auditState: 'done',
+      lastAuditCount: 1,
+    });
+
+    filterManager.showVulnerable();
+    expect(filterManager.current).toBe('vulnerable');
+
+    const audit = provider.runAudit();
+    expect(filterManager.current).toBe('all');
+    await audit;
     provider.dispose();
   });
 

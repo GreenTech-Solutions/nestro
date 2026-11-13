@@ -1,4 +1,5 @@
 export { FilterManager, isFilterType } from './FilterManager';
+export type { FilterType, PackageFilter } from './FilterManager';
 export { isPackageItem } from './PackageItem';
 export { sanitizePackageText } from './packageItemPresentation';
 export { PackagesProvider } from './PackagesProvider';

@@ -110,6 +110,7 @@ export async function createUtilsModuleMock(): Promise<Record<string, unknown>> 
     },
     parseDependencySpec,
     readAllWorkspaceDependencies: vi.fn(),
+    runWithRegistryConfigMemo: vi.fn(runWithYarnFamilyMemoPassthrough),
     runWithYarnFamilyMemo: vi.fn(runWithYarnFamilyMemoPassthrough),
     resolveYarnFamily: vi.fn(),
     resolveMetadataRegistryKey: vi.fn((_packageName: string, packageFilePath?: string) => (

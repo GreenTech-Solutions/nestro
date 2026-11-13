@@ -1,11 +1,15 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getCheckUpdatesDebounce, getCheckUpdatesForceAlways, getUpdatePolicySettings } from '../config';
 import { describeError, uniqueStrings } from '../shared';
 import { getUpdateType, logger, showError } from '../utils';
 import { packageIdentityFromValues, packageIdentityKey } from './packageIdentity';
 import type { PackageIdentityTuple } from './packageIdentity';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels } from './packageLabels';
 import { createUpdateFailureSnapshot } from './statusReportAssembler';
 import type { UpdateFingerprintPolicy, UpdateOrchestrationServiceContract } from './updateOrchestrationService';
+import { createUpdateCheckProgressReporter } from './updateCheckProgress';
+import type { UpdateCheckProgressSink } from './updateCheckProgress';
 import type { PackageProviderState } from './packageProviderState';
 import type { OperationRun } from './operationLifecycle';
 
@@ -44,7 +48,7 @@ export class PackageUpdateController {
           title: vscode.l10n.t('Checking package updates…'),
           cancellable: true,
         },
-        () => this.runUpdateCheck(operation, attemptedPackageFilePaths),
+        progress => this.runUpdateCheck(operation, attemptedPackageFilePaths, progress),
         () => this.cancelCheckUpdates(),
       );
     }
@@ -67,6 +71,7 @@ export class PackageUpdateController {
   private async runUpdateCheck(
     operation: OperationRun<'update'>,
     attemptedPackageFilePaths: string[],
+    progress: UpdateCheckProgressSink,
   ): Promise<void> {
     if (!this.isUpdateCurrent(operation)) {
       return;
@@ -89,6 +94,7 @@ export class PackageUpdateController {
       packageFiles,
       identities,
       currentVersions,
+      progress,
     ));
     if (this.isUpdateCurrent(operation)) {
       this.applyUpdateResult(result, source);
@@ -111,9 +117,22 @@ export class PackageUpdateController {
     packageFiles: readonly string[],
     identities: readonly PackageIdentityTuple[],
     currentVersions: ReadonlyMap<string, string>,
+    progress: UpdateCheckProgressSink,
   ) {
     const forceAlways = getCheckUpdatesForceAlways();
     const { includePreReleases, minimumReleaseAgeDays, target } = getUpdatePolicySettings();
+    const workspaceFolders = this.state.workspaceFolderDescriptors;
+    const packageFileLabels = new Map<string, string>();
+    if (workspaceFolders.length > 0) {
+      resolvePackageFileLabels(
+        packageFiles,
+        workspaceFolders,
+        getLocalizedPackageLabelFormatting(),
+      ).forEach(({ packageFilePath, owner }) => packageFileLabels.set(packageFilePath, owner.label));
+    }
+    const labelOf = (packageFilePath: string): string => (
+      packageFileLabels.get(packageFilePath) ?? path.basename(path.dirname(packageFilePath))
+    );
     return {
       identities,
       currentVersions,
@@ -133,6 +152,7 @@ export class PackageUpdateController {
       },
       onRootFailure: () => logger.error('Update check failed for a package root; other roots still completed.'),
       onDiscarded: () => logger.info('Update results discarded — packages or update settings changed during the check.'),
+      onProgress: createUpdateCheckProgressReporter(progress, labelOf, minimumReleaseAgeDays > 0),
     };
   }
 

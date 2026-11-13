@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseBunConfig } from '../utils/bunConfig';
-import { expandEnvironmentReferences, NPM_ENV_SYNTAX, YARN_MODERN_ENV_SYNTAX } from '../utils/envExpansion';
+import { expandBunValue, expandEnvironmentReferences, NPM_ENV_SYNTAX, YARN_MODERN_ENV_SYNTAX } from '../utils/envExpansion';
 import { readNpmrcConfig } from '../utils/registry/npmrc';
 import { parseClassicYarnConfig } from '../utils/registry/yarnrc';
 import { parseYarnModernConfig } from '../utils/registry/yarnrcYml';
@@ -37,11 +36,6 @@ function readClassicRegistry(reference: string): string | undefined {
 
 function readModernToken(reference: string): string | undefined {
   return parseYarnModernConfig(`npmAuthToken: "${reference}"`)?.authToken;
-}
-
-function readBunToken(reference: string): string | undefined {
-  return parseBunConfig(`[install]\nregistry = { url = "https://registry.example.com/", token = "${reference}" }`)
-    ?.registry?.authToken;
 }
 
 describe('npmrc environment references', () => {
@@ -100,13 +94,12 @@ describe('Yarn Modern environment references', () => {
 describe('Bun environment references', () => {
   it.each([
     ['$NAME set', `$${SET}`, 'secret-value'],
-    ['${NAME} set', `\${${SET}}`, 'secret-value'],
+    ['${NAME} stays literal', `\${${SET}}`, `\${${SET}}`],
+    ['embedded $NAME stays literal', `a-$${SET}-b`, `a-$${SET}-b`],
     ['$NAME set but empty', `$${EMPTY}`, ''],
-    ['$NAME unset is rejected', `$${UNSET}`, undefined],
-    ['${NAME} unset is rejected', `\${${UNSET}}`, undefined],
-    ['${NAME?} is not a reference', `\${${SET}?}`, `\${${SET}?}`],
-  ])('%s', (_name, reference, expected) => {
-    expect(readBunToken(reference)).toBe(expected);
+    ['$NAME unset drops the field', `$${UNSET}`, null],
+  ])('%s', (_name, value, expected) => {
+    expect(expandBunValue(value)).toBe(expected);
   });
 });
 

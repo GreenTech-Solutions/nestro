@@ -25,7 +25,7 @@ push to master
        │                              no tag yet
        │
        └─ workflow_run(success) ──▶ Release prepare (.github/workflows/release-prepare.yml)
-                                      opens/refreshes PR release/v<version> (package.json +
+                                      opens PR release/v<version> (package.json +
                                       CHANGELOG.md) and re-dispatches Verify on its head — that
                                       dispatched run does not count toward the required check
 
@@ -52,6 +52,11 @@ Only one step above needs a human to act without a workflow prompting them: the
 `release/v<version>` pull request — approving its held `Verify` run, then reviewing and
 merging it (§1.7). Everything else is either fully automated or paused on the protected
 `release` environment's required-reviewer approval (§5).
+
+If an open `release/v*` pull request was built on an older `master`, Release prepare's
+`Reject competing release pull requests` step fails with
+`existing release pull request is stale relative to the verified master SHA`. To recover, close
+that pull request, delete its `release/vX.Y.Z` branch, then re-run the failed Release prepare run.
 
 ## 1. Prerequisites
 

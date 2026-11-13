@@ -1,5 +1,5 @@
 export type { AuditResult } from './audit/outcome';
-export { mergeSeverity } from './audit/types';
+export { compareSeverity, mergeSeverity } from './audit/types';
 export type { AuditPackageManager, AuditSchemaId, AuditSeverity } from './audit/types';
 export { runNpmAudit, runPackageAudit } from './auditClient';
 export { cloneAuditAdvisory, inferPathAttribution, mergeAuditAdvisories } from './auditReport';
@@ -23,6 +23,7 @@ export type { PackageFileDependencyUpdates } from './packageTransforms';
 export { selectVersionsForPicker } from './registryClient';
 export { classifyVersionReleaseAge, resolveUpdateReleaseAge } from './releaseAge';
 export type { ReleaseAgeState } from './releaseAge';
+export { runWithRegistryConfigMemo } from './registry/configSourceMemo';
 export { runRootOperations, startRootOperations } from './rootOperation';
 export type { RootOperationResult } from './rootOperation';
 export { formatShellTaskCommandForLog, formatShellTaskFailureMessage, runShellTaskAndWait } from './shellTask';

@@ -16,5 +16,6 @@ export const PACKAGE_PRESENTATION = {
     patch: 'charts.green',
     minor: 'charts.yellow',
     breaking: 'charts.red',
+    vulnerable: 'charts.red',
   },
 } as const;

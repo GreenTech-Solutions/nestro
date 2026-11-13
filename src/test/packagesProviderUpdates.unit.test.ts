@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import {
   beforeEach,
   describe,
@@ -7,6 +8,7 @@ import {
 } from 'vitest';
 import { mockNestroConfiguration } from './fixtures/config';
 import { FilterManager, PackagesProvider } from '../providers';
+import { getLocalizedPackageLabelFormatting, resolvePackageFileLabels, toWorkspaceFolderDescriptors } from '../providers/packageLabels';
 import { METADATA_CONCURRENCY_CAP } from '../providers/PackagesProvider';
 import { StatusItem } from '../providers/StatusItem';
 import { CHECK_CONCURRENCY_CAP, MUTATION_CONCURRENCY_CAP } from '../utils/operationCoordinator';
@@ -98,6 +100,39 @@ describe('PackagesProvider', () => {
     );
   });
 
+  it('reports package file labels in update-check progress messages', async () => {
+    mockNestroConfiguration({ minimumReleaseAgeDays: 0 });
+    const packageFiles = ['/workspace/apps/web/package.json', '/workspace/packages/site/package.json'];
+    vi.mocked(readAllWorkspaceDependencies).mockResolvedValueOnce([
+      { name: 'react', current: '18.0.0', dev: false, versionPrefix: '', packageFilePath: packageFiles[0] },
+      { name: 'vite', current: '5.0.0', dev: true, versionPrefix: '', packageFilePath: packageFiles[1] },
+    ]);
+    vi.mocked(getWorkspacePackageFilePaths).mockResolvedValueOnce(packageFiles);
+    const provider = new PackagesProvider(new FilterManager('all'));
+    await provider.loadPackages();
+
+    const reports: Array<{ readonly message?: string; readonly increment?: number }> = [];
+    const progress: vscode.Progress<{ message?: string; increment?: number }> = {
+      report: value => reports.push(value),
+    };
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as vscode.CancellationToken;
+    vi.mocked(vscode.window.withProgress).mockImplementationOnce((_options, task) => task(progress, token));
+
+    await provider.checkUpdates();
+
+    const labels = resolvePackageFileLabels(
+      packageFiles,
+      toWorkspaceFolderDescriptors(vscode.workspace.workspaceFolders ?? []),
+      getLocalizedPackageLabelFormatting(),
+    ).map(file => file.owner.label);
+    const messages = reports.map(report => report.message ?? '').join('\n');
+    labels.forEach(label => expect(messages).toContain(label));
+    provider.dispose();
+  });
+
   it('does not enable prereleases for the greatest target when the setting is absent', async () => {
     mockNestroConfiguration({ updateTarget: 'greatest' });
     const provider = new PackagesProvider(new FilterManager('all'));
@@ -169,7 +204,7 @@ describe('PackagesProvider', () => {
     await provider.checkUpdates();
 
     expect(fetchPackageMetadata).toHaveBeenCalledTimes(6);
-    expect(maximumActiveRequests).toBe(METADATA_CONCURRENCY_CAP);
+    expect(maximumActiveRequests).toBe(Math.min(6, METADATA_CONCURRENCY_CAP));
   });
 
   it('keeps an update actionable when metadata resolution or fetch fails', async () => {

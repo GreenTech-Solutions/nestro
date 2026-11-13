@@ -612,16 +612,16 @@ suite('Package tree renders only real data rows', function () {
     opened = undefined;
   });
 
-  test('the first child of a populated tree is a package group, not a fake action row', () => {
+  test('the default filter and search controls precede package groups', () => {
     const children = provider.getChildren();
     assert.ok(children.length > 0, 'the tree should not be empty for a populated fixture');
     assert.strictEqual(
-      children[0] instanceof GroupItem,
+      children[0] instanceof StatusItem && children[0].label === 'Filter: All',
       true,
-      'with no active filter/search and no diagnostics, the first row must be a real data group — '
-      + 'status rows (Filter, Search, diagnostics) may legitimately precede groups when active, '
-      + 'but a fake, non-interactive placeholder row must never appear in the tree',
+      'the available Filter action should be the first row',
     );
+    assert.strictEqual(children[1] instanceof StatusItem && children[1].label, 'Search packages');
+    assert.strictEqual(children[2] instanceof GroupItem, true, 'real package groups should follow the status rows');
   });
 
   test('a Filter status row is in the tree while a filter is active, and is gone once cleared', () => {
@@ -641,7 +641,12 @@ suite('Package tree renders only real data rows', function () {
     assert.strictEqual(
       provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Filter: Patch'),
       false,
-      'the Filter status row must disappear once the filter is cleared back to all',
+      'the active Filter: Patch row must be replaced by the default Filter: All row',
+    );
+    assert.strictEqual(
+      provider.getChildren().some(item => item instanceof StatusItem && item.label === 'Filter: All'),
+      true,
+      'the default Filter row must remain visible after the filter is cleared',
     );
   });
 });

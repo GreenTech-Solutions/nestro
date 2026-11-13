@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { buildPackageItem } from './fixtures';
-import { sanitizePackageText } from '../providers';
+import { FilterManager, PackagesProvider, sanitizePackageText } from '../providers';
 import { formatHeldBackDate } from '../utils';
 
 describe('PackageItem', () => {
@@ -176,6 +176,61 @@ describe('PackageItem', () => {
   it('strips 8-bit CSI and OSC sequences and bounds the length', () => {
     expect(sanitizePackageText('a\u009b31mb\u001b]0;title\u0007c\td\u0000e')).toBe('abc d e');
     expect(sanitizePackageText('x'.repeat(300))).toHaveLength(240);
+  });
+
+  it('redacts credentials from package rows and details', async () => {
+    const provider = new PackagesProvider(new FilterManager('all'), {
+      load: () => Promise.resolve({
+        entries: [],
+        packageFilePaths: [],
+        readablePackageFilePaths: [],
+        failedPackageReadPaths: [],
+        packageLocationBaselines: new Map(),
+        packageReadFailed: false,
+      }),
+      readPackageEntries: () => Promise.resolve([]),
+      discoverPackageFilePaths: () => Promise.resolve([]),
+    });
+    try {
+      await provider.loadPackages();
+      const item = buildPackageItem({ name: 'pkg', currentVersion: 'https://user:pass@host/x.tgz' });
+      const surfaces = [
+        item.description,
+        item.tooltip,
+        item.accessibilityInformation?.label,
+        ...provider.getChildren(item).map(detail => detail.label),
+      ].map(String);
+
+      expect(surfaces).toContain('https://host/x.tgz');
+      expect(item.tooltip).toContain('https://host/x.tgz');
+      expect(surfaces).toContain('Current: https://host/x.tgz');
+      for (const surface of surfaces) {
+        expect(surface).not.toContain('pass');
+        expect(surface).not.toContain('user:pass');
+      }
+
+      const githubTokenSpec = `git+https://ghp_${'a'.repeat(36)}@github.com/o/r.git`;
+      const tokenItem = buildPackageItem({ name: 'pkg', currentVersion: githubTokenSpec });
+      const tokenSurfaces = [
+        tokenItem.description,
+        tokenItem.tooltip,
+        tokenItem.accessibilityInformation?.label,
+        ...provider.getChildren(tokenItem).map(detail => detail.label),
+      ].map(String);
+
+      expect(tokenSurfaces).toContain('git+https://github.com/o/r.git');
+      expect(tokenSurfaces).toContain('Current: git+https://github.com/o/r.git');
+      for (const surface of tokenSurfaces) {
+        expect(surface).not.toContain('ghp_');
+      }
+    }
+    finally {
+      provider.dispose();
+    }
+  });
+
+  it.each(['npm:other@^1.2.3', '^1.2.3'])('keeps the dependency spec %s unchanged', (spec) => {
+    expect(sanitizePackageText(spec)).toBe(spec);
   });
 
   it('fails closed when the workspace owner cannot be resolved', () => {

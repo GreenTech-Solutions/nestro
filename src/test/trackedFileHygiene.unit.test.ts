@@ -8,10 +8,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 /** These files define the comment rule and quote identifiers as examples of what it forbids. */
 const RULE_DEFINITION_FILES = new Set(['CODESTYLE.md', 'AGENTS.md', 'CLAUDE.md']);
 
-/** Build output, caches and the gitignored local bookkeeping directory never ship. */
+/** Build output and caches never ship. */
 const SKIPPED_DIRECTORIES = new Set([
-  '.git', '.pnpm-store', '.vscode-test', 'coverage', 'dist', 'node_modules', 'out', 'workflow',
+  '.git', '.pnpm-store', '.vscode-test', 'coverage', 'dist', 'node_modules', 'out',
 ]);
+
+// The gitignored local task folder never ships.
+const SKIPPED_PATHS = new Set(['docs/todo']);
 
 const TRACKER_ID = /\b(?:AUD|ARC|SEC|SUP|UX|DOC|CI)-\d/;
 
@@ -19,7 +22,7 @@ function shippedFiles(directory = repoRoot, prefix = ''): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const relativePath = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) {
-      return SKIPPED_DIRECTORIES.has(entry.name)
+      return SKIPPED_DIRECTORIES.has(entry.name) || SKIPPED_PATHS.has(relativePath)
         ? []
         : shippedFiles(path.join(directory, entry.name), relativePath);
     }
@@ -52,7 +55,7 @@ describe('shipped file hygiene', () => {
   /** Documentation only: a badge URL contains the word, and packaging tests name the excluded path. */
   it('keeps the local bookkeeping directory out of shipped documentation', () => {
     const files = [...shippedFiles(), 'CODESTYLE.md'].filter(file => file.endsWith('.md'));
-    expect(offendingLines(files, line => line.includes('workflow/') && !line.includes('://')))
+    expect(offendingLines(files, line => line.includes('docs/todo/') && !line.includes('://')))
       .toEqual([]);
   });
 });

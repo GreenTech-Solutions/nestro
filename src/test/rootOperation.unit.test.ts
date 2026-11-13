@@ -192,13 +192,13 @@ describe('runRootOperations()', () => {
     ]);
   });
 
-  it('marks every item cancelled without calling its worker when the signal is already aborted', async () => {
+  it('marks every item cancelled before start and settlement when the signal is already aborted', async () => {
     const coordinator = new OperationCoordinator(4);
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
 
-    const results = await runRootOperations(
+    const run = startRootOperations(
       ['root-0', 'root-1'],
       key => key,
       coordinator,
@@ -209,8 +209,53 @@ describe('runRootOperations()', () => {
       },
     );
 
-    expect(results).toEqual([{ status: 'cancelled' }, { status: 'cancelled' }]);
+    const cancelled = [{ status: 'cancelled' }, { status: 'cancelled' }];
+    await expect(run.result).resolves.toEqual(cancelled);
+    await expect(run.settled).resolves.toEqual(cancelled);
     expect(calls).toBe(0);
+  });
+
+  it('contains an unexpected coordinator rejection as an item failure', async () => {
+    const failure = new Error('coordinator failed');
+    const coordinator = {
+      runExclusive: vi.fn(() => Promise.reject(failure)),
+    } as unknown as OperationCoordinator;
+
+    const run = startRootOperations(
+      ['root'],
+      key => key,
+      coordinator,
+      new AbortController().signal,
+      () => Promise.resolve('unused'),
+    );
+
+    const failed = [{ status: 'failure', error: failure }];
+    await expect(run.result).resolves.toEqual(failed);
+    await expect(run.settled).resolves.toEqual(failed);
+  });
+
+  it('settles a rejected coordinator acquisition as cancelled after prompt cancellation', async () => {
+    const controller = new AbortController();
+    const failure = new Error('coordinator failed after cancellation');
+    let rejectAcquisition!: (reason: unknown) => void;
+    const coordinator = {
+      runExclusive: vi.fn(() => new Promise((_resolve, reject) => {
+        rejectAcquisition = reject;
+      })),
+    } as unknown as OperationCoordinator;
+
+    const run = startRootOperations(
+      ['root'],
+      key => key,
+      coordinator,
+      controller.signal,
+      () => Promise.resolve('unused'),
+    );
+
+    controller.abort();
+    await expect(run.result).resolves.toEqual([{ status: 'cancelled' }]);
+    rejectAcquisition(failure);
+    await expect(run.settled).resolves.toEqual([{ status: 'cancelled' }]);
   });
 
   it('cancels items still queued behind the cap once the signal aborts mid-run, without starting them', async () => {
@@ -278,7 +323,10 @@ describe('runRootOperations()', () => {
     expect(queuedStarted).toBe(false);
 
     gate.resolve();
-    await run.settled;
+    await expect(run.settled).resolves.toEqual([
+      { status: 'cancelled' },
+      { status: 'cancelled' },
+    ]);
     expect(started).toBe(1);
     expect(queuedStarted).toBe(false);
   });

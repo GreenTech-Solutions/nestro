@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import * as https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { METADATA_REQUEST_TIMEOUT_MS, METADATA_RESPONSE_MAX_BYTES } from '../config';
 import { isRecord } from '../shared';
 import { runBoundedMetadataRequest } from '../utils/metadataRunner';
@@ -17,6 +17,10 @@ interface MockClientRequest extends EventEmitter {
 }
 
 describe('runBoundedMetadataRequest()', () => {
+  beforeEach(() => {
+    vi.mocked(https.get).mockClear();
+  });
+
   it('returns aborted without creating a request when the signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort();

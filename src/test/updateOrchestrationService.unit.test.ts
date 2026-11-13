@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { computeUpdateFingerprint, UpdateOrchestrationService } from '../providers/updateOrchestrationService';
 import type { CanonicalPackageLocation, PackageIdentityTuple } from '../providers/packageIdentity';
 import type {
+  UpdateCheckProgress,
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
   UpdateOrchestrationResult,
@@ -136,7 +137,8 @@ describe('UpdateOrchestrationService', () => {
       });
       const service = new UpdateOrchestrationService(dependencies);
       const onCheckStarted = vi.fn();
-      const request = createRequest({ onCheckStarted });
+      const onProgress = vi.fn();
+      const request = createRequest({ onCheckStarted, onProgress });
 
       const first = await service.check(request);
       if (!expectCompleted(first)) {
@@ -147,6 +149,7 @@ describe('UpdateOrchestrationService', () => {
 
       const second = await service.check(request);
       expect(second.kind).toBe('completed');
+      expect(onProgress).toHaveBeenCalledTimes(2);
       expect(dependencies.fetchAllLatestVersions).toHaveBeenCalledOnce();
       expect(onCheckStarted).toHaveBeenCalledTimes(2);
 
@@ -169,6 +172,15 @@ describe('UpdateOrchestrationService', () => {
       const debounced = await service.check(createRequest({ lastCheckTime: currentNow - 1_000, debounceSeconds: 60 }));
       expect(debounced.kind).toBe('debounced');
       expect(dependencies.fetchAllLatestVersions).toHaveBeenCalledOnce();
+
+      const onProgress = vi.fn();
+      const debouncedWithProgress = await service.check(createRequest({
+        lastCheckTime: currentNow - 1_000,
+        debounceSeconds: 60,
+        onProgress,
+      }));
+      expect(debouncedWithProgress.kind).toBe('debounced');
+      expect(onProgress).not.toHaveBeenCalled();
 
       const forced = await service.check(createRequest({
         lastCheckTime: currentNow - 1_000,
@@ -327,8 +339,14 @@ describe('UpdateOrchestrationService', () => {
       });
       const service = new UpdateOrchestrationService(dependencies);
       const onRootFailure = vi.fn();
+      const progress: UpdateCheckProgress[] = [];
 
-      const result = await service.check(createRequest({ packageFiles, identities, onRootFailure }));
+      const result = await service.check(createRequest({
+        packageFiles,
+        identities,
+        onRootFailure,
+        onProgress: (event) => { progress.push(event); },
+      }));
 
       if (!expectCompleted(result)) {
         return;
@@ -337,6 +355,8 @@ describe('UpdateOrchestrationService', () => {
       expect(result.failedPackageFilePaths).toEqual([packageFiles[1]]);
       expect(result.failures).toEqual([{ packageFilePath: packageFiles[1], error: failure }]);
       expect(onRootFailure).toHaveBeenCalledOnce();
+      expect(progress.some(event => event.phase === 'versions'
+        && event.lastPackageFilePath === packageFiles[1])).toBe(true);
 
       const followUp = await service.check(createRequest({ packageFiles, identities, forceAlways: false }));
       expect(followUp.kind).toBe('completed');
@@ -372,6 +392,38 @@ describe('UpdateOrchestrationService', () => {
   });
 
   describe('release age wiring', () => {
+    it('reports ordered progress for version and release-date phases', async () => {
+      const packageFiles = ['/workspace/a/package.json', '/workspace/b/package.json'];
+      const identities = [identity('react', packageFiles[0]), identity('vite', packageFiles[1])];
+      const dependencies = createDependencies();
+      const service = new UpdateOrchestrationService(dependencies);
+      const progress: UpdateCheckProgress[] = [];
+
+      const result = await service.check(createRequest({
+        packageFiles,
+        identities,
+        minimumReleaseAgeDays: 7,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+        onProgress: (event) => { progress.push(event); },
+      }));
+
+      expect(result.kind).toBe('completed');
+      expect(progress.map(event => event.phase)).toEqual([
+        'versions', 'versions', 'versions', 'release-dates', 'release-dates', 'release-dates',
+      ]);
+      const versionEvents = progress.filter((event): event is Extract<UpdateCheckProgress, { phase: 'versions' }> => (
+        event.phase === 'versions'
+      ));
+      const releaseEvents = progress.filter((event): event is Extract<UpdateCheckProgress, { phase: 'release-dates' }> => (
+        event.phase === 'release-dates'
+      ));
+      expect(versionEvents.map(event => event.completedFiles)).toEqual([0, 1, 2]);
+      expect(versionEvents[0]).toMatchObject({ totalFiles: 2, packageCount: 2, lastPackageFilePath: undefined });
+      expect(versionEvents.slice(1).every(event => event.lastPackageFilePath !== undefined)).toBe(true);
+      expect(releaseEvents.map(event => event.completed)).toEqual([0, 1, 2]);
+      expect(releaseEvents.every(event => event.total === 2)).toBe(true);
+    });
+
     it('fetches metadata and classifies release age only when minimumReleaseAgeDays is non-zero', async () => {
       const metadataOutcome: PackageMetadataOutcome = {
         kind: 'success',
@@ -410,6 +462,125 @@ describe('UpdateOrchestrationService', () => {
 
       expect(result.kind).toBe('completed');
       expect(dependencies.fetchPackageMetadata).not.toHaveBeenCalled();
+    });
+
+    it('fetches release metadata up to the coordinator cap and aligns all package results', async () => {
+      const packageFilePath = '/workspace/package.json';
+      const identities = Array.from({ length: 10 }, (_, index) => identity('package-' + index, packageFilePath));
+      const latestVersions = new Map(identities.map(({ packageName }) => [packageName, '2.0.0']));
+      const metadataOutcome: PackageMetadataOutcome = { kind: 'unavailable' } as unknown as PackageMetadataOutcome;
+      const pendingReleases: Array<() => void> = [];
+      let active = 0;
+      const fetchPackageMetadata = vi.fn(() => {
+        active += 1;
+        let resolve!: (outcome: PackageMetadataOutcome) => void;
+        const request = new Promise<PackageMetadataOutcome>((resolveRequest) => {
+          resolve = resolveRequest;
+        });
+        const settled = request.finally(() => {
+          active -= 1;
+        });
+        pendingReleases.push(() => resolve(metadataOutcome));
+        return settled;
+      });
+      const dependencies = createDependencies({
+        metadataCoordinator: new OperationCoordinator(4),
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(latestVersions),
+        fetchPackageMetadata,
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+      const check = service.check(createRequest({
+        identities,
+        minimumReleaseAgeDays: 7,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+      }));
+      const releaseBatch = (): void => {
+        pendingReleases.splice(0).forEach(release => release());
+      };
+
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(4));
+      expect(active).toBe(4);
+      releaseBatch();
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(8));
+      expect(active).toBe(4);
+      releaseBatch();
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(10));
+      expect(active).toBe(2);
+      releaseBatch();
+
+      const result = await check;
+      expect(result.kind).toBe('completed');
+      if (expectCompleted(result)) {
+        expect(result.data.size).toBe(10);
+      }
+      expect(active).toBe(0);
+    });
+
+    it('fetches duplicate package names once when their registry keys match', async () => {
+      const identities = [
+        identity('react', '/workspace/apps/web/package.json'),
+        identity('react', '/workspace/packages/site/package.json'),
+      ];
+      const dependencies = createDependencies({
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(new Map([['react', '2.0.0']])),
+        resolveMetadataRegistryKey: vi.fn().mockResolvedValue('registry-key'),
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+
+      const result = await service.check(createRequest({
+        identities,
+        packageFiles: identities.map(({ packageFilePath }) => packageFilePath),
+        minimumReleaseAgeDays: 7,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+      }));
+
+      expect(result.kind).toBe('completed');
+      expect(dependencies.fetchPackageMetadata).toHaveBeenCalledOnce();
+    });
+
+    it('does not start queued release metadata requests after cancellation', async () => {
+      const packageFilePath = '/workspace/package.json';
+      const identities = Array.from({ length: 10 }, (_, index) => identity('package-' + index, packageFilePath));
+      const controller = new AbortController();
+      const pendingReleases: Array<() => void> = [];
+      const settledRequests: Promise<void>[] = [];
+      const progress: UpdateCheckProgress[] = [];
+      const metadataOutcome: PackageMetadataOutcome = { kind: 'unavailable' } as unknown as PackageMetadataOutcome;
+      const fetchPackageMetadata = vi.fn(() => {
+        let resolve!: (outcome: PackageMetadataOutcome) => void;
+        const request = new Promise<PackageMetadataOutcome>((resolveRequest) => {
+          resolve = resolveRequest;
+        });
+        const settled = request.finally(() => undefined);
+        pendingReleases.push(() => resolve(metadataOutcome));
+        settledRequests.push(settled.then(() => undefined));
+        return settled;
+      });
+      const dependencies = createDependencies({
+        metadataCoordinator: new OperationCoordinator(4),
+        fetchAllLatestVersions: vi.fn().mockResolvedValue(
+          new Map(identities.map(({ packageName }) => [packageName, '2.0.0'])),
+        ),
+        fetchPackageMetadata,
+      });
+      const service = new UpdateOrchestrationService(dependencies);
+      const check = service.check(createRequest({
+        identities,
+        minimumReleaseAgeDays: 7,
+        signal: controller.signal,
+        resolveCurrentPolicy: () => ({ target: 'latest', includePreReleases: false, minimumReleaseAgeDays: 7 }),
+        onProgress: (event) => { progress.push(event); },
+      }));
+
+      await vi.waitFor(() => expect(fetchPackageMetadata).toHaveBeenCalledTimes(4));
+      const progressCountBeforeAbort = progress.length;
+      controller.abort();
+      await expect(check).resolves.toEqual({ kind: 'discarded', reason: 'cancelled' });
+      pendingReleases.splice(0).forEach(release => release());
+      await Promise.all(settledRequests);
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      expect(fetchPackageMetadata).toHaveBeenCalledTimes(4);
+      expect(progress).toHaveLength(progressCountBeforeAbort);
     });
   });
 

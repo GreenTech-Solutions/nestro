@@ -4,7 +4,7 @@ import type { StatusRowProjection, ViewProjectionSnapshot } from './viewProjecti
 import { projectPackageTree, truncateSearchQuery } from './treeBuilder';
 import type { PackageTreeProjection } from './treeBuilder';
 import { sanitizePackageText } from './packageItemPresentation';
-import { COMMAND_IDS, uniqueStrings } from '../shared';
+import { COMMAND_IDS, CONTEXT_VALUE_TOKENS, uniqueStrings } from '../shared';
 import {
   formatFailedPackageFileCount,
   formatFailedPackageRootCount,
@@ -93,6 +93,7 @@ function projectUpdateRows(snapshot: ViewProjectionSnapshot): StatusRowProjectio
 }
 
 function projectAuditRows(snapshot: ViewProjectionSnapshot): StatusRowProjection[] {
+  const vulnerableRows = snapshot.entries.filter(entry => entry.item.vulnerabilitySeverity !== undefined).length;
   if (snapshot.auditState === 'running') {
     return [{ label: vscode.l10n.t('Running audit…'), description: '', icon: 'loading~spin', actionable: false }];
   }
@@ -100,14 +101,17 @@ function projectAuditRows(snapshot: ViewProjectionSnapshot): StatusRowProjection
     const count = snapshot.lastAuditCount ?? 0;
     return [{
       label: vscode.l10n.t('Audit complete'),
-      description: count === 0 ? vscode.l10n.t('No vulnerabilities') : formatVulnerablePackageCount(count),
+      description: count === 0
+        ? vscode.l10n.t('No vulnerabilities')
+        : formatAuditVulnerableCount(count, vulnerableRows),
       icon: count === 0 ? 'shield-check' : 'warning',
       color: count === 0 ? 'charts.green' : 'charts.red',
       actionable: false,
+      command: getAuditRowCommand(snapshot, vulnerableRows, count),
     }];
   }
   if (snapshot.auditState === 'incomplete') {
-    return [createIncompleteAuditRow(snapshot)];
+    return [createIncompleteAuditRow(snapshot, vulnerableRows)];
   }
   if (snapshot.auditState === 'failed') {
     return [{
@@ -121,11 +125,17 @@ function projectAuditRows(snapshot: ViewProjectionSnapshot): StatusRowProjection
   return [];
 }
 
-function createIncompleteAuditRow(snapshot: ViewProjectionSnapshot): StatusRowProjection {
+function createIncompleteAuditRow(
+  snapshot: ViewProjectionSnapshot,
+  vulnerableRows: number,
+): StatusRowProjection {
   const count = snapshot.lastAuditCount ?? 0;
   const resultDescription = snapshot.lastAuditSuccessfulRootCount === 0
     ? vscode.l10n.t('No successful audit results')
-    : vscode.l10n.t('{0} from successful audit roots', formatVulnerablePackageCount(count));
+    : vscode.l10n.t(
+        '{0} from successful audit roots',
+        formatAuditVulnerableCount(count, vulnerableRows),
+      );
   return {
     label: vscode.l10n.t('Audit incomplete'),
     description: vscode.l10n.t(
@@ -135,38 +145,73 @@ function createIncompleteAuditRow(snapshot: ViewProjectionSnapshot): StatusRowPr
     ),
     icon: 'warning',
     color: 'charts.yellow',
-    actionable: true,
+    actionable: vulnerableRows === 0,
+    command: getAuditRowCommand(snapshot, vulnerableRows, count),
   };
+}
+
+function getAuditRowCommand(
+  snapshot: ViewProjectionSnapshot,
+  vulnerableRows: number,
+  count: number,
+): StatusRowProjection['command'] {
+  if (vulnerableRows > 0) {
+    return snapshot.filterType === 'vulnerable'
+      ? { command: COMMAND_IDS.openAuditReport, title: vscode.l10n.t('Open security audit report') }
+      : { command: COMMAND_IDS.showVulnerablePackages, title: vscode.l10n.t('Show vulnerable packages') };
+  }
+  if (snapshot.auditState === 'done' && count > 0) {
+    return { command: COMMAND_IDS.openAuditReport, title: vscode.l10n.t('Open security audit report') };
+  }
+  return undefined;
+}
+
+function formatAuditVulnerableCount(count: number, vulnerableRows: number): string {
+  const description = formatVulnerablePackageCount(count);
+  return count > vulnerableRows && vulnerableRows > 0
+    ? vscode.l10n.t('{0}, {1} in the list', description, vulnerableRows)
+    : description;
 }
 
 function projectFilterSearchRows(
   snapshot: ViewProjectionSnapshot,
   packageTree: PackageTreeProjection | undefined,
 ): StatusRowProjection[] {
-  if (snapshot.filterType === 'all' && snapshot.search === '') {
+  const showFilterRow = snapshot.filterType !== 'all' || snapshot.workspaceCapabilities.canFilterPackages;
+  const showSearchRow = snapshot.search !== '' || snapshot.workspaceCapabilities.canSearchPackages;
+  if (!showFilterRow && !showSearchRow) {
     return [];
   }
   const projection = packageTree ?? projectPackageTree(snapshot.entries, snapshot.filterType, snapshot.search);
   const rows: StatusRowProjection[] = [];
-  if (snapshot.filterType !== 'all') {
+  if (showFilterRow) {
     rows.push({
       label: vscode.l10n.t('Filter: {0}', getFilterLabel(snapshot.filterType)),
-      description: formatFilteredPackageCount(
-        projection.filterCounts[snapshot.filterType],
-        projection.filterCounts.all,
-      ),
+      description: snapshot.filterType === 'all'
+        ? formatPackageCount(projection.filterCounts.all)
+        : formatFilteredPackageCount(projection.filterCounts[snapshot.filterType], projection.filterCounts.all),
       icon: 'filter',
       actionable: false,
       command: { command: COMMAND_IDS.showFilterPicker, title: vscode.l10n.t('Change filter') },
     });
   }
-  if (snapshot.search !== '') {
+  if (showSearchRow && snapshot.search === '') {
+    rows.push({
+      label: vscode.l10n.t('Search packages'),
+      description: '',
+      icon: 'search',
+      actionable: false,
+      command: { command: COMMAND_IDS.searchPackages, title: vscode.l10n.t('Search by name') },
+    });
+  }
+  else if (showSearchRow) {
     rows.push({
       label: vscode.l10n.t('Search: "{0}"', truncateSearchQuery(sanitizePackageText(snapshot.search))),
       description: formatPackageCount(projection.filterCounts.all),
       icon: 'search',
       actionable: false,
       command: { command: COMMAND_IDS.searchPackages, title: vscode.l10n.t('Edit search') },
+      contextValue: CONTEXT_VALUE_TOKENS.statusSearchActive,
     });
   }
   return rows;

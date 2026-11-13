@@ -5,22 +5,25 @@ import type { FilterType } from '../shared';
 export { FILTER_TYPES, isFilterType };
 export type { FilterType };
 
-export interface FilterCounts extends Record<FilterType, number> {}
+export type PackageFilter = FilterType | 'vulnerable';
 
-const FILTER_LABELS: Record<FilterType, string> = {
+export interface FilterCounts extends Record<PackageFilter, number> {}
+
+const FILTER_LABELS: Record<PackageFilter, string> = {
   all: vscode.l10n.t('All'),
   hasUpdates: vscode.l10n.t('Has Updates'),
   patch: vscode.l10n.t('Patch'),
   minor: vscode.l10n.t('Minor'),
   breaking: vscode.l10n.t('Breaking'),
+  vulnerable: vscode.l10n.t('Vulnerable'),
 };
 
-export function getFilterLabel(filterType: FilterType): string {
+export function getFilterLabel(filterType: PackageFilter): string {
   return FILTER_LABELS[filterType];
 }
 
 export function getFilterIcon(
-  filterType: FilterType,
+  filterType: PackageFilter,
   icon: string,
 ): vscode.ThemeIcon {
   const color = PACKAGE_PRESENTATION.filterColors[filterType];
@@ -31,7 +34,7 @@ export function getFilterIcon(
 
 export function createFilterQuickPickItems(
   counts: FilterCounts,
-  activeFilter: FilterType,
+  activeFilter: PackageFilter,
 ): (vscode.QuickPickItem & { filterType: FilterType })[] {
   return FILTER_TYPES.map((filterType) => {
     const icon = activeFilter === filterType ? 'circle-filled' : 'circle-large-outline';
@@ -48,7 +51,7 @@ export class FilterManager implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChange = this._onDidChange.event;
 
-  private _current: FilterType;
+  private _current: PackageFilter;
   private _search = '';
   private readonly clearSearchButton: vscode.QuickInputButton = {
     iconPath: new vscode.ThemeIcon('clear-all'),
@@ -59,7 +62,7 @@ export class FilterManager implements vscode.Disposable {
     this._current = initialFilter;
   }
 
-  get current(): FilterType {
+  get current(): PackageFilter {
     return this._current;
   }
 
@@ -72,6 +75,14 @@ export class FilterManager implements vscode.Disposable {
       return;
     }
     this._current = type;
+    this._onDidChange.fire();
+  }
+
+  showVulnerable(): void {
+    if (this._current === 'vulnerable') {
+      return;
+    }
+    this._current = 'vulnerable';
     this._onDidChange.fire();
   }
 

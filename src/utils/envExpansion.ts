@@ -25,11 +25,12 @@ export const YARN_MODERN_ENV_SYNTAX: EnvSyntax = {
   unset: 'reject',
 };
 
-/** `bunfig.toml`: `$NAME` and `${NAME}` must be set. */
-export const BUN_ENV_SYNTAX: EnvSyntax = {
-  reference: /\$(?:\{(?<name>[A-Za-z_]\w*)\}|(?<bareName>[A-Za-z_]\w*))/g,
-  unset: 'reject',
-};
+/** `bunfig.toml`: only a whole value `$NAME` expands; `null` when that variable is unset, anything else stays literal. */
+export function expandBunValue(value: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const match = /^\$([A-Za-z_]\w*)$/.exec(value);
+  const name = match?.[1];
+  return name === undefined ? value : env[name] ?? null;
+}
 
 /** Expands the references `syntax` recognizes in `value`; undefined when one cannot be resolved. */
 export function expandEnvironmentReferences(

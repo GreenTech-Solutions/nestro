@@ -16,7 +16,7 @@ export async function resolveCa(config: ReadonlyMap<string, string>): Promise<st
   return normalizeCa(await readFile(cafile, 'utf8'));
 }
 
-/** A `cafile` setting as an absolute path: `~/` against the home directory, anything else against `baseDirectory`. */
+/** A `cafile` setting as an absolute path: `~/` against the home directory, anything else against the package directory. */
 export function resolveCaFilePath(cafile: string, baseDirectory: string): string {
   if (cafile === '') {
     return cafile;

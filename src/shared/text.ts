@@ -86,14 +86,19 @@ function maskValue(value: string): string {
 function redactUrlUserInfo(text: string): string {
   return text.replace(URL_AUTHORITY_PATTERN, (match, prefix: string, authority: string) => {
     const atIndex = authority.lastIndexOf('@');
-    return atIndex !== -1 && authority.slice(0, atIndex).includes(':')
+    const scheme = prefix.slice(0, -3).toLowerCase();
+    const redactAnyUserInfo = scheme === 'http'
+      || scheme === 'https'
+      || scheme.endsWith('+http')
+      || scheme.endsWith('+https');
+    return atIndex !== -1 && (redactAnyUserInfo || authority.slice(0, atIndex).includes(':'))
       ? `${prefix}${authority.slice(atIndex + 1)}`
       : match;
   });
 }
 
 /**
- * Masks URL user info, Authorization values, credential assignments and npm tokens.
+ * Masks URL user info (any for http(s) URLs, `user:password` otherwise), Authorization values, credential assignments and npm tokens.
  * Generic keys (`token`, `api-key`) are masked only when the value has `genericMinLength` characters or more.
  */
 export function redactCredentials(text: string, genericMinLength = DEFAULT_GENERIC_VALUE_MIN_LENGTH): string {

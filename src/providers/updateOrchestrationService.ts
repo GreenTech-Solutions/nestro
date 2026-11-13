@@ -1,7 +1,8 @@
 import { ClientManager, resolveMutationCoordinatorKey } from '../clients';
 import * as utils from '../utils';
 import type { OperationCoordinator } from '../utils';
-import { fetchMetadataOutcomes, fetchUpdateVersions } from './updateCheckFetcher';
+import { fetchUpdateVersions } from './updateCheckFetcher';
+import { fetchMetadataOutcomes } from './updateMetadataFetcher';
 import { buildUpdatePolicyKey, hasReusableUpdateResult, shouldDebounceUpdateCheck } from './updateCache';
 import type { UpdateResultCache } from './updateCache';
 import { readCanonicalDependencySpecs } from './packageIdentity';
@@ -28,6 +29,7 @@ function detectPackageManager(cwd: string | undefined) {
 export { computeUpdateFingerprint } from './updateFingerprint';
 export type {
   CachedUpdateData,
+  UpdateCheckProgress,
   UpdateFingerprintPolicy,
   UpdateOrchestrationDependencies,
   UpdateOrchestrationRequest,
@@ -96,7 +98,9 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
   }
 
   check(request: UpdateOrchestrationRequest): Promise<UpdateOrchestrationResult> {
-    return utils.runWithYarnFamilyMemo(() => this.checkInMemo(request));
+    return utils.runWithYarnFamilyMemo(() => (
+      utils.runWithRegistryConfigMemo(() => this.checkInMemo(request))
+    ));
   }
 
   private async checkInMemo(request: UpdateOrchestrationRequest): Promise<UpdateOrchestrationResult> {
@@ -168,6 +172,7 @@ export class UpdateOrchestrationService implements UpdateOrchestrationServiceCon
           fetched.coordinationKeys,
           request.signal,
           this.dependencies,
+          request.onProgress,
         );
     if (metadataOutcomes === undefined || request.signal.aborted) {
       return { kind: 'discarded', reason: 'cancelled' };

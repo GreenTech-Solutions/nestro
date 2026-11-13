@@ -105,8 +105,8 @@ suite('nestro.setFilter argument guard', function () {
 });
 
 suite('Manifest Contracts', () => {
-  test('contributes.commands has exactly the 20 documented entries', () => {
-    assert.strictEqual(getManifest().contributes.commands.length, 20);
+  test('contributes.commands has exactly the 21 documented entries', () => {
+    assert.strictEqual(getManifest().contributes.commands.length, 21);
   });
 
   // Global commands gate on capability contexts published only after the provider's first
@@ -239,6 +239,15 @@ suite('Manifest Contracts', () => {
       );
       assert.ok(inlineCommandIds.length <= 2, `${label} should have at most two inline actions`);
     }
+  });
+
+  test('clear Search is inline only for the active search status row', () => {
+    const entry = getManifest().contributes.menus['view/item/context']
+      .find(candidate => candidate.command === COMMAND_IDS.clearSearchQuery);
+
+    assert.ok(entry, 'nestro.clearSearchQuery should have a view/item/context menu entry');
+    assert.strictEqual(entry.when, `view == ${VIEW_IDS.packages} && viewItem == status-search-active`);
+    assert.strictEqual(entry.group, 'inline');
   });
 
   // Row-only and contextual commands have no meaningful effect outside their row/context, so

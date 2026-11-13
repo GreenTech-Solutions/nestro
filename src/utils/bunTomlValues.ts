@@ -1,4 +1,4 @@
-import { BUN_ENV_SYNTAX, expandEnvironmentReferences } from './envExpansion';
+import { expandBunValue } from './envExpansion';
 
 const BUN_REGISTRY_ENTRY_KEYS = new Set(['password', 'token', 'url', 'username']);
 
@@ -8,6 +8,8 @@ export function parseInlineTable(value: string): Map<string, string> | undefined
   }
 
   const fields = new Map<string, string>();
+  const seenKeys = new Set<string>();
+  let unsetAuthField = false;
   let index = skipWhitespace(value, 1);
   if (value[index] === '}') {
     return undefined;
@@ -18,9 +20,10 @@ export function parseInlineTable(value: string): Map<string, string> | undefined
       index += 1;
     }
     const key = value.slice(keyStart, index);
-    if (!BUN_REGISTRY_ENTRY_KEYS.has(key) || fields.has(key)) {
+    if (!BUN_REGISTRY_ENTRY_KEYS.has(key) || seenKeys.has(key)) {
       return undefined;
     }
+    seenKeys.add(key);
     index = skipWhitespace(value, index);
     if (value[index] !== '=') {
       return undefined;
@@ -29,11 +32,23 @@ export function parseInlineTable(value: string): Map<string, string> | undefined
     if (parsed === undefined) {
       return undefined;
     }
-    fields.set(key, parsed.value);
+    if (parsed.value !== null) {
+      fields.set(key, parsed.value);
+    }
+    else if (key === 'username' || key === 'password') {
+      unsetAuthField = true;
+    }
     index += 1 + value.slice(index + 1).length - value.slice(index + 1).trimStart().length + parsed.nextIndex;
     index = skipWhitespace(value, index);
     if (value[index] === '}') {
-      return index === value.length - 1 ? fields : undefined;
+      if (index !== value.length - 1) {
+        return undefined;
+      }
+      if (unsetAuthField) {
+        fields.delete('username');
+        fields.delete('password');
+      }
+      return fields;
     }
     if (value[index] !== ',') {
       return undefined;
@@ -43,7 +58,7 @@ export function parseInlineTable(value: string): Map<string, string> | undefined
   return undefined;
 }
 
-export function parseTomlString(value: string): { value: string; nextIndex: number } | undefined {
+export function parseTomlString(value: string): { value: string | null; nextIndex: number } | undefined {
   if (!value.startsWith('"')) {
     return undefined;
   }
@@ -52,8 +67,7 @@ export function parseTomlString(value: string): { value: string; nextIndex: numb
   for (let index = 1; index < value.length; index += 1) {
     const character = value[index];
     if (character === '"') {
-      const expanded = expandEnvironmentReferences(result, BUN_ENV_SYNTAX);
-      return expanded === undefined ? undefined : { value: expanded, nextIndex: index + 1 };
+      return { value: expandBunValue(result), nextIndex: index + 1 };
     }
     if (character === '\\') {
       const escaped = value[index + 1];

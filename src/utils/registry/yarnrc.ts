@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { YARN_DIALECTS } from '../../shared';
-import { getConfigFilePaths, readConfigFile } from './configFiles';
+import { getConfigFilePaths, getPackageRoot, readConfigFile } from './configFiles';
 import { expandEnvironmentReferences, YARN_CLASSIC_ENV_SYNTAX } from '../envExpansion';
 import { unwrapQuotes } from './configValues';
 import { normalizeSimpleConfigKey } from './npmrc';
@@ -17,11 +16,12 @@ export async function readClassicYarnConfiguration(
 ): Promise<ClassicYarnConfiguration> {
   let values = new Map<string, string>();
   let sourceFound = false;
+  const baseDirectory = getPackageRoot(packageFilePath) ?? process.cwd();
   for (const configPath of getConfigFilePaths(packageFilePath, YARN_DIALECTS.classic.configFile)) {
     const contents = await readConfigFile(configPath);
     if (contents !== undefined) {
       sourceFound = true;
-      values = new Map([...values, ...resolveClassicCaFile(parseClassicYarnConfig(contents), path.dirname(configPath))]);
+      values = new Map([...values, ...resolveClassicCaFile(parseClassicYarnConfig(contents), baseDirectory)]);
     }
   }
   return { values, sourceFound };

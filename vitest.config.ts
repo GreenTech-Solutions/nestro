@@ -26,9 +26,9 @@ export default defineConfig({
 				'src/commands/**': { statements: 100, branches: 93, functions: 100, lines: 100, perFile: true },
 				'src/config/**': { statements: 100, branches: 100, functions: 100, lines: 100, perFile: true },
 				'src/shared/**': { statements: 97, branches: 90, functions: 100, lines: 97, perFile: true },
-				'src/providers/**': { statements: 87, branches: 75, functions: 94, lines: 87, perFile: true },
+				'src/providers/**': { statements: 89, branches: 78, functions: 94, lines: 88, perFile: true },
 				'src/tools/**': { statements: 90, branches: 85, functions: 87, lines: 90, perFile: true },
-				'src/utils/**': { statements: 85, branches: 78, functions: 90, lines: 84, perFile: true },
+				'src/utils/**': { statements: 88, branches: 81, functions: 90, lines: 88, perFile: true },
 				'src/extension.ts': { statements: 97, branches: 94, functions: 94, lines: 100, perFile: true },
 				// Tool gates keep all four metrics at 100% for every matching file.
 				'src/tools/audit*.ts': { statements: 100, branches: 100, functions: 100, lines: 100, perFile: true },

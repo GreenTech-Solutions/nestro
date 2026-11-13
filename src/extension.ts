@@ -86,6 +86,7 @@ function registerExtensionCommands(
       provider.setFilter(type);
     }),
     vscode.commands.registerCommand(COMMAND_IDS.showFilterPicker, () => { void provider.showFilterPicker(); }),
+    vscode.commands.registerCommand(COMMAND_IDS.showVulnerablePackages, () => { filterManager.showVulnerable(); }),
     vscode.commands.registerCommand(COMMAND_IDS.searchPackages, () => { void provider.showSearch(); }),
     vscode.commands.registerCommand(COMMAND_IDS.clearSearchQuery, () => { provider.clearSearch(); }),
     vscode.commands.registerCommand(COMMAND_IDS.openSettings, () => {

@@ -1,5 +1,6 @@
 import type { BunRegistryConfiguration, ParsedBunConfig } from '../bunConfig';
 import type { PackageManager } from '../../shared';
+import { memoizeRegistrySource } from './configSourceMemo';
 import { getBunAuthConfiguration, readBunConfiguration } from './bunConfiguration';
 import { getNoProxyConfiguration } from './proxy';
 import { getScopeConfiguration } from './packageScope';
@@ -40,9 +41,17 @@ export async function resolveRegistryConfiguration(
   packageFilePath: string | undefined,
   packageManager: PackageManager | undefined,
 ): Promise<RegistryConfiguration> {
-  const npmrcValues = await readNpmrcConfig(packageFilePath);
-  const bun = packageManager === 'bun' ? await readBunConfiguration(packageFilePath) : undefined;
-  const yarnSources = packageManager === 'yarn' ? await readYarnSources(packageFilePath) : undefined;
+  const npmrcValues = await memoizeRegistrySource(
+    'npmrc',
+    packageFilePath,
+    () => readNpmrcConfig(packageFilePath),
+  );
+  const bun = packageManager === 'bun'
+    ? await memoizeRegistrySource('bun', packageFilePath, () => readBunConfiguration(packageFilePath))
+    : undefined;
+  const yarnSources = packageManager === 'yarn'
+    ? await memoizeRegistrySource('yarn', packageFilePath, () => readYarnSources(packageFilePath))
+    : undefined;
   const yarn = yarnSources?.modern;
   const sources: ConfigurationSources = {
     packageName,
