@@ -1,3 +1,22 @@
+## [1.1.0](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.3...v1.1.0) (2026-11-13)
+
+
+### Features
+
+* **audit:** filter vulnerable packages from the audit row ([9205a03](https://github.com/GreenTech-Solutions/nestro/commit/9205a03d5ca20fc41c3ef53aadeb15d90f0d4f82))
+* **tree:** always show the filter and search rows ([480134f](https://github.com/GreenTech-Solutions/nestro/commit/480134fb31e48d555cbd5af52bd5997dc0f70d9e))
+* **update:** show progress in the update check notification ([6de0ece](https://github.com/GreenTech-Solutions/nestro/commit/6de0ece73cadb37186fa90076062c261060b8845))
+
+### Bug Fixes
+
+* **registry:** expand bunfig.toml environment references like Bun ([65df637](https://github.com/GreenTech-Solutions/nestro/commit/65df63763dda9d4a64e2ba90480780fb7b615d64))
+* **registry:** resolve a relative cafile from the package directory ([3f49a6c](https://github.com/GreenTech-Solutions/nestro/commit/3f49a6ce2ceb62befe48192a34c2a9b0acaaa07d))
+* **tree:** mask credentials in dependency specs ([5b7ec80](https://github.com/GreenTech-Solutions/nestro/commit/5b7ec80449f1e02d29a750b7c10756564d87b47e))
+
+### Performance
+
+* **update:** fetch release dates in parallel within a project ([33251fc](https://github.com/GreenTech-Solutions/nestro/commit/33251fcc0e6d634b8af010de58c5d6927c8bb340))
+
 ## [1.0.3](https://github.com/GreenTech-Solutions/nestro/compare/v1.0.2...v1.0.3) (2026-11-11)
 
 
