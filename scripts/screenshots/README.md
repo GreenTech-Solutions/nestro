@@ -100,7 +100,9 @@ a `state-<name>.ready` marker file when a frame is ready to capture and waiting 
 `capture.mjs` to write back `state-<name>.done` before moving on — the same ready/done marker
 handshake used to build the original, untracked version of this pipeline. The requested states and
 the markers directory travel through the `NESTRO_CAPTURE_STATES` and
-`NESTRO_CAPTURE_MARKERS_DIR` environment variables.
+`NESTRO_CAPTURE_MARKERS_DIR` environment variables. For the `audit` state, the driver starts the
+audit, waits for the configured delay, then runs `nestro.showVulnerablePackages` before marking the
+frame ready.
 
 ## Shared configuration
 

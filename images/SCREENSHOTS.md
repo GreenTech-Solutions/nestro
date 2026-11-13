@@ -46,16 +46,17 @@ registries, or credentials (dependency sections only; the real file also has a `
 
 `package-lock.json` came from `npm install --package-lock-only`; `node_modules` was installed with
 `npm install --ignore-scripts` (npm 11). The "latest" versions shown in the frames are whatever
-the public registry returned on the capture date (2026-09-18) and will drift.
+the public registry returned on the capture date (2026-11-13; 2026-09-18 for `pick-version.png`)
+and will drift.
 
 ## Frames
 
 | File | Size (px) | What the frame shows | How the state was produced |
 |---|---|---|---|
-| `overview.png` | 348×333 | Sidebar after an update check: toolbar with Refresh, Check for Updates, Update All and the `…` overflow; the update-count badge on the Activity Bar icon; the "Last update check" status row; Dependencies and Dev Dependencies groups with the update type per row | **Check for Updates**, wait for the check to finish |
-| `filters.png` | 1030×173 | The **Select Filter** QuickPick with All / Has Updates / Patch / Minor / Breaking and their live counts, Patch active; the tree behind it filtered to the single patch update, with the "Filter: Patch · 1 of 10" status row above the group | select the Patch filter, then open **Select Filter** again |
+| `overview.png` | 348×376 | Sidebar after an update check: toolbar with Refresh, Check for Updates, Update All and the `…` overflow; the update-count badge on the Activity Bar icon; the "Last update check" row followed by "Filter: All" and "Search packages"; Dependencies and Dev Dependencies groups with the update type per row | **Check for Updates**, wait for the check to finish |
+| `filters.png` | 1030×173 | The **Select Filter** QuickPick with All / Has Updates / Patch / Minor / Breaking and their live counts, Patch active; the tree behind it filtered to the patch updates, with the "Filter: Patch" and "Search packages" rows above the group | select the Patch filter, then open **Select Filter** again |
 | `pick-version.png` | 1030×445 | The **Pick Version...** QuickPick for `express`: version list with the `latest` tag and a held-back entry with its eligibility date; the focused row shows its two inline actions, Update Package and Pick Version | focus the `express` row, run **Pick Version...** for it |
-| `audit.png` | 348×355 | Sidebar after **Run Security Audit**: the "Audit complete · 6 vulnerable packages" status row above the package groups, and the vulnerability marker on the three directly affected rows (`axios`, `lodash`, `vitest`) | **Run Security Audit**, wait for the audit to finish |
+| `audit.png` | 348×244 | Sidebar after **Run Security Audit**: the "Last update check" and "Audit complete · 7 vulnerable packages" rows, then "Filter: Vulnerable · 3 of 10" and "Search packages" above the groups; only the three directly affected rows (`axios`, `lodash`, `vitest`) remain, each with its vulnerability marker | **Run Security Audit**, wait for the audit, then run `nestro.showVulnerablePackages` |
 
 The sizes above are from the run that produced the current `images/*.png`. `scripts/screenshots/capture.mjs`
 crops each frame's bottom edge to the content it actually captured, so a later run's sizes come from
@@ -73,8 +74,8 @@ is 300 px wide in every file.
   query is active), Run Install, Run Security Audit, Pin All Versions, Settings.
 - The row context menu: Open on npmjs.com, Copy Package Name, Switch to dev/dep, Toggle version
   pin (only for rows whose spec can be pinned), Remove Package.
-- The "Search: …" status row (no search query is active in any frame); it appears above the
-  groups in the same way as the filter row in `filters.png`.
+- The active "Search: …" status row and its inline Clear Search action (no query is active in any
+  frame; the empty "Search packages" row is visible in the overview, filters, and audit frames).
 - The active filter or search query as the *view description* — the compact text next to the view
   title. VS Code renders it only in the view's own pane header, and while Nestro is the only view
   in its container that header is merged into the sidebar title, so the description text does not

@@ -69,22 +69,29 @@ pin** (shown only when the dependency's current version spec supports pinning), 
 
 ### Filter, search, and status
 
-The active filter and any search text each show as a status row above the package groups — for
-example "Filter: Has Updates" with a "3 of 10" count, or `Search: "react"` with the number of
-matches. Clicking either row reopens the corresponding picker or search box. The same state also
-renders as compact text next to the view title (`Has Updates (3)` or `Has Updates (3) ·
+The **Filter** and **Search** status rows stay visible whenever those actions are available,
+including `Filter: All` with the package count and `Search packages` when no filter or query is
+active. Clicking a row opens the corresponding picker or search box. With a query, the row shows
+`Search: "react"` and the number of matches, with an inline **Clear Search** button. The same
+state also renders as compact text next to the view title (`Has Updates (3)` or `Has Updates (3) ·
 "react"`), which VS Code shows only in the view's own pane header — for example after moving
-Nestro into a container with more than one view. Select Filter opens a picker for All, Has
-Updates, Patch, Minor, or Breaking, each with a live count. The sidebar badge shows the number of
-packages with an available update under the All filter, independent of whatever filter is
-currently active.
+Nestro into a container with more than one view. Select Filter opens a picker for All, Has Updates,
+Patch, Minor, or Breaking, each with a live count. **Vulnerable** is a temporary filter available
+only from an audit status row; it is not in the picker or saved to settings, and a new audit or
+package reload resets it to All. When vulnerable dependency rows exist, clicking an audit status
+row turns on this filter; clicking the audit row again opens the report. If the report contains
+vulnerabilities but none can be attributed to a direct dependency row, the audit row opens the
+report instead. Audit counts include the full project graph, while the filter shows only directly
+attributed dependencies; a status such as `13 vulnerable packages, 4 in the list` can therefore
+include transitive packages. The sidebar badge shows the number of packages with an available
+update under the All filter, independent of whatever filter is currently active.
 
-Status rows appear above the package groups when relevant: a run in progress ("Checking
-updates…", "Running audit…"), a summary ("Last update check", "Audit complete"), a problem
+Other status rows appear above the package groups when relevant: a run in progress ("Checking
+updates…", "Running audit…"), a summary ("Last update check", "Audit complete"), or a problem
 ("Package read incomplete", "Update check incomplete", "Audit incomplete", "Audit failed",
-"Workspace package loading failed"), or the active filter/search state ("Filter: …", "Search:
-…"). Rows that report a failure are clickable and open the diagnostics report; the filter and
-search rows are clickable too and reopen their picker or search box.
+"Workspace package loading failed"). Rows that report a failure are clickable and open the
+diagnostics report. The Filter and Search rows remain at the bottom of the status list whenever
+their actions are available.
 
 ## Update checks
 
@@ -103,6 +110,10 @@ enable `nestro.checkUpdatesOnStartup` (disabled by default).
   still inside its cooldown is classified as held back rather than offered, a release whose
   publish time is unavailable is reported as unknown, and applying a held-back version asks for
   confirmation first.
+- **Progress** — the cancellable notification reports version discovery and release-date checks
+  separately. For multiple `package.json` files it shows the last processed file and the file
+  count; for one manifest it shows the dependency count, followed by a completed/total count for
+  release dates. Release dates are fetched in parallel.
 - **Prereleases** — alpha, beta, and release-candidate versions are excluded unless you enable
   `nestro.includePreReleases` (default `false`).
 
@@ -143,6 +154,10 @@ opens the full report, including project-level results, in the **Nestro Security
 channel. Enable `nestro.runAuditOnStartup` (default `false`) to run one audit per project after
 the initial scan on each activation.
 
+Click an audit status row to show the **Vulnerable** filter for directly affected dependencies;
+click it again to open the report. See [Filter, search, and status](#filter-search-and-status)
+for details about the filter and how audit counts can include transitive packages.
+
 ## Monorepos and multi-root workspaces
 
 Nestro discovers every `package.json` matching `nestro.monorepoGlob` (default
@@ -172,16 +187,16 @@ owning workspace folder; the nearest directory with a recognized signal wins, an
 ## Screenshots
 
 ### Package overview
-![Nestro sidebar after an update check: packages grouped into Dependencies and Dev Dependencies, each row showing its update type and target version, with the update-count badge on the Activity Bar icon](images/overview.png)
+![Nestro sidebar after an update check: Filter: All and Search packages status rows above the dependency groups, each package row showing its update type and target version, with the update-count badge on the Activity Bar icon](images/overview.png)
 
 ### Filter by update type
-![Filter picker for narrowing the package list by update type, with a live count per filter and the active filter shown as a status row in the tree](images/filters.png)
+![Filter picker for narrowing the package list by update type, with a live count per filter and the Filter: Patch and Search packages status rows shown above the tree](images/filters.png)
 
 ### Pick a specific version
 ![Version picker listing the available versions of express, with the row's inline Update and Pick Version actions visible](images/pick-version.png)
 
 ### Security audit
-![Sidebar after Run Security Audit, with the status row reporting the number of vulnerable packages and a warning marker on each directly affected package row](images/audit.png)
+![Sidebar after Run Security Audit with the Vulnerable filter active: the Filter: Vulnerable and Search packages rows appear above the tree, with warning markers on directly affected package rows](images/audit.png)
 
 ## Settings
 
